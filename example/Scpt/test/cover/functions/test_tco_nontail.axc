@@ -1,0 +1,10 @@
+// non-tail recursion: should blow stack at depth 1024 (default)
+def nontail(n) {
+  if (n <= 0) {
+    return 0;
+  }
+  return 1 + nontail(n - 1);
+}
+// try 2000, should exceed default 1024 stack limit
+$print(nontail(2000));
+$print("\n");

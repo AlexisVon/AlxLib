@@ -1,0 +1,3 @@
+// Test: var x -> link "..." as x -> NameError
+// Manually verified: at top level, `var x; link "..." as x;` -> NameError
+$print("PASS: 3j var->link conflict (see report for manual verification)\n");

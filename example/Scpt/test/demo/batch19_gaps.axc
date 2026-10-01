@@ -1,0 +1,302 @@
+// Batch 19: Coverage gaps — default params, spread, compound chain,
+//           delete @var, ++/-- eval order, .. from sub-module, delete link,
+//           .... 2-level grandparent navigation
+var tmp; tmp = null; // probes below assign through it
+env(["../bin"]);
+
+import "subs/chain_mid.axc" as cm;
+link "base.so" as b;
+
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) {
+    if (v == null) { return "null"; }
+    return string(v);
+}
+
+def assert_eq(actual, expected, name) {
+    if (actual == expected) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected " + to_str(expected) + " got " + to_str(actual) + "\n";
+}
+
+def assert_true(cond, name) {
+    if (cond) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected true\n";
+}
+
+// ========== §9.3.2 Spread syntax f(vec[]) ==========
+def sum3(a, b, c) { return a + b + c; }
+def sum2(a, b) { return a + b; }
+
+// Basic vec spread
+var sv; sv = [1, 2, 3];
+assert_eq(sum3(sv[]), 6, "spread: sum3([1,2,3][]) = 6");
+
+// Basic lst spread
+var sl; sl = lst([4, 5, 6]);
+assert_eq(sum3(sl[]), 15, "spread: sum3(lst[4,5,6][]) = 15");
+
+// Spread as last arg with fixed args before
+assert_eq(sum3(10, [20, 30][]), 60, "spread: sum3(10, [20,30][]) = 60");
+
+// Spread on non-vec/lst → TypeError
+var sp_err; sp_err = false;
+var sp_etype; sp_etype = "";
+try {
+    var x; x = 42;
+    tmp = sum2(x[]);
+} catch (e) { sp_err = true; sp_etype = e.what; }
+assert_true(sp_err, "spread on int throws");
+assert_eq(sp_etype, "TypeError", "spread on int → TypeError");
+
+// Spread extra elements silently ignored
+var v2; v2 = [1, 2, 3, 4];
+assert_eq(sum2(v2[]), 3, "spread extra ignored: sum2([1,2,3,4][]) = 3");
+
+// --- map[] named spread ---
+def greet_sp(name, age) { return name + " is " + string(age); }
+assert_eq(greet_sp(map{"age": 30, "name": "Alice"}[]), "Alice is 30",
+          "map[]: greet(map{age:30,name:\"Alice\"}[])");
+
+// map[] partial + default
+def with_def_sp(a, b=100) { return a + b; }
+assert_eq(with_def_sp(map{"a": 7}[]), 107, "map[]+default: with_def_sp(map{a:7}[]) = 107");
+
+// map[] zero match → ArgError
+var zm_err; zm_err = false;
+try {
+    tmp = with_def_sp(map{"x": 1}[]);
+} catch (e) { zm_err = true; }
+assert_true(zm_err, "map[] zero match → ArgError");
+
+// ========== §6.2 Compound assignment chain (right-assoc) ==========
+var ca, cb; ca = 10; cb = 0;
+ca += cb += 2;
+assert_eq(ca, 12, "compound chain +=: a=10, b=0, a+=b+=2 → a=12");
+assert_eq(cb, 2,  "compound chain +=: b=2");
+
+var cx, cy; cx = 10; cy = 0;
+cx -= cy -= 3;
+assert_eq(cx, 13, "compound chain -=: a=10, b=0, a-=b-=3 → a=13");
+assert_eq(cy, -3, "compound chain -=: b=-3");
+
+var cml, cn; cml = 3; cn = 2;
+cml *= cn *= 3;
+assert_eq(cml, 18, "compound chain *=: 3*(2*3) = 18");
+assert_eq(cn, 6,   "compound chain *=: cn=6");
+
+var cd, ce; cd = 20; ce = 4;
+cd /= ce /= 2;
+assert_eq(cd, 10, "compound chain /=: 20/(4/2) = 10");
+assert_eq(ce, 2,  "compound chain /=: ce=2");
+
+var cmod, cm2; cmod = 7; cm2 = 5;
+cmod %= cm2 %= 3;
+assert_eq(cmod, 1, "compound chain %=: 7%(5%3=2) = 1");
+assert_eq(cm2, 2,  "compound chain %=: cm2=2");
+
+// Compound chain <<= >>=
+var cs1, cs2; cs1 = 1; cs2 = 2;
+cs1 <<= cs2 <<= 2;
+assert_eq(cs1, 256, "compound chain <<=: 1<<(2<<2=8) = 256");
+assert_eq(cs2, 8,   "compound chain <<=: cs2=8");
+
+var cr1, cr2; cr1 = 256; cr2 = 2;
+cr1 >>= cr2 >>= 1;
+assert_eq(cr1, 128, "compound chain >>=: 256>>(2>>1=1) = 128");
+assert_eq(cr2, 1,   "compound chain >>=: cr2=1");
+
+// Compound chain &= |= ^=
+var cand, cand2; cand = 0x0F; cand2 = 0x30;
+cand &= cand2 |= 0x05;
+assert_eq(cand, 0x05, "compound chain &=: 0x0F&(0x30|0x05=0x35) = 0x05");
+assert_eq(cand2, 0x35, "compound chain |=: cand2=0x35");
+
+var cxor, cxor2; cxor = 0xFF; cxor2 = 0x0F;
+cxor ^= cxor2 ^= 0x0A;
+assert_eq(cxor, 0xFA, "compound chain ^=: 0xFF^(0x0F^0x0A=0x05) = 0xFA");
+assert_eq(cxor2, 0x05, "compound chain ^=: cxor2=0x05");
+
+// ========== §10.1 delete @var ==========
+var del_name; del_name = "del_target";
+var del_target; del_target = 42;
+assert_eq(del_target, 42, "delete @var: target exists");
+delete @del_name;
+var del_hit; del_hit = false;
+var del_etype; del_etype = "";
+try { tmp = del_target; } catch (e) { del_hit = true; del_etype = e.what; }
+assert_true(del_hit, "delete @var → target removed");
+assert_eq(del_etype, "NameError", "delete @var → NameError on access");
+
+// delete @var on non-existent → silent no-op (already doesn't exist)
+var del_bad; del_bad = "no_such_var_xyz";
+var del_bad_hit; del_bad_hit = true;
+try { delete @del_bad; del_bad_hit = true; } catch (e) { del_bad_hit = false; }
+assert_true(del_bad_hit, "delete @nonexistent → silent no-op");
+
+// ========== §7.7 ++ / -- evaluation order (4 defined combos) ==========
+var a; a = 0;
+var r; r = a++ + ++a;  // post: returns 0, a=1; pre: returns 2, a=2; 0+2
+assert_eq(r, 2, "eval order: a++ + ++a (a=0) → 2");
+
+a = 0;
+r = ++a + a++;  // pre: returns 1, a=1; post: returns 1, a=2; 1+1
+assert_eq(r, 2, "eval order: ++a + a++ (a=0) → 2");
+
+a = 0;
+r = a++ + a++;  // post: returns 0, a=1; post: returns 1, a=2; 0+1
+assert_eq(r, 1, "eval order: a++ + a++ (a=0) → 1");
+
+a = 0;
+r = ++a + ++a;  // pre: returns 1, a=1; pre: returns 2, a=2; 1+2
+assert_eq(r, 3, "eval order: ++a + ++a (a=0) → 3");
+
+// ========== §13.3 .. from sub-module ==========
+// chain_mid imports nav_child; nav_child accesses .. to chain_mid
+assert_eq(cm.read_parent_var(), 100, ".. read: nav_child→chain_mid parent_test_var=100");
+
+cm.write_parent_var(555);
+assert_eq(cm.get_parent_test_var(), 555, ".. write: nav_child writes parent_test_var");
+
+// Cross-module create should throw
+var cv_create; cv_create = cm.try_create_in_parent();
+assert_true(cv_create != "no_error", ".. cross-module create throws");
+assert_eq(cv_create, "NameError", ".. cross-module create → NameError");
+
+// Cross-module delete — forbidden (same as create)
+var cv_delete; cv_delete = cm.try_delete_parent_var();
+assert_true(cv_delete != "no_error", ".. cross-module delete throws");
+assert_eq(cv_delete, "NameError", ".. cross-module delete -> NameError");
+
+// ========== §13.3 .... 2-level grandparent navigation ==========
+// nav_child → chain_mid → main (root)
+var root_test_var; root_test_var = 999;
+var gp_val; gp_val = cm.read_grandparent_var();
+assert_eq(gp_val, 999, ".... read: nav_child→chain_mid→root = 999");
+
+// Cross-module create at grandparent level should throw
+var gp_create; gp_create = cm.try_create_in_grandparent();
+assert_true(gp_create != "no_error", ".... cross-module create throws");
+assert_eq(gp_create, "NameError", ".... cross-module create → NameError");
+
+// ========== delete link namespace ==========
+// Delete a link alias then verify it's gone
+link "test_store.so" as ts_del;
+delete ts_del;
+var ts_hit; ts_hit = false;
+var ts_etype; ts_etype = "";
+try { ts_del.set("k", 1); } catch (e) { ts_hit = true; ts_etype = e.what; }
+assert_true(ts_hit, "delete link → access throws");
+assert_eq(ts_etype, "NameError", "delete link → NameError");
+
+// Re-link after delete
+link "test_store.so" as ts_del;
+ts_del.set("recreated", 99);
+assert_eq(ts_del.get("recreated"), 99, "re-link after delete works");
+
+// Delete re-created link
+delete ts_del;
+
+// ========== TCO with default params ==========
+def tco_count(n, acc) {
+    if (n <= 0) { return acc; }
+    return tco_count(n - 1, acc + n);
+}
+assert_eq(tco_count(1000, 0), 500500, "TCO: count 1..1000 = 500500");
+
+// TCO with manual default via intermediate
+def tco_wrapper(n) {
+    if (n == null) { n = 100; }
+    return tco_count(n, 0);
+}
+assert_eq(tco_wrapper(50), 1275, "TCO wrapper: sum 1..50 = 1275");
+
+// ========== Summary ==========
+if (failed > 0) {
+    $print("=== FAIL: batch19_gaps (" + string(failed) + "/" + string(passed + failed) + ") ===");
+    $print(failures);
+    $print("Passed: " + string(passed) + ", Failed: " + string(failed));
+}
+
+// ========== int/double as bool in control flow ==========
+var w; w = 5;
+var wsum; wsum = 0;
+while (w--) { wsum = wsum + w; }
+// 5: w=4 → 4, 4: w=3 → 3, 3: w=2 → 2, 2: w=1 → 1, 1: w=0 → 0 (loop ends)
+assert_eq(wsum, 10, "while(n--): sum 4+3+2+1+0 = 10");
+assert_eq(w, -1, "while(n--) post: w = -1");
+
+// int as if/else condition
+if (5) { passed = passed + 1; } else { failed = failed + 1; }
+if (!0) { passed = passed + 1; } else { failed = failed + 1; }
+
+// float as condition
+if (3.14) { passed = passed + 1; } else { failed = failed + 1; }
+if (!0.0) { passed = passed + 1; } else { failed = failed + 1; }
+
+// && and || with int
+assert_true(1 && 2, "1 && 2 = true (both non-zero)");
+assert_true(!(0 && 1), "0 && 1 = false (0 is falsy)");
+assert_true(0 || 3, "0 || 3 = true");
+assert_true(!(0 || 0), "0 || 0 = false");
+
+// ternary with int
+var t; t = 1 ? "yes" : "no";
+assert_eq(t, "yes", "ternary: 1 ? yes : no = yes");
+t = 0 ? "yes" : "no";
+assert_eq(t, "no", "ternary: 0 ? yes : no = no");
+
+// for with int condition
+var fc; fc = 0;
+var fi; fi = 0;
+for (fi = 5; fi; --fi) { fc = fc + 1; }
+assert_eq(fc, 5, "for(;int;) iterates 5 times");
+
+// bitwise result in if
+if (3 & 1) { passed = passed + 1; } else { failed = failed + 1; }
+if (!(4 & 1)) { passed = passed + 1; } else { failed = failed + 1; }
+
+// ========== §3.4 backtick raw string ==========
+var bts; bts = `hello world`;
+assert_eq(bts, "hello world", "backtick: basic string");
+
+bts = `has "double" 'single' quotes`;
+assert_eq(bts, "has \"double\" 'single' quotes", "backtick: quotes preserved");
+
+bts = `backslash \n stays \t literal`;
+assert_eq(bts, "backslash \\n stays \\t literal", "backtick: backslash not escaped");
+
+bts = `line one
+line two`;
+assert_eq(bts, "line one\nline two", "backtick: multiline");
+
+// empty backtick
+bts = ``;
+assert_eq(bts, "", "backtick: empty string");
+
+// ========== §3.4 single-quote string (complementary to ") ==========
+var sqs; sqs = 'hello world';
+assert_eq(sqs, "hello world", "squote: basic string");
+
+sqs = 'contains "double" quotes';  // no need to escape "
+assert_eq(sqs, "contains \"double\" quotes", "squote: dquote without escape");
+
+sqs = 'tab:\there, newline:\nhere';  // escape sequences work
+assert_eq(sqs, "tab:\there, newline:\nhere", "squote: escape sequences");
+
+sqs = 'it\'s ok';  // escaped single quote
+assert_eq(sqs, "it's ok", "squote: escaped squote");
+
+sqs = '\x41\x42\x43';  // hex escape
+assert_eq(sqs, "ABC", "squote: hex escape");
+
+sqs = '';  // empty
+assert_eq(sqs, "", "squote: empty string");
+
+// complementary: double-quote contains single quotes without escape
+sqs = "it's ok without escape";
+assert_eq(sqs, "it's ok without escape", "dquote: squote without escape");

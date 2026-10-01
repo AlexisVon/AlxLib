@@ -1,0 +1,40 @@
+// basic closure: inner captures outer var, returns value
+def outer() {
+  var x = 10;
+  def inner() {
+    return x;
+  }
+  return inner();
+}
+$print(outer());
+$print("\n");
+
+// closure mutation test: call inner that mutates outer
+def test_mutate() {
+  var count = 0;
+  def inc() {
+    count = count + 1;
+    return count;
+  }
+  $print(inc());
+  $print("\n");
+  $print(inc());
+  $print("\n");
+}
+test_mutate();
+
+// multi-level nested closure
+def level1() {
+  var a = 1;
+  def level2() {
+    var b = 2;
+    def level3() {
+      var c = 3;
+      return a + b + c;
+    }
+    return level3();
+  }
+  return level2();
+}
+$print(level1());
+$print("\n");

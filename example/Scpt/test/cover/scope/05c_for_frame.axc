@@ -1,0 +1,9 @@
+// Test 5c: for pushes a frame implicitly
+var caught; caught = false;
+try {
+    for (var i = 0; i < 3; ++i) {
+        var fi; fi = "for_var";
+    }
+    tmp = fi;
+} catch (e) { caught = true; }
+if (caught) { $print("PASS: 5c for frame var not visible outside\n"); } else { $print("FAIL: 5c for var leaked or no error\n"); }

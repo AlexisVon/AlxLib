@@ -1,0 +1,11 @@
+// Test: basic link functionality with list.so
+// Verifies link module can be loaded and called.
+
+env(["../../bin"]);
+link "base.so" as b;
+
+var v = [1, 2, 3, 4, 5];
+var v2 = v[0, 2];
+if (v2[0] != 1 || v2[1] != 2) {
+    throw "link list.so slice failed";
+}

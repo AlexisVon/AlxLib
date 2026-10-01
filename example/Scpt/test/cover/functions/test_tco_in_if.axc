@@ -1,0 +1,20 @@
+// TCO: tail call inside an if branch — a nested block frame sits above the
+// function frame; TCO must rebind the function frame, not the top frame
+def r(n) {
+  if (n > 0) {
+    return r(n - 1);
+  }
+  return 0;
+}
+$print(r(20000));
+$print("\n");
+
+// TCO: tail call inside a while body — loop frame on top of the function frame
+def step(n) {
+  while (n > 0) {
+    return step(n - 1);
+  }
+  return n;
+}
+$print(step(20000));
+$print("\n");

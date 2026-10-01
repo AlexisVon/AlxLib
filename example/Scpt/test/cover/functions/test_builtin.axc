@@ -1,0 +1,15 @@
+// builtin: string() formatting
+var s = string("result: %1", 99);
+if (s != "result: 99") { throw "string(fmt): " + s + ", expected 'result: 99'"; }
+
+// builtin: tojs (to JSON string)
+var obj = map{"name": "test", "val": 123};
+var js = $tojs(obj, true);  // compact
+if (js != "{\"name\": \"test\",\"val\": 123}") {
+    // format may vary, just check it's non-empty
+    if (js == "") { throw "tojs returned empty"; }
+}
+
+// builtin: fmjs (from JSON string)
+var parsed = $fmjs("{\"x\": 10, \"y\": 20}");
+if (parsed["x"] + parsed["y"] != 30) { throw "fmjs parse fail"; }

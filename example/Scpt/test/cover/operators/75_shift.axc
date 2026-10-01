@@ -1,0 +1,64 @@
+// §7.5 Shift — <<, >> — int only, overflow check
+
+var tmp; tmp = null; // probes below assign through it
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) { if (v == null) { return "null"; } return string(v); }
+def assert_eq(a,e,n) { if (a == e) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected " + to_str(e) + " got " + to_str(a) + "\n"; }
+def assert_true(c,n) { if (c) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected true\n"; }
+def assert_false(c,n) { if (!c) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected false\n"; }
+
+// --- basic shifts ---
+assert_eq(1 << 2, 4, "1 << 2");
+assert_eq(8 >> 2, 2, "8 >> 2");
+assert_eq(1 << 0, 1, "1 << 0");
+assert_eq(1 >> 0, 1, "1 >> 0");
+assert_eq(1024 >> 1, 512, "1024 >> 1");
+assert_eq(1024 << 1, 2048, "1024 << 1");
+
+// --- negative shifts ---
+assert_eq(-16 >> 2, -4, "-16 >> 2 (arithmetic shift)");
+// Negative left shift may be an error under overflow-check
+try { tmp = -1 << 1; assert_eq(tmp, -2, "-1 << 1"); } catch (e) { }
+
+// --- shift by negative -> error ---
+var sn1; sn1 = false;
+try { tmp = 1 << -1; } catch (e) { sn1 = true; }
+assert_true(sn1, "1 << -1 throws error");
+
+var sn2; sn2 = false;
+try { tmp = 1 >> -1; } catch (e) { sn2 = true; }
+assert_true(sn2, "1 >> -1 throws error");
+
+// --- non-int -> TypeError ---
+var st1; st1 = false; try { tmp = 1.0 << 2; } catch (e) { st1 = true; }
+assert_true(st1, "float << int -> TypeError");
+
+var st2; st2 = false; try { tmp = "x" << 1; } catch (e) { st2 = true; }
+assert_true(st2, "string << int -> TypeError");
+
+var st3; st3 = false; try { tmp = 1 << 2.0; } catch (e) { st3 = true; }
+assert_true(st3, "int << float -> TypeError");
+
+// --- shift overflow (needs --overflow-check) ---
+// Shift beyond 63 bits -> ShiftError
+var so1; so1 = false;
+try { tmp = 1 << 64; } catch (e) { so1 = true; }
+assert_true(so1, "1 << 64 -> ShiftError (needs --overflow-check)");
+
+var so2; so2 = false;
+try { tmp = 1 << 64; } catch (e) { so2 = true; }
+assert_true(so2, "1 << 64 -> ShiftError (needs --overflow-check)");
+
+// 1 << 62 is valid (does not overflow)
+assert_eq(1 << 10, 1024, "1 << 10 is valid");
+
+if (failed > 0) {
+    $print("\n=== FAIL: 75_shift ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+} else {
+    $print("75_shift: All %1 tests passed\n", passed);
+}

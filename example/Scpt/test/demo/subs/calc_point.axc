@@ -1,0 +1,22 @@
+// Flyweight test module: calc_point
+// Each import instance gets its own (x, y) via init()
+
+var x; x = 0;
+var y; y = 0;
+
+def init(px, py) {
+    x = px;
+    y = py;
+}
+
+def get_x() {
+    return x;
+}
+
+def get_y() {
+    return y;
+}
+
+def dist_sq() {
+    return x * x + y * y;
+}

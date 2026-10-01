@@ -1,0 +1,46 @@
+// Test 4.3: map (dictionary)
+
+$print("= 4.3 map tests =\n");
+
+// --- Literal creation ---
+var d; d = map{"key": "value", "n": 1};
+$print("map type: %1\n", type(d));
+$print("d.key=%1, d[\"key\"]=%2, d.n=%3\n", d.key, d["key"], d.n);
+
+// --- Non-string key throws TypeError ---
+try {
+    tmp = d[42];
+    $print("ERROR: d[42] should have thrown TypeError\n");
+} catch (e) {
+    $print("d[non-string] correctly throws: %1\n", e);
+}
+
+// --- dot access ---
+$print("d.key=%1\n", d.key);
+
+// --- index access ---
+$print("d[\"key\"]=%1\n", d["key"]);
+
+// --- write ---
+d["new"] = 42;
+$print("after d[\"new\"]=42: d.new=%1\n", d.new);
+
+d.newKey = 88;
+$print("after d.newKey=88: d[\"newKey\"]=%1\n", d["newKey"]);
+
+// --- missing key read returns null ---
+var missing; missing = d.doesNotExist;
+$print("d.doesNotExist=%1\n", missing);
+
+// --- for-each ---
+var kv;
+$print("for-each over map:\n");
+for (kv : d) {
+    $print("  key=%1 value=%2\n", kv.key, kv.value);
+}
+
+// --- empty map ---
+var e; e = map{};
+$print("empty map type: %1\n", type(e));
+
+$print("=== map tests done ===\n");

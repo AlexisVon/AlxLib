@@ -1,0 +1,12 @@
+// mod_class.axc - module that acts like a class
+var count = 0;
+def inc() {
+    count = count + 1;
+    return count;
+}
+def get_count() {
+    return count;
+}
+def reset() {
+    count = 0;
+}

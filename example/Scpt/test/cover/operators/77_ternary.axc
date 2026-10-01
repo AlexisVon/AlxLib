@@ -1,0 +1,55 @@
+// §7.7 Ternary ?: — short-circuit, nesting, chaining
+
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) { if (v == null) { return "null"; } return string(v); }
+def assert_eq(a,e,n) { if (a == e) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected " + to_str(e) + " got " + to_str(a) + "\n"; }
+def assert_true(c,n) { if (c) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected true\n"; }
+def assert_false(c,n) { if (!c) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected false\n"; }
+
+// --- basic ternary ---
+assert_eq(true ? 1 : 0, 1, "ternary true");
+assert_eq(false ? 1 : 0, 0, "ternary false");
+
+// --- short-circuit: only evaluated side ---
+var sc1; sc1 = false;
+def side_effect() { sc1 = true; return 99; }
+
+var t1; t1 = true ? 42 : side_effect();
+assert_eq(t1, 42, "ternary true -> conseq");
+assert_false(sc1, "ternary true short-circuits altern (side_effect not called)");
+
+sc1 = false;
+t1 = false ? side_effect() : 99;
+assert_eq(t1, 99, "ternary false -> altern");
+assert_false(sc1, "ternary false short-circuits conseq (side_effect not called)");
+
+// --- nested ternary ---
+assert_eq(true ? (false ? 1 : 2) : 3, 2, "nested ternary true->false");
+assert_eq(false ? 1 : (true ? 2 : 3), 2, "nested ternary false->true");
+assert_eq(false ? 1 : (false ? 2 : 3), 3, "nested ternary false->false");
+
+// --- ternary with int/float/non-bool -> truthy/falsy ---
+assert_eq(1 ? 10 : 20, 10, "ternary int 1 (truthy)");
+assert_eq(0 ? 10 : 20, 20, "ternary int 0 (falsy)");
+assert_eq(-1 ? 10 : 20, 10, "ternary int -1 (truthy)");
+
+// --- ternary with condition being expression ---
+var x; x = 5;
+assert_eq((x > 3) ? 100 : 200, 100, "ternary with bool expr");
+assert_eq((x < 3) ? 100 : 200, 200, "ternary with bool expr false");
+
+// --- ternary result can be any type ---
+assert_eq(true ? "yes" : "no", "yes", "ternary string result");
+assert_true(true ? true : false, "ternary bool result");
+assert_eq(true ? [1,2,3] : [], [1,2,3], "ternary vec result");
+
+if (failed > 0) {
+    $print("\n=== FAIL: 77_ternary ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+} else {
+    $print("77_ternary: All %1 tests passed\n", passed);
+}

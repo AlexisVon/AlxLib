@@ -1,0 +1,47 @@
+// Operator precedence — test complex mixed expressions
+
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) { if (v == null) { return "null"; } return string(v); }
+def assert_eq(a,e,n) { if (a == e) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected " + to_str(e) + " got " + to_str(a) + "\n"; }
+def assert_true(c,n) { if (c) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected true\n"; }
+
+// Precedence: * before + (standard)
+assert_eq(2 + 3 * 4, 14, "2 + 3 * 4 = 14 (* before +)");
+assert_eq((2 + 3) * 4, 20, "(2+3)*4 = 20");
+assert_eq(10 - 2 * 3, 4, "10 - 2*3 = 4 (* before -)");
+assert_eq(1 + 2 * 3 + 4, 11, "1 + 2*3 + 4 = 11");
+
+// Precedence: + before << (non-standard, verified: 1+2<<3 = 24)
+assert_eq(1 + 2 << 3, 24, "1 + 2 << 3 = 24 (+ before <<)");
+assert_eq(1 << 2 + 3, 32, "1 << 2 + 3 = 32 (1<<5, + before <<)");
+
+// Precedence: == before & (standard)
+assert_eq((1 & 2) == 0, true, "(1&2) == 0");
+
+// Precedence: comparison before &&
+assert_eq(1 < 2 && 3 < 4, true, "1<2 && 3<4");
+assert_eq(1 > 2 || 3 < 4, true, "1>2 || 3<4");
+
+// Precedence: + before ?: (standard)
+assert_eq(true ? 10 : 20 + 5, 10, "+ before ?:");
+assert_eq(false ? 10 : 20 + 5, 25, "+ before ?: (false branch)");
+
+// Precedence: * before ^ (standard for bitwise XOR)
+assert_eq(2 + 3 * 4 ^ 5, 11, "2 + 3*4 ^ 5 = 11 (*>+>^)");
+
+// Mixed comparison + arithmetic + logic
+assert_eq(1 + 2 > 0 && 3 < 4, true, "1+2>0 && 3<4");
+
+// Ternary inside expression
+assert_eq(1 + (true ? 1 : 0), 2, "1 + (ternary)");
+
+if (failed > 0) {
+    $print("\n=== FAIL: 7A_precedence ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+} else {
+    $print("7A_precedence: All %1 tests passed\n", passed);
+}

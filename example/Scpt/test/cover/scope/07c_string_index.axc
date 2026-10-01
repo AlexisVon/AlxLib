@@ -1,0 +1,33 @@
+// Test 7c: string index reads (-1 is the last char, null is the length); writes unsupported
+var s; s = "hello";
+if (s[0] == "h") { $print("PASS: 7c string[0] read -> 'h'\n"); } else { $print("FAIL\n"); }
+if (s[1] == "e") { $print("PASS: 7c string[1] read -> 'e'\n"); } else { $print("FAIL\n"); }
+if (s[4] == "o") { $print("PASS: 7c string[4] read -> 'o'\n"); } else { $print("FAIL\n"); }
+if (s[-1] == "o") { $print("PASS: 7c string[-1] read -> 'o'\n"); } else { $print("FAIL: string[-1] != 'o'\n"); }
+if (s[null] == 5) { $print("PASS: 7c string[null] -> size 5\n"); } else { $print("FAIL: string[null] != 5\n"); }
+
+var caught; caught = false;
+try { s[-2]; } catch (e) { caught = true; }
+if (caught) { $print("PASS: 7c string[-2] throws (only -1 is back)\n"); } else { $print("FAIL: no error\n"); }
+
+caught = false;
+try { s[5]; } catch (e) { caught = true; }
+if (caught) { $print("PASS: 7c string[5] out of range throws\n"); } else { $print("FAIL: no error\n"); }
+
+// dot chain must agree with the standalone form
+var so; so = map{"s": "hello"};
+if (so.s[0] == "h") { $print("PASS: 7c dot chain string[0] -> 'h'\n"); } else { $print("FAIL: dot chain string[0]\n"); }
+if (so.s[-1] == "o") { $print("PASS: 7c dot chain string[-1] -> 'o'\n"); } else { $print("FAIL: dot chain string[-1]\n"); }
+if (so.s[null] == 5) { $print("PASS: 7c dot chain string[null] -> size 5\n"); } else { $print("FAIL: dot chain string[null]\n"); }
+
+caught = false;
+try { s[0] = "x"; } catch (e) { caught = true; }
+if (caught) { $print("PASS: 7c string index write throws\n"); } else { $print("FAIL: no error\n"); }
+
+caught = false;
+try { so.s[0] = "x"; } catch (e) { caught = true; }
+if (caught) { $print("PASS: 7c dot chain string index write throws\n"); } else { $print("FAIL: no error\n"); }
+
+caught = false;
+try { delete so.s[0]; } catch (e) { caught = true; }
+if (caught) { $print("PASS: 7c string index delete throws\n"); } else { $print("FAIL: delete returned silently\n"); }

@@ -1,0 +1,24 @@
+link "link/base.so" as bs;
+
+$print("version: %1[%2]\n", $etype, $vtype);
+
+$print("sqrt(2) = %1\n", string(bs.mt.sqrt(2.0), -18));
+
+$print("please input>>> ");
+var usin = $input();
+
+$print("user input: '%1'\n", usin);
+
+// ── trap breakpoint demo ─────────────────────────────────────────────
+// no-op without a host hook (set_hook); fires hook_event::trap when one is set
+trap();
+trap(usin);
+
+def demo_trap(a) {
+    var b = a * 2;
+    trap(a + b);
+    return b;
+}
+demo_trap(21);
+
+delete bs;

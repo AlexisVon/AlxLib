@@ -1,0 +1,3 @@
+// Cover test: Extension function error — undefined function
+// Expected: compile error (XFAIL)
+$undefined_func();

@@ -1,0 +1,16 @@
+// NOTE-01: e.type was reserved keyword — now e.what / e.info avoid the conflict
+// Doc note: 'what' and 'info' are not reserved, so dot access works.
+
+try {
+    throw "test_message";
+} catch (e) {
+    var etype = e.what;
+    var evalue = e.info;
+
+    if (etype != "RuntimeError") {
+        throw "NOTE-01: e.what = " + etype + ", expected RuntimeError";
+    }
+    if (evalue != "test_message") {
+        throw "NOTE-01: e.info = " + evalue + ", expected test_message";
+    }
+}

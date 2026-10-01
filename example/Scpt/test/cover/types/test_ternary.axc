@@ -1,0 +1,23 @@
+// truthiness rules — the ?: ternary
+$print("--- test_ternary ---");
+
+var x = 1 ? 10 : 20;
+$print("1 ? 10 : 20 = %1", x);
+
+var y = 0 ? 10 : 20;
+$print("0 ? 10 : 20 = %1", y);
+
+var z = -5 ? 10 : 20;
+$print("-5 ? 10 : 20 = %1", z);
+
+var t = true ? 100 : 200;
+$print("true ? 100 : 200 = %1", t);
+
+var f = false ? 100 : 200;
+$print("false ? 100 : 200 = %1", f);
+
+var fl = 3.14 ? 30 : 40;
+$print("3.14 ? 30 : 40 = %1", fl);
+
+var flz = 0.0 ? 30 : 40;
+$print("0.0 ? 30 : 40 = %1", flz);

@@ -1,0 +1,93 @@
+// §7.8 Increment/Decrement — ++x, --x, x++, x--, int only, overflow, eval order
+
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) { if (v == null) { return "null"; } return string(v); }
+def assert_eq(a,e,n) { if (a == e) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected " + to_str(e) + " got " + to_str(a) + "\n"; }
+def assert_true(c,n) { if (c) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected true\n"; }
+def assert_false(c,n) { if (!c) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected false\n"; }
+
+// --- pre-increment ---
+var i; i = 0;
+assert_eq(++i, 1, "++i returns new value");
+assert_eq(i, 1, "++i var updated");
+
+// --- post-increment ---
+i = 0;
+assert_eq(i++, 0, "i++ returns old value");
+assert_eq(i, 1, "i++ var updated");
+
+// --- pre-decrement ---
+i = 2;
+assert_eq(--i, 1, "--i returns new value");
+assert_eq(i, 1, "--i var updated");
+
+// --- post-decrement ---
+i = 2;
+assert_eq(i--, 2, "i-- returns old value");
+assert_eq(i, 1, "i-- var updated");
+
+// --- non-int -> TypeError ---
+var is1; is1 = false;
+try { var s; s = "x"; ++s; } catch (e) { is1 = true; }
+assert_true(is1, "++string throws TypeError");
+
+var is2; is2 = false;
+try { var f; f = 1.5; ++f; } catch (e) { is2 = true; }
+assert_true(is2, "++float throws TypeError");
+
+var is3; is3 = false;
+try { var f; f = 1.5; f++; } catch (e) { is3 = true; }
+assert_true(is3, "float++ throws TypeError");
+
+// --- overflow (needs --overflow-check) ---
+var io1; io1 = false;
+try {
+    var x; x = 9223372036854775807; // INT64_MAX
+    x++;
+} catch (e) { io1 = true; }
+assert_true(io1, "INT64_MAX++ throws OverflowError (needs --overflow-check)");
+
+var io2; io2 = false;
+try {
+    var x; x = -9223372036854775807 - 1; // INT64_MIN
+    x--;
+} catch (e) { io2 = true; }
+assert_true(io2, "INT64_MIN-- throws OverflowError (needs --overflow-check)");
+
+// --- predicable evaluation order ---
+// a=0; a++ + ++a -> first a++ returns 0 (a=1), then ++a -> 2, sum=2
+var a; a = 0;
+var r1; r1 = a++ + ++a;
+assert_eq(r1, 2, "a=0; a++ + ++a = 2");
+
+// a=0; ++a + a++ -> first ++a -> 1, then a++ returns 1 (a=2), sum=2
+a = 0;
+var r2; r2 = ++a + a++;
+assert_eq(r2, 2, "a=0; ++a + a++ = 2");
+
+// a=0; a++ + a++ -> first a++ returns 0 (a=1), second a++ returns 1 (a=2), sum=1
+a = 0;
+var r3; r3 = a++ + a++;
+assert_eq(r3, 1, "a=0; a++ + a++ = 1");
+
+// a=0; ++a + ++a -> first ++a -> 1, second ++a -> 2 (a=2), sum=3
+a = 0;
+var r4; r4 = ++a + ++a;
+assert_eq(r4, 3, "a=0; ++a + ++a = 3");
+
+// --- mixed pre/post in compound expression ---
+a = 1;
+assert_eq(--a, 0, "--a from 1 = 0");
+assert_eq(a++, 0, "a++ after --a = 0 (post returns old)");
+assert_eq(a, 1, "a final = 1");
+
+if (failed > 0) {
+    $print("\n=== FAIL: 78_incdec ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+} else {
+    $print("78_incdec: All %1 tests passed\n", passed);
+}

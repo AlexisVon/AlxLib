@@ -1,0 +1,6 @@
+// ====== t1b_alias_conflict.axc — Alias conflict test ======
+// Separate file since the conflict is fatal
+
+import "modules/modules/mod_a.axc" as mb;
+import "modules/modules/mod_b.axc" as mb;
+$print("SHOULD NOT REACH HERE");

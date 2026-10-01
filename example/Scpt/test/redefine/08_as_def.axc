@@ -1,0 +1,4 @@
+// 8: link namespace redefines def — should throw NameError
+env(["../../../../bin/link"]);
+def b() {}
+link "base.so" as b;

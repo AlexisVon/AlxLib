@@ -1,0 +1,28 @@
+// Demo: Quick reflection verification
+
+// @var read
+var x = 42;
+var name = "x";
+$print("@name=%1\n", @name);
+
+// @var write
+@name = 100;
+$print("x after @write=%1\n", x);
+
+// Indirect call
+def my_func(a, b) {
+    return a + b;
+}
+var fn = "my_func";
+$print("@fn(3,4)=%1\n", @fn(3, 4));
+
+// @(expr)
+@("x") = 200;
+$print("x after @(expr)=%1\n", x);
+
+// Container path
+var obj = map{"arr": [10, 20, 30]};
+@("obj.arr[0]") = 99;
+$print("obj.arr[0] after @=%1\n", obj.arr[0]);
+
+$print("demo_reflection: OK\n");

@@ -1,0 +1,5 @@
+// Test 3g: x = 1 (creates it) -> var x -> NameError
+var caught; caught = false;
+try { auto_3g = 42; var auto_3g; } catch (e) { caught = true; }
+if (caught) { $print("PASS: 3g auto-new then var NameError caught\n"); }
+else { $print("FAIL: 3g no error\n"); }

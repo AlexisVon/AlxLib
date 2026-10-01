@@ -1,0 +1,5 @@
+// Test 3h: x = 1 (creates it) -> def x -> NameError
+var caught; caught = false;
+try { auto_3h = 42; def auto_3h() { return 1; } } catch (e) { caught = true; }
+if (caught) { $print("PASS: 3h auto-new then def NameError caught\n"); }
+else { $print("FAIL: 3h no error\n"); }

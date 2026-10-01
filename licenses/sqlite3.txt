@@ -1,0 +1,9 @@
+SQLite3 3.50.4 — public domain
+
+SQLite source code is in the public domain. Upstream (its source package included) ships no
+license file, so the following statement stands in for one:
+
+    SQLite source code is in the public domain.
+    The official statement is at https://www.sqlite.org/copyright.html
+
+This project has not modified SQLite.

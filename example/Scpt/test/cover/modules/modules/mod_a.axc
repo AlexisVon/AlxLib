@@ -1,0 +1,12 @@
+// mod_a.axc
+var x = 42;
+var data = vec[1, 2, 3];
+def greet(name) {
+    return "Hello, " + name;
+}
+def get_x() {
+    return x;
+}
+def set_x(v) {
+    x = v;
+}

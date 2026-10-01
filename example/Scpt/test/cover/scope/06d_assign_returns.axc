@@ -1,0 +1,4 @@
+// Test 6d: an assignment expression has a value
+var a; a = 0;
+var b; b = (a = 42);
+if (b == 42) { $print("PASS: 6d assignment returns value\n"); } else { $print("FAIL\n"); }

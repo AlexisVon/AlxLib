@@ -1,0 +1,7 @@
+// Test 7d: map key index
+var m; m = map{"k1": "v1", "k2": 42};
+if (m["k1"] == "v1") { $print("PASS: 7d map[\"k1\"] read\n"); } else { $print("FAIL\n"); }
+m["k2"] = 99;
+if (m["k2"] == 99) { $print("PASS: 7d map[\"k2\"] write\n"); } else { $print("FAIL\n"); }
+m["k3"] = "new";
+if (m["k3"] == "new") { $print("PASS: 7d map insert new key\n"); } else { $print("FAIL\n"); }

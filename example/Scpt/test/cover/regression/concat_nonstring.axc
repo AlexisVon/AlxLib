@@ -1,0 +1,46 @@
+// + operator: strict string-only concatenation
+// int+int → arithmetic, string+string → concat, mixed → TypeError
+
+var ok = false;
+var errtype = "";
+
+// int+int → arithmetic (3, not "12")
+var r = 1 + 2;
+if (r != 3) {
+    throw "FAIL: 1 + 2 = " + string(r) + ", expected 3";
+}
+
+// string+int → TypeError (strict string-only)
+try {
+    var r2 = "x=" + 42;
+} catch (e) {
+    ok = true;
+    errtype = e.what;
+}
+if (!ok) {
+    throw "FAIL: \"x=\" + 42 should throw TypeError";
+}
+if (errtype != "TypeError") {
+    throw "FAIL: \"x=\" + 42 threw " + errtype + ", expected TypeError";
+}
+
+// int+string → TypeError
+ok = false;
+try {
+    var r3 = 42 + "x=";
+} catch (e) {
+    ok = true;
+    errtype = e.what;
+}
+if (!ok) {
+    throw "FAIL: 42 + \"x=\" should throw TypeError";
+}
+if (errtype != "TypeError") {
+    throw "FAIL: 42 + \"x=\" threw " + errtype + ", expected TypeError";
+}
+
+// string+string → concat
+var r4 = "a" + "b";
+if (r4 != "ab") {
+    throw "FAIL: \"a\" + \"b\" = " + r4 + ", expected \"ab\"";
+}

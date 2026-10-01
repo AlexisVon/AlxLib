@@ -1,0 +1,47 @@
+// ====== t3_dot.axc — Dot Chain Tests ======
+
+var passed = 0;
+var failed = 0;
+
+def assert_eq(a, b, name) {
+    if (a == b) { passed = passed + 1; }
+    else { failed = failed + 1; $print("FAIL " + name + ": expected " + string(b) + " got " + string(a)); }
+}
+def assert_true(c, name) {
+    if (c) { passed = passed + 1; }
+    else { failed = failed + 1; $print("FAIL " + name + ": expected true"); }
+}
+
+// ── 3.1 a.b.c lookup: map -> map -> value ──
+var d = map{"a": map{"b": map{"c": 42}}};
+assert_eq(d.a.b.c, 42, "3.1 dot chain map lookup");
+
+// ── 3.2 variable shadowing: var math shadows import ──
+var myvar = 100;
+assert_eq(myvar, 100, "3.2 var shadow (simple)");
+
+// ── 3.3 data value: d.a.b — map -> map -> value ──
+var d2 = map{"a": map{"b": 99}};
+assert_eq(d2.a.b, 99, "3.3 nested map dot");
+
+// ── 3.4 chain tail key not found (read) -> null ──
+assert_eq(d2.a.x, null, "3.4 missing tail key read -> null");
+
+// ── 3.5 chain tail key not found (write) -> create ──
+d2.a.x = 55;
+assert_eq(d2.a.x, 55, "3.5 missing tail key write -> create");
+
+// ── 3.6 mid-chain key not found -> KeyError ──
+var caught_mid = false;
+try { var z = d2.z.b; } catch (e) { caught_mid = true; }
+assert_true(caught_mid, "3.6 mid-chain missing -> KeyError");
+
+// ── 3.7 dot+index mixed: obj.arr[0], d2.a.b[1] ──
+var obj = map{"arr": vec[100, 200, 300]};
+assert_eq(obj.arr[0], 100, "3.7a dot+index: obj.arr[0]");
+assert_eq(obj.arr[1], 200, "3.7b dot+index: obj.arr[1]");
+var d3 = map{"inner": vec[10, 20]};
+assert_eq(d3.inner[1], 20, "3.7c dot+index: nested");
+
+// ── Summary ──
+$print("--- t3_dot: " + string(passed) + " passed, " + string(failed) + " failed ---");

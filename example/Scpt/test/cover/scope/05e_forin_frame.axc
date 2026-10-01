@@ -1,0 +1,11 @@
+// Test 5e: for-each pushes a frame implicitly
+var caught; caught = false;
+try {
+    var arr; arr = [1, 2];
+    var v;
+    for (v : arr) {
+        var fi; fi = "forin_var";
+    }
+    tmp = fi;
+} catch (e) { caught = true; }
+if (caught) { $print("PASS: 5e for-each frame var not visible outside\n"); } else { $print("FAIL\n"); }

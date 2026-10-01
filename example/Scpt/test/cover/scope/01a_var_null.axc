@@ -1,0 +1,4 @@
+// Test 1a: var x; — x=null
+var x;
+if (x == null) { $print("PASS: 1a var x; -> null\n"); }
+else { $print("FAIL: 1a expected null got " + string(x) + "\n"); }

@@ -1,0 +1,52 @@
+// truthiness rules — string/vec/map/lst/null cannot be used in control flow directly
+// they must go through an explicit bool()
+$print("--- test_truthy_string_container ---");
+
+// string used directly in if must raise TypeError
+try {
+    var s = "hello";
+    if (s) { $print("string in if - should NOT reach"); }
+} catch (e) {
+    var tp = e.what;
+    var vl = e.info;
+    $print("string in if: %1: %2", tp, vl);
+}
+
+// vec used directly in if must raise TypeError
+try {
+    var v = [1, 2];
+    if (v) { $print("vec in if - should NOT reach"); }
+} catch (e) {
+    var tp = e.what;
+    var vl = e.info;
+    $print("vec in if: %1: %2", tp, vl);
+}
+
+// map used directly in if must raise TypeError
+try {
+    var m = map{"a": 1};
+    if (m) { $print("map in if - should NOT reach"); }
+} catch (e) {
+    var tp = e.what;
+    var vl = e.info;
+    $print("map in if: %1: %2", tp, vl);
+}
+
+// lst used directly in if must raise TypeError
+try {
+    var l = lst[1, 2];
+    if (l) { $print("lst in if - should NOT reach"); }
+} catch (e) {
+    var tp = e.what;
+    var vl = e.info;
+    $print("lst in if: %1: %2", tp, vl);
+}
+
+// null used directly in if must raise TypeError
+try {
+    if (null) { $print("null in if - should NOT reach"); }
+} catch (e) {
+    var tp = e.what;
+    var vl = e.info;
+    $print("null in if: %1: %2", tp, vl);
+}

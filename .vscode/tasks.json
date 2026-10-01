@@ -1,0 +1,27 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build",
+            "type": "shell",
+            "command": "cmake --build build",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "detail": "Builds AlxLib"
+        },
+        {
+            "label": "test",
+            "type": "shell",
+            "command": "./bin/alxbase_test",
+            "detail": "Runs alxbase tests"
+        },
+        {
+            "label": "rebuild",
+            "type": "shell",
+            "command": "rm -rf build && mkdir build && cd build && cmake .. && cmake --build .",
+            "detail": "Full rebuild"
+        }
+    ]
+}

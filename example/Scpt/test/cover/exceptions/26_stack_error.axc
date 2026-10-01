@@ -1,0 +1,5 @@
+// Test: StackError - deep recursion exceeds max_stack
+def recurse() {
+    recurse();
+}
+recurse();

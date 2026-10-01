@@ -1,0 +1,70 @@
+// Demo: Container concat and map merge
+var pass = 0, fail = 0;
+
+def assert_eq(actual, expected, msg) {
+    if (actual == expected) { pass += 1; return; }
+    fail += 1;
+    $print("FAIL: %1 (got %2, expected %3)\n", msg, actual, expected);
+}
+
+def assert_true(cond, msg) {
+    if (cond) { pass += 1; return; }
+    fail += 1;
+    $print("FAIL: %1\n", msg);
+}
+
+// === Vec concat (+) ===
+var a = [1, 2];
+var b = [3, 4];
+var c = a + b;
+assert_eq(type(c), "vec", "vec a+b returns vec");
+assert_eq(c[0], 1, "vec a+b[0]=1");
+assert_eq(c[3], 4, "vec a+b[3]=4");
+
+// === Vec concat (+=) ===
+a += [5, 6];
+assert_eq(type(a), "vec", "vec a+= remains vec");
+assert_eq(a[0], 1, "vec a+=[5,6][0]=1");
+assert_eq(a[3], 6, "vec a+=[5,6][3]=6");
+
+// === Lst concat (+) ===
+var l1 = lst[10, 20];
+var l2 = lst[30, 40];
+var l3 = l1 + l2;
+assert_eq(type(l3), "lst", "lst l1+l2 returns lst");
+
+// === Lst concat (+=) ===
+l1 += lst[50];
+assert_eq(type(l1), "lst", "lst l1+= remains lst");
+
+// === Map merge (+) ===
+var m1 = map{"a": 1, "b": 2};
+var m2 = map{"c": 3};
+var m3 = m1 + m2;
+assert_eq(type(m3), "map", "map m1+m2 returns map");
+assert_eq(m3.a, 1, "map m1+m2.a=1");
+assert_eq(m3.c, 3, "map m1+m2.c=3");
+
+// === Map merge (+=) ===
+m1 += map{"d": 4};
+assert_eq(m1.d, 4, "map m1+=map{d:4}.d=4");
+
+// === Map overwrite ===
+var m4 = map{"x": 1};
+m4 += map{"x": 99};
+assert_eq(m4.x, 99, "map overwrite x=99");
+
+// === Nested containers ===
+var nested = [map{"a": 1}, map{"b": 2}];
+var merged = nested[0] + nested[1];
+assert_eq(type(merged), "map", "nested map merge returns map");
+assert_eq(merged.a, 1, "nested merge.a=1");
+assert_eq(merged.b, 2, "nested merge.b=2");
+
+// === Mixed type error ===
+var err_hit = false;
+try { var bad = [1] + map{"a": 1}; }
+catch (e) { err_hit = true; }
+assert_true(err_hit, "vec + map throws TypeError");
+
+$print("demo_container_ops: pass=%1 fail=%2\n", pass, fail);

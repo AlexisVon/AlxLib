@@ -1,0 +1,75 @@
+// T05: value reflection — call
+// @fn(); @fn(args); indirect call
+
+// 1. @fn(); indirect call of a function
+def hello() {
+    $print("hello from indirect");
+}
+var fn = "hello";
+@fn();
+$print("T05.1 @fn() OK");
+
+// 2. @fn(args); with arguments
+def twice(x) {
+    if (x * 2 == 10) { $print("twice ok"); return x * 2; }
+    $print("FAIL twice");
+    return 0;
+}
+fn = "twice";
+var r = @fn(5);
+if (r != 10) { $print("FAIL T05.2"); throw("assert"); }
+$print("T05.2 @fn(args) OK");
+
+// 3. multiple arguments
+def add(a, b) {
+    return a + b;
+}
+fn = "add";
+r = @fn(3, 7);
+if (r != 10) { $print("FAIL T05.3"); throw("assert"); }
+$print("T05.3 @fn(multi args) OK");
+
+// 4. indirect call through a top-level function name
+def math_abs(x) {
+    if (x < 0) return -x;
+    return x;
+}
+fn = "math_abs";
+r = @fn(-5);
+if (r != 5) { $print("FAIL T05.4"); throw("assert"); }
+$print("T05.4 @fn() with simple name OK");
+
+// 5. @fn(variable_args)
+def greet(name) {
+    if (name == "world") { $print("hello world ok"); return "hi"; }
+    return "unknown";
+}
+var target_fn = "greet";
+var target_name = "world";
+r = @target_fn(target_name);
+if (r != "hi") { $print("FAIL T05.5"); throw("assert"); }
+$print("T05.5 @fn(variable_args) OK");
+
+// 6. an indirect call does not trigger TCO
+def recurse(n) {
+    if (n <= 0) return "done";
+    return recurse(n - 1);
+}
+fn = "recurse";
+r = @fn(3);
+if (r != "done") { $print("FAIL T05.6"); throw("assert"); }
+$print("T05.6 @fn() TCO NOT triggered (indirect call prevents TCO) OK");
+
+// 7. the return value of an indirect call through a function variable
+def square(x) { return x * x; }
+fn = "square";
+r = @fn(6);
+if (r != 36) { $print("FAIL T05.7"); throw("assert"); }
+$print("T05.7 @fn() return value OK");
+
+// 8. NOTE: @fn() does resolve a namespace dot path — measured: fn="b.mt.abs" then @fn(-5) gives 5
+// a top-level name works too: fn="topf" then @fn(9) calls the def
+// (a value member is not callable: fn="b.mt.pi" throws, but the dotted path still navigated)
+$print("T05.8 NOTE: @fn() resolves both top-level names and namespace dot paths");
+
+$print("T05 all passed");

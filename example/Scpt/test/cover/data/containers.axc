@@ -1,0 +1,79 @@
+// Cover test: Container types
+// Tests: vec, lst, map, fill syntax, indexing, slicing
+
+// === Vec ===
+var v = [1, 2, 3, 4, 5];
+if (v[0] != 1) { $print("FAIL: v[0]\n"); }
+if (v[-1] != 5) { $print("FAIL: v[-1]\n"); }
+if (v[null] != 5) { $print("FAIL: v[null] size\n"); }
+
+// Vec push
+v[null] = 6;
+if (v[-1] != 6) { $print("FAIL: v push\n"); }
+
+// Vec explicit
+var ve = vec[10, 20, 30];
+if (ve[1] != 20) { $print("FAIL: ve[1]\n"); }
+
+// === Lst ===
+var l = lst[100, 200, 300];
+if (l[0] != 100) { $print("FAIL: l[0]\n"); }
+if (l[-1] != 300) { $print("FAIL: l[-1]\n"); }
+if (l[null] != 3) { $print("FAIL: l[null] size\n"); }
+
+// Lst from vec
+var lf = lst([1, 2, 3]);
+if (lf[0] != 1) { $print("FAIL: lf[0]\n"); }
+
+// === Map ===
+var m = map{"a": 1, "b": 2, "c": 3};
+if (m["a"] != 1) { $print("FAIL: m[a]\n"); }
+if (m.b != 2) { $print("FAIL: m.b\n"); }
+
+// Map insert
+m["d"] = 4;
+if (m["d"] != 4) { $print("FAIL: m[d] insert\n"); }
+
+// Map dot write
+m.e = 5;
+if (m.e != 5) { $print("FAIL: m.e write\n"); }
+
+// === Fill syntax ===
+var f1 = [0:5];
+if (f1[null] != 5) { $print("FAIL: f1 size\n"); }
+if (f1[0] != 0 || f1[4] != 0) { $print("FAIL: f1 values\n"); }
+
+var f2 = vec[:3];
+if (f2[null] != 3) { $print("FAIL: f2 size\n"); }
+if (f2[0] != null) { $print("FAIL: f2 null fill\n"); }
+
+var f3 = lst[1:4];
+if (f3[null] != 4) { $print("FAIL: f3 size\n"); }
+if (f3[0] != 1 || f3[3] != 1) { $print("FAIL: f3 values\n"); }
+
+var f4 = [1, 2, 3:3];
+if (f4[null] != 5) { $print("FAIL: f4 size\n"); }
+if (f4[4] != 3) { $print("FAIL: f4 suffix\n"); }
+
+// === Slicing ===
+var s = [0, 1, 2, 3, 4, 5];
+var sl = s[1, 4];
+if (sl[null] != 3) { $print("FAIL: slice size\n"); }
+if (sl[0] != 1 || sl[2] != 3) { $print("FAIL: slice values\n"); }
+
+// Slice with step
+var sl2 = s[0, 6, 2];
+if (sl2[null] != 3) { $print("FAIL: slice step size\n"); }
+if (sl2[0] != 0 || sl2[1] != 2 || sl2[2] != 4) { $print("FAIL: slice step values\n"); }
+
+// String slice
+var str = "hello world";
+var strsl = str[0, 5];
+if (strsl != "hello") { $print("FAIL: string slice\n"); }
+
+// Lst slice
+var ls = lst[10, 20, 30, 40];
+var lsl = ls[1, 3];
+if (lsl[0] != 20 || lsl[1] != 30) { $print("FAIL: lst slice\n"); }
+
+$print("containers: OK\n");

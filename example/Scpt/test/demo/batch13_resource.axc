@@ -1,0 +1,35 @@
+// Batch 13: ResourceError (§4.4, §8.8)
+// REQUIRES: --max-vecfill 10 CLI flag
+
+var passed, failed, failures; passed = 0; failed = 0; failures = "";
+
+def to_str(v) { if (v == null) { return "null"; } return string(v); }
+
+def assert_eq(actual, expected, name) {
+    if (actual == expected) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected " + to_str(expected) + " got " + to_str(actual) + "\n";
+}
+
+def assert_true(cond, name) {
+    if (cond) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected true\n";
+}
+
+// ========== §4.4 vec fill within limit ==========
+var sf; sf = [1:5];
+assert_eq(sf[null], 5, "fill [1:5] size=5 within limit");
+
+// ========== §4.4 ResourceError: vec fill exceeds max_vecfill ==========
+var hit, etype; hit = false; etype = "";
+try { var big; big = [1:20]; }
+catch (e) { hit = true; etype = e.what; }
+assert_true(hit, "fill [1:20] exceeds max_vecfill → throws");
+assert_eq(etype, "ResourceError", "fill exceeds limit → ResourceError");
+
+if (failed > 0) {
+    $print("\n=== FAIL: batch11_resource ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+}

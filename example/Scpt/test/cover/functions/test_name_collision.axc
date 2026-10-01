@@ -1,0 +1,7 @@
+// name collision: def after var -> NameError
+var x = 1;
+def x() {
+  return 2;
+}
+$print(x());
+$print("\n");

@@ -1,0 +1,75 @@
+// §7.6 String concatenation + and +=
+
+var tmp; tmp = null; // probes below assign through it
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) { if (v == null) { return "null"; } return string(v); }
+def assert_eq(a,e,n) { if (a == e) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected " + to_str(e) + " got " + to_str(a) + "\n"; }
+def assert_true(c,n) { if (c) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected true\n"; }
+
+// --- basic + string concat ---
+assert_eq("hello " + "world", "hello world", "+ string+string");
+assert_eq("a" + "b" + "c", "abc", "+ chained");
+assert_eq("" + "x", "x", "+ empty + string");
+assert_eq("x" + "", "x", "+ string + empty");
+
+// --- + with non-string auto-convert: TypeError (must use explicit string()) ---
+var nc1; nc1 = false; try { tmp = "x=" + 42; } catch (e) { nc1 = true; }
+assert_true(nc1, "+ string + int throws TypeError");
+
+var nc2; nc2 = false; try { tmp = 42 + "x"; } catch (e) { nc2 = true; }
+assert_true(nc2, "+ int + string throws TypeError");
+
+var nc3; nc3 = false; try { tmp = "x=" + 3.14; } catch (e) { nc3 = true; }
+assert_true(nc3, "+ string + float throws TypeError");
+
+var nc4; nc4 = false; try { tmp = "x=" + true; } catch (e) { nc4 = true; }
+assert_true(nc4, "+ string + bool throws TypeError");
+
+var nc5; nc5 = false; try { tmp = "x=" + null; } catch (e) { nc5 = true; }
+assert_true(nc5, "+ string + null throws TypeError");
+
+// --- explicit string() conversion for concat ---
+assert_eq("x=" + string(42), "x=42", "+ with string(42)");
+assert_eq(string(42) + " is answer", "42 is answer", "+ string(42) + string");
+assert_eq(string(1) + string(2), "12", "string(1) + string(2)");
+assert_eq("pi=" + string(3.14), "pi=3.14", "+ with string(3.14)");
+assert_eq("b=" + string(true), "b=true", "+ with string(true)");
+// string(null) is not supported
+
+// --- + concatenates strings ---
+assert_eq("hello" + "world", "helloworld", "+ string+string basic");
+
+// --- += compound concat-assign (string only) ---
+var cs1; cs1 = "hello";
+cs1 += " world";
+assert_eq(cs1, "hello world", "+=");
+cs1 += "!";
+assert_eq(cs1, "hello world!", "+=");
+
+// --- += with non-string -> TypeError ---
+var nc6; nc6 = false;
+try { var s; s = "n: "; s += 42; } catch (e) { nc6 = true; }
+assert_true(nc6, "+ with int throws TypeError");
+
+// --- += on dot path ---
+var cmap; cmap = map{"key": "val"};
+cmap.key += "ue";
+assert_eq(cmap.key, "value", "+ on map dot path");
+
+// --- += chain (right-associative) ---
+var ca; ca = "a";
+var cb; cb = "b";
+ca += cb += "c";
+assert_eq(ca, "abc", "+ chain leftmost");
+assert_eq(cb, "bc", "+ chain rightmost");
+
+if (failed > 0) {
+    $print("\n=== FAIL: 76_concat ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+} else {
+    $print("76_concat: All %1 tests passed\n", passed);
+}

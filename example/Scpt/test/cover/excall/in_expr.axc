@@ -1,0 +1,16 @@
+// Cover test: Extension function in expressions
+// Tests: $exec result used in expressions
+
+var r = $exec("echo 42");
+var output = r["output"];
+// Use exec result in string expression
+var msg = string("exit=%1", r["excode"]);
+if (type(msg) != "string") throw "string concat with exec result should work";
+
+// Use $fread/$fwrite in expression
+$fwrite("/tmp/alexis_excall_expr.txt", "hello");
+var len_ok = $fread("/tmp/alexis_excall_expr.txt") == "hello";
+if (!len_ok) throw "fread should match fwrite content";
+
+// Cleanup
+$exec("rm -f /tmp/alexis_excall_expr.txt");

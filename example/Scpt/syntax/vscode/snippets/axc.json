@@ -1,0 +1,362 @@
+{
+  "var": {
+    "prefix": "var",
+    "body": "var ${1:name} = ${2:value};",
+    "description": "Variable declaration"
+  },
+  "here": {
+    "prefix": "here",
+    "body": "here()",
+    "description": "Source position constant — map {row, col, ofst} of this call site"
+  },
+  "def": {
+    "prefix": "def",
+    "body": "def ${1:func}(${2:args}) {\n\t$0\n}",
+    "description": "Function definition"
+  },
+  "if": {
+    "prefix": "if",
+    "body": "if (${1:condition}) {\n\t$0\n}",
+    "description": "If statement"
+  },
+  "if-else": {
+    "prefix": "ifelse",
+    "body": "if (${1:condition}) {\n\t$0\n} else {\n\t\n}",
+    "description": "If-else statement"
+  },
+  "while": {
+    "prefix": "while",
+    "body": "while (${1:condition}) {\n\t$0\n}",
+    "description": "While loop"
+  },
+  "for": {
+    "prefix": "for",
+    "body": "for (var ${1:i} = ${2:0}; ${1:i} < ${3:n}; ${1:i}++) {\n\t$0\n}",
+    "description": "For loop"
+  },
+  "for-each": {
+    "prefix": "foreach",
+    "body": "for (${1:v} : ${2:collection}) {\n\t$0\n}",
+    "description": "For-each loop"
+  },
+  "switch": {
+    "prefix": "switch",
+    "body": "switch (${1:expr}) {\n\tcase ${2:value}:\n\t\t$0\n\t\tbreak;\n\tdefault:\n\t\t\n\t\tbreak;\n}",
+    "description": "Switch statement"
+  },
+  "try-catch": {
+    "prefix": "try",
+    "body": "try {\n\t$0\n} catch (${1:e}) {\n\t\n}",
+    "description": "Try-catch block"
+  },
+  "import": {
+    "prefix": "import",
+    "body": "import ${1:module};",
+    "description": "Import module"
+  },
+  "link": {
+    "prefix": "link",
+    "body": "link ${1:lib}.so as ${2:alias};",
+    "description": "Link native library"
+  },
+  "throw": {
+    "prefix": "throw",
+    "body": "throw ${1:\"error message\"};",
+    "description": "Throw exception"
+  },
+  "delete": {
+    "prefix": "delete",
+    "body": "delete ${1:var};",
+    "description": "Delete variable"
+  },
+  "return": {
+    "prefix": "return",
+    "body": "return ${1:value};",
+    "description": "Return statement"
+  },
+  "vec": {
+    "prefix": "vec",
+    "body": "vec[${1:elements}]",
+    "description": "Create vector"
+  },
+  "map": {
+    "prefix": "map",
+    "body": "map{${1:key}: ${2:value}}",
+    "description": "Create map"
+  },
+  "lst": {
+    "prefix": "lst",
+    "body": "lst(${1:elements})",
+    "description": "Create linked list"
+  },
+  "print": {
+    "prefix": "print",
+    "body": "\\$print(${1:expr})",
+    "description": "Print to stdout (host-registered extension, not core)"
+  },
+  "input": {
+    "prefix": "input",
+    "body": "\\$input()",
+    "description": "Read user input (host-registered extension, not core)"
+  },
+  "type": {
+    "prefix": "type",
+    "body": "type(${1:expr})",
+    "description": "Get type name"
+  },
+  "env": {
+    "prefix": "env",
+    "body": "env(${1:\"VAR_NAME\"})",
+    "description": "Read environment variable"
+  },
+  "tojs": {
+    "prefix": "tojs",
+    "body": "\\$tojs(${1:expr})",
+    "description": "Convert to JSON string (host-registered extension, not core)"
+  },
+  "fmjs": {
+    "prefix": "fmjs",
+    "body": "\\$fmjs(${1:json_string})",
+    "description": "Parse JSON string (host-registered extension, not core)"
+  },
+  "datetime": {
+    "prefix": "datetime",
+    "body": "\\$datetime()",
+    "description": "Current local time → map{year, month, day, h, m, s, ms, us} (host-registered extension, not core)"
+  },
+  "st.trim": {
+    "prefix": "st.trim",
+    "body": "st.trim(${1:str})",
+    "description": "Strip leading & trailing whitespace"
+  },
+  "st.upper": {
+    "prefix": "st.upper",
+    "body": "st.upper(${1:str})",
+    "description": "Convert to uppercase"
+  },
+  "st.lower": {
+    "prefix": "st.lower",
+    "body": "st.lower(${1:str})",
+    "description": "Convert to lowercase"
+  },
+  "st.replace": {
+    "prefix": "st.replace",
+    "body": "st.replace(${1:str}, ${2:old}, ${3:new})",
+    "description": "Replace all occurrences"
+  },
+  "st.startswith": {
+    "prefix": "st.startswith",
+    "body": "st.startswith(${1:str}, ${2:prefix})",
+    "description": "Check if string starts with prefix"
+  },
+  "st.endswith": {
+    "prefix": "st.endswith",
+    "body": "st.endswith(${1:str}, ${2:suffix})",
+    "description": "Check if string ends with suffix"
+  },
+  "st.repeat": {
+    "prefix": "st.repeat",
+    "body": "st.repeat(${1:str}, ${2:n})",
+    "description": "Repeat string n times"
+  },
+  "st.split": {
+    "prefix": "st.split",
+    "body": "st.split(${1:str}, ${2:delim})",
+    "description": "Split string by delimiter → vec"
+  },
+  "st.join": {
+    "prefix": "st.join",
+    "body": "st.join(${1:vec}, ${2:delim})",
+    "description": "Join vec/lst into string"
+  },
+  "ex.find": {
+    "prefix": "ex.find",
+    "body": "ex.find(${1:collection}, ${2:value})",
+    "description": "Find index of value in vec/lst"
+  },
+  "ex.keys": {
+    "prefix": "ex.keys",
+    "body": "ex.keys(${1:map})",
+    "description": "Get map keys as vec"
+  },
+  "ex.values": {
+    "prefix": "ex.values",
+    "body": "ex.values(${1:map})",
+    "description": "Get map values as vec"
+  },
+  "ex.has": {
+    "prefix": "ex.has",
+    "body": "ex.has(${1:map}, ${2:key})",
+    "description": "Check if map has key"
+  },
+  "ex.size": {
+    "prefix": "ex.size",
+    "body": "ex.size(${1:collection})",
+    "description": "Get size of vec/lst/map"
+  },
+  "ex.insert": {
+    "prefix": "ex.insert",
+    "body": "ex.insert(${1:vec}, ${2:index}, ${3:value})",
+    "description": "Insert value at index"
+  },
+  "ex.remove": {
+    "prefix": "ex.remove",
+    "body": "ex.remove(${1:vec}, ${2:index})",
+    "description": "Remove element at index"
+  },
+  "ex.sort": {
+    "prefix": "ex.sort",
+    "body": "ex.sort(${1:vec})",
+    "description": "Sort vector in place"
+  },
+  "ex.reverse": {
+    "prefix": "ex.reverse",
+    "body": "ex.reverse(${1:vec})",
+    "description": "Reverse vector in place"
+  },
+  "ex.merge": {
+    "prefix": "ex.merge",
+    "body": "ex.merge(${1:map1}, ${2:map2})",
+    "description": "Merge two maps"
+  },
+  "mt.abs": {
+    "prefix": "mt.abs",
+    "body": "mt.abs(${1:x})",
+    "description": "Absolute value"
+  },
+  "mt.sqrt": {
+    "prefix": "mt.sqrt",
+    "body": "mt.sqrt(${1:x})",
+    "description": "Square root"
+  },
+  "mt.pow": {
+    "prefix": "mt.pow",
+    "body": "mt.pow(${1:base}, ${2:exp})",
+    "description": "Power"
+  },
+  "mt.min": {
+    "prefix": "mt.min",
+    "body": "mt.min(${1:a}, ${2:b})",
+    "description": "Minimum of two values"
+  },
+  "mt.max": {
+    "prefix": "mt.max",
+    "body": "mt.max(${1:a}, ${2:b})",
+    "description": "Maximum of two values"
+  },
+  "mt.ceil": {
+    "prefix": "mt.ceil",
+    "body": "mt.ceil(${1:x})",
+    "description": "Ceiling"
+  },
+  "mt.floor": {
+    "prefix": "mt.floor",
+    "body": "mt.floor(${1:x})",
+    "description": "Floor"
+  },
+  "mt.round": {
+    "prefix": "mt.round",
+    "body": "mt.round(${1:x})",
+    "description": "Round to nearest integer"
+  },
+  "mt.sin": {
+    "prefix": "mt.sin",
+    "body": "mt.sin(${1:x})",
+    "description": "Sine"
+  },
+  "mt.cos": {
+    "prefix": "mt.cos",
+    "body": "mt.cos(${1:x})",
+    "description": "Cosine"
+  },
+  "mt.tan": {
+    "prefix": "mt.tan",
+    "body": "mt.tan(${1:x})",
+    "description": "Tangent"
+  },
+  "mt.log": {
+    "prefix": "mt.log",
+    "body": "mt.log(${1:x})",
+    "description": "Natural logarithm"
+  },
+  "mt.log2": {
+    "prefix": "mt.log2",
+    "body": "mt.log2(${1:x})",
+    "description": "Base-2 logarithm"
+  },
+  "mt.log10": {
+    "prefix": "mt.log10",
+    "body": "mt.log10(${1:x})",
+    "description": "Base-10 logarithm"
+  },
+  "mt.exp": {
+    "prefix": "mt.exp",
+    "body": "mt.exp(${1:x})",
+    "description": "Exponential (e^x)"
+  },
+  "mt.pi": {
+    "prefix": "mt.pi",
+    "body": "mt.pi()",
+    "description": "Pi constant"
+  },
+  "mt.e": {
+    "prefix": "mt.e",
+    "body": "mt.e()",
+    "description": "Euler's number"
+  },
+  "sys.exec": {
+    "prefix": "sys.exec",
+    "body": "sys.exec(${1:cmd}, ${2:timeout_ms})",
+    "description": "Execute shell command → map{code, output, success}"
+  },
+  "sys.sleep": {
+    "prefix": "sys.sleep",
+    "body": "sys.sleep(${1:ms})",
+    "description": "Sleep for milliseconds"
+  },
+  "fs.mkdir": {
+    "prefix": "fs.mkdir",
+    "body": "fs.mkdir(${1:path})",
+    "description": "Create directory"
+  },
+  "fs.rmfile": {
+    "prefix": "fs.rmfile",
+    "body": "fs.rmfile(${1:path})",
+    "description": "Remove file"
+  },
+  "fs.rmdir": {
+    "prefix": "fs.rmdir",
+    "body": "fs.rmdir(${1:path})",
+    "description": "Remove directory"
+  },
+  "fs.mvfile": {
+    "prefix": "fs.mvfile",
+    "body": "fs.mvfile(${1:src}, ${2:dst})",
+    "description": "Move/rename file"
+  },
+  "fs.open": {
+    "prefix": "fs.open",
+    "body": "fs.open(${1:path})",
+    "description": "Open and read file"
+  },
+  "fs.info": {
+    "prefix": "fs.info",
+    "body": "fs.info(${1:path})",
+    "description": "Get file info"
+  },
+  "$exec": {
+    "prefix": "exec",
+    "body": "\\$exec(${1:cmd}, ${2:timeout_ms})",
+    "description": "Execute shell command → map{code, output, success} (host-registered extension, not core)"
+  },
+  "$fread": {
+    "prefix": "fread",
+    "body": "\\$fread(${1:path})",
+    "description": "Read file → string (host-registered extension, not core)"
+  },
+  "$fwrite": {
+    "prefix": "fwrite",
+    "body": "\\$fwrite(${1:path}, ${2:content})",
+    "description": "Write file → bool (host-registered extension, not core)"
+  }
+}

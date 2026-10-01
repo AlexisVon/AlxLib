@@ -1,0 +1,4 @@
+// 3: var redefines namespace (link) — should throw NameError
+env(["../../../../bin/link"]);
+link "base.so" as b;
+var b;

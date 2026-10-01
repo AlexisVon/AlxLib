@@ -1,0 +1,11 @@
+// Test 5f: frame exit rolls variables back
+var tmp; tmp = null; // probes below assign through it
+var outer; outer = 1;
+{
+    var inner; inner = 2;
+    outer = 99;
+}
+if (outer == 99) { $print("PASS: 5f outer mod persists\n"); } else { $print("FAIL\n"); }
+var caught; caught = false;
+try { tmp = inner; } catch (e) { caught = true; }
+if (caught) { $print("PASS: 5f inner destroyed on frame exit\n"); } else { $print("FAIL\n"); }

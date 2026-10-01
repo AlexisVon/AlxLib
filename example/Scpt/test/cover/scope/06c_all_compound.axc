@@ -1,0 +1,17 @@
+// Test 6c: every compound assignment operator
+var t; t = 100;
+t += 10; t -= 20; t *= 2; t /= 3;
+if (t != 60) { $print("FAIL: t=" + string(t) + "\n"); }
+var m; m = 17;
+m %= 5;
+if (m != 2) { $print("FAIL: m%=" + string(m) + "\n"); }
+var s; s = 8;
+s <<= 2; s >>= 1;
+if (s != 16) { $print("FAIL: s=" + string(s) + "\n"); }
+var b; b = 0b1100;
+b &= 0b1010; b |= 0b0101; b ^= 0b0110;
+if (b != 0b1011) { $print("FAIL: b=" + string(b) + "\n"); }
+var s2; s2 = "hello";
+s2 += " world";
+if (s2 != "hello world") { $print("FAIL: s2=" + s2 + "\n"); }
+$print("PASS: 6c all compound assign types\n");

@@ -1,0 +1,161 @@
+// Cover test: Control flow
+// Tests: if/else, for, for-each, while, switch, break/continue/return
+
+// === if/else ===
+var x = 10;
+var result = "";
+
+if (x > 0) {
+    result = "positive";
+} else if (x < 0) {
+    result = "negative";
+} else {
+    result = "zero";
+}
+if (result != "positive") { $print("FAIL: if positive\n"); }
+
+x = -5;
+if (x > 0) {
+    result = "positive";
+} else if (x < 0) {
+    result = "negative";
+} else {
+    result = "zero";
+}
+if (result != "negative") { $print("FAIL: if negative\n"); }
+
+x = 0;
+if (x > 0) {
+    result = "positive";
+} else if (x < 0) {
+    result = "negative";
+} else {
+    result = "zero";
+}
+if (result != "zero") { $print("FAIL: if zero\n"); }
+
+// === for ===
+var sum = 0;
+var i;
+for (i = 0; i < 10; ++i) {
+    sum += i;
+}
+if (sum != 45) { $print("FAIL: for sum\n"); }
+
+// for with var
+var sum2 = 0;
+for (var j = 0; j < 5; ++j) {
+    sum2 += j;
+}
+if (sum2 != 10) { $print("FAIL: for var sum\n"); }
+
+// Infinite loop with break
+var cnt = 0;
+for (;;) {
+    if (cnt >= 5) break;
+    cnt++;
+}
+if (cnt != 5) { $print("FAIL: for break\n"); }
+
+// === for-each ===
+var arr = [10, 20, 30, 40, 50];
+var sum3 = 0;
+for (var v : arr) {
+    sum3 += v;
+}
+if (sum3 != 150) { $print("FAIL: for-each vec\n"); }
+
+var mylist = lst[1, 2, 3, 4, 5];
+var sum4 = 0;
+for (var v2 : mylist) {
+    sum4 += v2;
+}
+if (sum4 != 15) { $print("FAIL: for-each lst\n"); }
+
+// Map iteration
+var m = map{"a": 1, "b": 2, "c": 3};
+var sum5 = 0;
+for (var kv : m) {
+    sum5 += kv.value;
+}
+if (sum5 != 6) { $print("FAIL: for-each map\n"); }
+
+// === while ===
+var wsum = 0;
+var w = 0;
+while (w < 10) {
+    wsum += w;
+    w++;
+}
+if (wsum != 45) { $print("FAIL: while sum\n"); }
+
+// while with continue
+var csum = 0;
+var c = 0;
+while (c < 10) {
+    c++;
+    if (c % 2 == 0) continue;
+    csum += c;
+}
+if (csum != 25) { $print("FAIL: while continue\n"); }
+
+// === switch ===
+var sw = 2;
+var swresult = "";
+switch (sw) {
+    case 1:
+        swresult = "one";
+        break;
+    case 2:
+        swresult = "two";
+        break;
+    case 3:
+        swresult = "three";
+        break;
+    default:
+        swresult = "other";
+}
+if (swresult != "two") { $print("FAIL: switch 2\n"); }
+
+sw = 5;
+switch (sw) {
+    case 1:
+        swresult = "one";
+        break;
+    case 2:
+        swresult = "two";
+        break;
+    default:
+        swresult = "other";
+}
+if (swresult != "other") { $print("FAIL: switch default\n"); }
+
+// No fall-through
+sw = 1;
+swresult = "";
+switch (sw) {
+    case 1:
+        swresult = "one";
+    case 2:
+        swresult = "two";
+    default:
+        swresult = "other";
+}
+if (swresult != "one") { $print("FAIL: switch no fallthrough\n"); }
+
+// === break/continue in for ===
+var bsum = 0;
+for (var bi = 0; bi < 100; ++bi) {
+    if (bi == 5) break;
+    bsum += bi;
+}
+if (bsum != 10) { $print("FAIL: for break\n"); }
+
+var csum2 = 0;
+for (var ci = 0; ci < 10; ++ci) {
+    if (ci % 2 == 0) continue;
+    csum2 += ci;
+}
+if (csum2 != 25) { $print("FAIL: for continue\n"); }
+
+$print("control_flow: OK\n");

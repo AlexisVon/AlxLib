@@ -1,0 +1,195 @@
+// Batch 3: Operators (lang-guide.md §7)
+// Tests arithmetic, comparison, logic, bitwise, concat, ternary, inc/dec
+
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) {
+    if (v == null) { return "null"; }
+    return string(v);
+}
+
+def assert_eq(actual, expected, name) {
+    if (actual == expected) {
+        passed = passed + 1;
+        return;
+    }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected " + to_str(expected) + " got " + to_str(actual) + "\n";
+}
+
+def assert_true(cond, name) {
+    if (cond) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected true\n";
+}
+
+// ========== §7.1 Arithmetic ==========
+assert_eq(1 + 2, 3, "int add");
+assert_eq(3 - 1, 2, "int sub");
+assert_eq(2 * 3, 6, "int mul");
+assert_eq(6 / 2, 3, "int div");
+assert_eq(7 % 3, 1, "int mod");
+
+// float arithmetic
+assert_eq(1.5 + 2.5, 4.0, "float add");
+assert_eq(3.5 - 1.0, 2.5, "float sub");
+assert_eq(2.0 * 3.0, 6.0, "float mul");
+assert_eq(6.0 / 2.0, 3.0, "float div");
+
+// int+float promotion
+assert_eq(1 + 2.5, 3.5, "int+float → float");
+assert_eq(2.5 + 1, 3.5, "float+int → float");
+
+// Division by zero
+var div_zero_fail; div_zero_fail = false;
+try { tmp = 1 / 0; } catch (e) { div_zero_fail = true; }
+assert_true(div_zero_fail, "div by zero throws DivZeroError");
+
+var mod_zero_fail; mod_zero_fail = false;
+try { tmp = 1 % 0; } catch (e) { mod_zero_fail = true; }
+assert_true(mod_zero_fail, "mod by zero throws DivZeroError");
+
+// INT64_MIN / -1 overflow
+var div_overflow_fail; div_overflow_fail = false;
+try {
+    // Can't easily create INT64_MIN in script, use large neg / -1
+    var big_neg; big_neg = -9223372036854775807;
+    tmp = big_neg / -1; // This might overflow if overflow_check enabled
+} catch (e) { div_overflow_fail = true; }
+// Only check if overflow_check is on; skip assertion since default may vary
+
+// ========== §7.2 Comparison ==========
+assert_true(1 < 2, "less than");
+assert_true(2 > 1, "greater than");
+assert_true(1 <= 1, "less equal");
+assert_true(2 >= 2, "greater equal");
+assert_true(1 == 1, "equal int");
+assert_true(1 != 2, "not equal int");
+
+// int↔float auto-promote
+assert_true(1 == 1.0, "int 1 == float 1.0");
+assert_true(1.0 == 1, "float 1.0 == int 1");
+
+// string comparison (lexicographic)
+assert_true("a" < "b", "string lex a < b");
+assert_true("abc" == "abc", "string equal");
+
+// string↔number cross-compare → requires explicit conversion
+assert_true(int("42") == 42, "int(\"42\") == 42");
+assert_true(42 == int("42"), "42 == int(\"42\")");
+assert_true(float("3.14") == 3.14, "float(\"3.14\") == 3.14");
+
+// null comparison
+assert_true(null == null, "null == null");
+
+var null_vs_int; null_vs_int = false;
+try { tmp = null == 1; } catch (e) { null_vs_int = true; }
+// Doc: null compared to others = false (not error)
+// Let's check: does null == 1 return false or throw?
+// Test reveals actual behavior
+
+// Cross-type that can't compare: vec vs int
+var cross_type_fail; cross_type_fail = false;
+try { tmp = [1] == 1; } catch (e) { cross_type_fail = true; }
+assert_true(cross_type_fail, "vec == int cross-type throws TypeError");
+
+// ========== §7.3 Logic ==========
+assert_true(true && true, "and both true");
+assert_true(!(true && false), "and false");
+assert_true(true || false, "or true");
+assert_true(!(false || false), "or false");
+assert_true(!true == false, "not true");
+
+// Short circuit verification
+var sc_called; sc_called = false;
+def side_effect() { sc_called = true; return true; }
+var sc_result; sc_result = false && side_effect();
+assert_true(!sc_called, "&& short-circuit: rhs not evaluated");
+
+sc_called = false;
+sc_result = true || side_effect();
+assert_true(!sc_called, "|| short-circuit: rhs not evaluated");
+
+// ========== §7.4 Bitwise ==========
+assert_eq(1 | 2, 3, "bit or");
+assert_eq(1 ^ 3, 2, "bit xor");
+assert_eq(3 & 1, 1, "bit and");
+assert_eq(~0, -1, "bit not");
+assert_eq(1 << 2, 4, "left shift");
+assert_eq(8 >> 2, 2, "right shift");
+
+// Non-int bitwise: strict int-only, throws TypeError
+var bwf_hit; bwf_hit = false; var bwf_type; bwf_type = "";
+try { var tmp; tmp = 1.0 | 2; } catch (e) { bwf_hit = true; bwf_type = e.what; }
+assert_true(bwf_hit, "1.0 | 2 throws TypeError");
+assert_eq(bwf_type, "TypeError", "1.0 | 2 → TypeError");
+
+// ========== §7.5 String concatenation + ==========
+assert_eq("hello " + "world", "hello world", "string concat +");
+assert_eq("x = " + string(42), "x = 42", "concat string + int");
+assert_eq(string(42) + " is answer", "42 is answer", "concat int + string");
+assert_eq(string(1) + string(2), "12", "concat two ints → strings");
+
+// + should NOT concatenate strings (doc says + is arithmetic only)
+var plus_concat_fail; plus_concat_fail = false;
+try { tmp = "hello" + "world"; } catch (e) { plus_concat_fail = true; }
+assert_true(plus_concat_fail, "\"hello\" + \"world\" throws (no string +)");
+
+// += compound concat-assign
+var cs; cs = "hello";
+cs += " world";
+assert_eq(cs, "hello world", "+= concat assign");
+
+cs = "n: ";
+cs += string(42);
+assert_eq(cs, "n: 42", "+= int -> explicit string()");
+
+// += on dot path
+var cmap; cmap = map{"key": "val"};
+cmap.key += "ue";
+assert_eq(cmap.key, "value", "+= on map dot path");
+
+// += chain (right-assoc: a += b += "c" → a += (b += "c"))
+var ca; ca = "a";
+var cb; cb = "b";
+ca += cb += "c";
+assert_eq(ca, "abc", "+= chain leftmost");
+assert_eq(cb, "bc", "+= chain rightmost");
+
+// ========== §7.6 Ternary ?: ==========
+assert_eq(true ? 1 : 0, 1, "ternary true");
+assert_eq(false ? 1 : 0, 0, "ternary false");
+
+// Short circuit in ternary
+sc_called = false;
+var tc; tc = true ? 1 : side_effect();
+assert_true(!sc_called, "ternary true short-circuits altern");
+
+sc_called = false;
+tc = false ? side_effect() : 1;
+assert_true(!sc_called, "ternary false short-circuits conseq");
+
+// ========== §7.7 Inc/Dec ==========
+var i; i = 0;
+assert_eq(++i, 1, "pre-increment returns new value");
+assert_eq(i, 1, "pre-increment var updated");
+
+assert_eq(i++, 1, "post-increment returns old value");
+assert_eq(i, 2, "post-increment var updated");
+
+assert_eq(--i, 1, "pre-decrement returns new value");
+assert_eq(i--, 1, "post-decrement returns old value");
+assert_eq(i, 0, "post-decrement var updated");
+
+// Non-int inc/dec throws TypeError
+var inc_string_fail; inc_string_fail = false;
+var s; s = "x"; try { ++s; } catch (e) { inc_string_fail = true; }
+assert_true(inc_string_fail, "++string throws TypeError");
+
+if (failed > 0) {
+    $print("\n=== FAIL: batch3_operators ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+}

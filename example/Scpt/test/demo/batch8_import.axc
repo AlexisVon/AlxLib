@@ -1,0 +1,107 @@
+// Batch 8: Import system (§10.1, §10.2, §10.4)
+// Tests: import as, multi-instance isolation, class pattern, import chain,
+//        delete import, env paths, cross-entity isolation
+
+var tmp; tmp = null; // probes below assign through it
+import "subs/math_util.axc" as math1;
+import "subs/math_util.axc" as math2;
+import "subs/point_class.axc" as pt1;
+import "subs/point_class.axc" as pt2;
+import "subs/chain_mid.axc" as chain;
+
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) {
+    if (v == null) { return "null"; }
+    return string(v);
+}
+
+def assert_eq(actual, expected, name) {
+    if (actual == expected) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected " + to_str(expected) + " got " + to_str(actual) + "\n";
+}
+
+def assert_true(cond, name) {
+    if (cond) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected true\n";
+}
+
+// ========== §10.1 Basic import ==========
+assert_eq(math1.add(2, 3), 5, "math1.add(2,3)");
+assert_eq(math1.mul(3, 4), 12, "math1.mul(3,4)");
+assert_eq(math1.square(5), 25, "math1.square(5)");
+assert_eq(math1.module_name, "math_util", "math1.module_name");
+
+// ========== §10.2 Namespace variable read ==========
+var ns_var; ns_var = math1.call_count;
+assert_true(ns_var >= 0, "namespace variable read");
+
+// ========== §10.1 Multi-import: shared def, isolated data ==========
+assert_eq(math2.add(1, 2), 3, "math2.add works (shared def)");
+
+// Call math1 to increment its call_count
+math1.square(1);
+math1.square(1);
+var c1; c1 = math1.get_calls();
+var c2; c2 = math2.get_calls();
+assert_true(c1 != c2, "multi-import data isolation: call_count differs");
+assert_true(c1 > c2, "math1 has more calls than math2");
+
+// ========== §10.1 Class pattern ==========
+pt1.init(3, 4);
+assert_eq(pt1.get_x(), 3, "pt1 init x=3");
+assert_eq(pt1.get_y(), 4, "pt1 init y=4");
+assert_eq(pt1.len(), 25, "pt1 len()=25 (3^2+4^2)");
+
+pt1.move(1, 1);
+assert_eq(pt1.get_x(), 4, "pt1 move x→4");
+assert_eq(pt1.get_y(), 5, "pt1 move y→5");
+
+// ========== §10.1 Multi-instance class: pt1 vs pt2 ==========
+pt2.init(5, 6);
+assert_eq(pt2.get_x(), 5, "pt2 init x=5");
+assert_eq(pt2.get_y(), 6, "pt2 init y=6");
+assert_eq(pt2.len(), 61, "pt2 len()=61");
+
+// pt1 still has its own values
+assert_eq(pt1.get_x(), 4, "pt1 isolated: x still 4");
+assert_eq(pt1.len(), 41, "pt1 len()=41");
+
+// ========== §10.1 Import chain ==========
+// chain_mid computes results at top level using its own math import
+assert_eq(chain.get_chain_add_result(), 30, "chain import: add result");
+assert_eq(chain.get_chain_square_result(), 25, "chain import: square result");
+assert_eq(chain.get_mid_var(), 42, "chain import: mid_var");
+
+// ========== §10.1 Delete import namespace ==========
+import "subs/math_util.axc" as to_del;
+var del_worked; del_worked = to_del.add(1, 2);
+assert_eq(del_worked, 3, "delete import: works before delete");
+
+delete to_del;
+var del_error; del_error = false;
+try { tmp = to_del.add(3, 4); }
+catch (e) { del_error = true; assert_eq(e.what, "NameError", "delete import: → NameError"); }
+assert_true(del_error, "delete import: namespace removed");
+
+// ========== §10.4 env — set search paths ==========
+var env_ok; env_ok = false;
+try { env(["."]); env_ok = true; }
+catch (e) { }
+assert_true(env_ok, "env() callable with path array");
+
+// ========== Cross-entity: import variable write allowed ==========
+// Doc: a cross-entity variable allows read and write only, never create or delete
+// We test that writing to math1's module_name works (it's a var in math1's entity)
+math1.module_name = "renamed";
+assert_eq(math1.module_name, "renamed", "cross-entity var write allowed");
+
+if (failed > 0) {
+    $print("\n=== FAIL: batch8_import ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+}

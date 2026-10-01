@@ -1,0 +1,95 @@
+// Cover test: Type conversions
+// Tests: int(), float(), string(), bool(), vec(), map(), lst()
+
+// === int() ===
+if (int(42) != 42) { $print("FAIL: int(int)\n"); }
+if (int(3.9) != 3) { $print("FAIL: int(float)\n"); }
+if (int(true) != 1) { $print("FAIL: int(true)\n"); }
+if (int(false) != 0) { $print("FAIL: int(false)\n"); }
+if (int("123") != 123) { $print("FAIL: int(str)\n"); }
+if (int("0xFF") != 255) { $print("FAIL: int(hex)\n"); }
+if (int("0o77") != 63) { $print("FAIL: int(oct)\n"); }
+if (int("0b1010") != 10) { $print("FAIL: int(bin)\n"); }
+
+// === float() ===
+if (float(42) != 42.0) { $print("FAIL: float(int)\n"); }
+if (float(3.14) != 3.14) { $print("FAIL: float(float)\n"); }
+if (float(true) != 1.0) { $print("FAIL: float(true)\n"); }
+if (float("3.14") < 3.13 || float("3.14") > 3.15) { $print("FAIL: float(str)\n"); }
+if (float("1e5") != 100000) { $print("FAIL: float(sci)\n"); }
+
+// === string() ===
+if (string(42) != "42") { $print("FAIL: str(int)\n"); }
+if (string(3.14) != "3.14") { $print("FAIL: str(float)\n"); }
+if (string(2.0) != "2.0") { $print("FAIL: str(float integral)\n"); }
+if (string(1e-7) != "1e-07") { $print("FAIL: str(float tiny)\n"); }
+if (string(true) != "true") { $print("FAIL: str(true)\n"); }
+if (string(false) != "false") { $print("FAIL: str(false)\n"); }
+// string(null) returns empty string (null→default)
+if (string(null) != "") { $print("FAIL: str(null) = empty\n"); }
+
+// string(int, base)
+if (string(255, 16) != "0xff") { $print("FAIL: str hex\n"); }
+if (string(63, 8) != "0o77") { $print("FAIL: str oct\n"); }
+if (string(10, 2) != "0b1010") { $print("FAIL: str bin\n"); }
+if (string(42, 10) != "42") { $print("FAIL: str dec\n"); }
+
+// string(double, prec)
+if (string(3.14159, 2) != "3.14") { $print("FAIL: str prec 2\n"); }
+if (string(3.14159, 0) != "3") { $print("FAIL: str prec 0\n"); }
+
+// string(fmt, args...)
+if (string("%1 + %2", 1, 2) != "1 + 2") { $print("FAIL: str fmt\n"); }
+// %% only works with print, not string()
+// if (string("100%%") != "100%") { $print("FAIL: str %%\n"); }
+
+// === bool() ===
+if (bool(true) != true) { $print("FAIL: bool(true)\n"); }
+if (bool(false) != false) { $print("FAIL: bool(false)\n"); }
+if (bool(0) != false) { $print("FAIL: bool(0)\n"); }
+if (bool(1) != true) { $print("FAIL: bool(1)\n"); }
+if (bool(0.0) != false) { $print("FAIL: bool(0.0)\n"); }
+if (bool(1.0) != true) { $print("FAIL: bool(1.0)\n"); }
+if (bool("true") != true) { $print("FAIL: bool(true)\n"); }
+if (bool("TRUE") != true) { $print("FAIL: bool(TRUE)\n"); }
+if (bool("false") != true) { $print("FAIL: bool(false)\n"); }
+if (bool("") != false) { $print("FAIL: bool(empty)\n"); }
+if (bool(null) != false) { $print("FAIL: bool(null)\n"); }
+
+// === vec() ===
+var v1 = vec(42);
+if (v1[0] != 42 || v1[null] != 1) { $print("FAIL: vec(int)\n"); }
+
+var v2 = vec("hello");
+if (v2[0] != 104) { $print("FAIL: vec(str) codepoint\n"); }
+
+var v3 = vec(lst[1, 2, 3]);
+if (v3[0] != 1 || v3[2] != 3) { $print("FAIL: vec(lst)\n"); }
+
+// === lst() ===
+var l1 = lst(42);
+if (l1[0] != 42 || l1[null] != 1) { $print("FAIL: lst(int)\n"); }
+
+var l2 = lst([10, 20, 30]);
+if (l2[0] != 10 || l2[2] != 30) { $print("FAIL: lst(vec)\n"); }
+
+// === map() ===
+var m1 = map(map{"a": 1});
+if (m1["a"] != 1) { $print("FAIL: map(map)\n"); }
+
+// === UTF-8 encode/decode ===
+var uv = vec("你好");
+if (uv[0] != 20320 || uv[1] != 22909) { $print("FAIL: utf8 decode\n"); }
+
+var us = string([20320, 22909]);
+if (us != "你好") { $print("FAIL: utf8 encode\n"); }
+
+// === Conversion matrix edge cases ===
+// s1_recur: size==1 vec/lst
+var s1v = vec(99);
+if (int(s1v) != 99) { $print("FAIL: s1_recur vec int\n"); }
+
+var s1l = lst(88);
+if (float(s1l) != 88.0) { $print("FAIL: s1_recur lst float\n"); }
+
+$print("conversions: OK\n");

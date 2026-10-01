@@ -1,0 +1,4 @@
+// module with top-level return — importer must not be truncated
+var mval = 5;
+return 42;
+var unreachable = 1;

@@ -1,0 +1,4 @@
+// as → set: link as n; then n=1 — should throw NameError (set creates var over namespace)
+env(["../../../../bin/link"]);
+link "base.so" as b;
+b = 1;

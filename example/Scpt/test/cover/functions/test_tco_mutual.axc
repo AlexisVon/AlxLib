@@ -1,0 +1,15 @@
+// mutual recursion: not TCO-eligible, should stack overflow
+def is_even(n) {
+  if (n == 0) {
+    return true;
+  }
+  return is_odd(n - 1);
+}
+def is_odd(n) {
+  if (n == 0) {
+    return false;
+  }
+  return is_even(n - 1);
+}
+$print(is_even(2000));
+$print("\n");

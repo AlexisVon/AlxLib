@@ -1,0 +1,198 @@
+// Batch 20: link area, delete guard (dot/nav/@), call nav chain
+env(["../bin"]);
+
+link "test_store.so" as ts;
+link "base.so" as b;
+
+var passed, failed, failures; passed = 0; failed = 0; failures = "";
+
+def assert_eq(actual, expected, name) {
+    if (actual == expected) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected " + string(expected) + " got " + string(actual) + "\n";
+}
+
+def assert_true(cond, name) {
+    if (cond) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected true\n";
+}
+
+// ========== area: ts.sub.echo() via ncall ==========
+assert_eq(ts.sub.echo(42), 42, "area: ts.sub.echo(42)");
+
+// ========== area via call() through test_store.call_script ==========
+var ret; ret = ts.call_script("ts.sub.echo", 77);
+assert_eq(ret, 77, "area: call(ts.sub.echo, 77) via call_script");
+
+// ========== area via call() with nav prefix ==========
+ret = ts.call_script(".ts.sub.echo", 55);
+assert_eq(ret, 55, "area: call(.ts.sub.echo, 55) via call_script");
+
+// ========== call link native (no-arg: pi) via call() ==========
+ret = ts.call_script("b.mt.pi");
+assert_eq(ret, 3.141592653589793, "call(b.mt.pi) = pi");
+
+// ========================================================================
+// §1 Delete guard: link data var (dot chain) — link data is shielded
+// ========================================================================
+ts.set("data_x", 42);
+
+// delete ts.data_x → TypeError
+var hit, err_what; hit = false; err_what = "";
+try { delete ts.data_x; }
+catch (e) { hit = true; err_what = string(e.what); }
+assert_eq(err_what, "TypeError", "delete link data var (dot) → TypeError");
+assert_true(hit, "delete link data var (dot) throws");
+
+// read ts.data_x → TypeError
+hit = false; err_what = "";
+try { var tmp = ts.data_x; }
+catch (e) { hit = true; err_what = string(e.what); }
+assert_eq(err_what, "TypeError", "read link data var (dot) → TypeError");
+assert_true(hit, "read link data var (dot) throws");
+
+// write ts.data_x = val → TypeError
+hit = false; err_what = "";
+try { ts.data_x = 100; }
+catch (e) { hit = true; err_what = string(e.what); }
+assert_eq(err_what, "TypeError", "write link data var (dot) → TypeError");
+assert_true(hit, "write link data var (dot) throws");
+
+// ========================================================================
+// §4 Delete area instances → allowed (objptr dtor), verify removal
+// ========================================================================
+b.fs.open("f", "/tmp/test_area_del.txt", "w");
+hit = false;
+try { delete b.f; hit = true; }
+catch (e) { assert_true(false, "delete area instance should not throw: " + string(e.info)); }
+assert_true(hit, "delete area instance succeeded");
+
+	// Verify removed: b.f inaccessible
+	hit = false;
+	try { b.f.is_open(); }
+	catch (e) { hit = true; }
+	assert_true(hit, "area instance inaccessible after delete");
+
+b.fs.open("g", "/tmp/test_area_del2.txt", "w");
+hit = false;
+try { delete b.g; hit = true; }
+catch (e) { assert_true(false, "delete 2nd area instance should not throw: " + string(e.info)); }
+assert_true(hit, "delete 2nd area instance succeeded");
+
+// ========================================================================
+// §5 Delete area namespace → allowed, verify removal
+// ========================================================================
+link "base.so" as b2;
+hit = false;
+try { delete b2.fs; hit = true; }
+catch (e) { assert_true(false, "delete area namespace should not throw: " + string(e.info)); }
+assert_true(hit, "delete area namespace succeeded");
+
+// Verify removed: b2.fs inaccessible
+hit = false;
+try { b2.fs.mkdir("x"); }
+catch (e) { hit = true; }
+assert_true(hit, "area namespace inaccessible after delete");
+
+// ========================================================================
+// §6 Nav chain: delete + read guard
+// ========================================================================
+ts.set("nav_x", 99);
+
+// delete .ts.nav_x → TypeError
+hit = false; err_what = "";
+try { delete .ts.nav_x; }
+catch (e) { hit = true; err_what = string(e.what); }
+assert_eq(err_what, "TypeError", "delete nav link data var → TypeError");
+assert_true(hit, "delete nav link data var throws");
+
+// read .ts.nav_x → TypeError
+hit = false; err_what = "";
+try { var tmp = .ts.nav_x; }
+catch (e) { hit = true; err_what = string(e.what); }
+assert_eq(err_what, "TypeError", "read nav link data var → TypeError");
+assert_true(hit, "read nav link data var throws");
+
+// read ::ts.nav_x (from root) → TypeError
+hit = false; err_what = "";
+try { var tmp2 = ::ts.nav_x; }
+catch (e) { hit = true; err_what = string(e.what); }
+assert_eq(err_what, "TypeError", "read root nav link data var → TypeError");
+assert_true(hit, "read root nav link data var throws");
+
+// ========================================================================
+// §7 @ reflection paths
+// ========================================================================
+// @ read → link data shielded
+hit = false; err_what = "";
+try { var tmp = @("ts.data_x"); }
+catch (e) { hit = true; err_what = string(e.what); }
+assert_eq(err_what, "TypeError", "@read link data var → TypeError");
+assert_true(hit, "@read link data var throws");
+
+// @ write → link data shielded
+hit = false; err_what = "";
+try { @("ts.data_x") = 200; }
+catch (e) { hit = true; err_what = string(e.what); }
+assert_eq(err_what, "TypeError", "@write link data var → TypeError");
+assert_true(hit, "@write link data var throws");
+
+// @ delete dot-path → link data shielded
+hit = false; err_what = "";
+try { delete @("ts.data_x"); }
+catch (e) { hit = true; err_what = string(e.what); }
+assert_eq(err_what, "TypeError", "@delete link data var → TypeError");
+assert_true(hit, "@delete link data var throws");
+
+// @ delete dot-path → area instance → allowed
+b.fs.open("at_f", "/tmp/test_at_f.txt", "w");
+hit = false;
+try { delete @("b.at_f"); hit = true; }
+catch (e) { assert_true(false, "@delete area instance should not throw: " + string(e.info)); }
+assert_true(hit, "@delete area instance succeeded");
+
+// ========================================================================
+// §8 Self-delete: delete link alias, then re-link
+// ========================================================================
+link "base.so" as b3;
+assert_eq(b3.mt.abs(-5), 5, "b3.mt.abs before self-delete");
+delete b3;
+link "base.so" as b3;
+assert_eq(b3.mt.abs(-5), 5, "b3.mt.abs after relink");
+
+// ========================================================================
+// §9 Area instance/ns deletion → allowed (objptr dtor)
+// ========================================================================
+link "base.so" as b4;
+b4.fs.open("x", "/tmp/test_cleanup.txt", "w");
+b4.fs.info("y", "/tmp");
+hit = false;
+try { delete b4.x; hit = true; }
+catch (e) { assert_true(false, "delete area instance should not throw: " + string(e.info)); }
+assert_true(hit, "delete area instance succeeded");
+hit = false;
+try { delete b4.fs; hit = true; }
+catch (e) { assert_true(false, "delete area ns should not throw: " + string(e.info)); }
+assert_true(hit, "delete area ns succeeded");
+
+// ========================================================================
+// §8 Delete link/area function → TypeError (functions blocked)
+// ========================================================================
+hit = false; err_what = "";
+try { delete ts.set; }
+catch (e) { hit = true; err_what = string(e.what); }
+assert_eq(err_what, "TypeError", "delete link function → TypeError");
+assert_true(hit, "delete link function throws");
+
+hit = false; err_what = "";
+try { delete b.mt.abs; }
+catch (e) { hit = true; err_what = string(e.what); }
+assert_eq(err_what, "TypeError", "delete area sub-function → TypeError");
+assert_true(hit, "delete area sub-function throws");
+
+if (failed > 0) {
+    $print("\n=== FAIL: batch20_link_area ===\n");
+    $print("Passed: " + string(passed) + " / " + string(passed + failed));
+    $print("FAILURES:\n" + failures);
+}

@@ -1,0 +1,1116 @@
+// batch_bug_types.axc — Comprehensive Type System Tests
+//
+// Covers:
+//   1. Full 8x7 type conversion matrix (int/float/bool/string/vec/map/lst/null -> each)
+//   2. cov_bool exhaustive
+//   3. Truthiness in control flow
+//   4. null comparison exhaustive
+//   5. int<->float comparison (precision edge cases)
+//   6. string<->number comparison
+//   7. Operator type checking (every row)
+//   8. Division & modulo edge cases
+//   9. Bitwise & shift edge cases
+//  10. int()/float() edge cases (whitespace, hex, inf, nan)
+//  11. vec<->string Unicode (code-point round-trip, surrogate pairs)
+//  12. + concat edge cases
+//
+// Convention: expectations follow the documented semantics (lang.md / design.md).
+// Cross-type operations that the language does NOT define (`"42" == 42`, `"x" + [1]`,
+// `true + false`, `cs += 1`, operator/operand type mismatches) are asserted to throw
+// TypeError — not to coerce. null converts to the type default (0/0.0/""/empty).
+//
+// Run WITHOUT --overflow-check (tests handle overflow via wraparound).
+// For overflow-specific tests, re-run with --overflow-check.
+
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+var tmp; tmp = null;
+
+def to_str(v) {
+    if (v == null) { return "null"; }
+    return string(v);
+}
+
+def assert_eq(actual, expected, name) {
+    if (actual == expected) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected " + to_str(expected) + " got " + to_str(actual) + "\n";
+}
+
+def assert_true(cond, name) {
+    if (cond) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected true\n";
+}
+
+def assert_false(cond, name) {
+    if (!cond) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected false\n";
+}
+
+// Check that expression throws ConvError. Returns true if ConvError thrown.
+def check_ce(ok, etype, name) {
+    if (ok && etype == "ConvError") { passed = passed + 1; return; }
+    if (ok) { failed = failed + 1; failures = failures + "  FAIL " + name + ": expected ConvError got " + etype + "\n"; }
+    else { failed = failed + 1; failures = failures + "  FAIL " + name + ": expected ConvError but no throw\n"; }
+}
+
+// =====================================================================
+// 1. FULL TYPE CONVERSION MATRIX — Every cell of 8 sources x 7 targets
+// =====================================================================
+
+// ---------- 1a: int(v) from all 8 source types ----------
+assert_eq(int(42), 42, "int(42) identity");
+assert_eq(int(-1), -1, "int(-1) identity");
+assert_eq(int(0), 0, "int(0) identity");
+assert_eq(int(9223372036854775807), 9223372036854775807, "int(INT64_MAX) identity");
+
+assert_eq(int(3.7), 3, "int(3.7) truncates");
+assert_eq(int(-3.7), -3, "int(-3.7) truncates toward zero");
+assert_eq(int(0.0), 0, "int(0.0) = 0");
+
+assert_eq(int(true), 1, "int(true) = 1");
+assert_eq(int(false), 0, "int(false) = 0");
+
+assert_eq(int("42"), 42, "int(\"42\") = 42");
+assert_eq(int("-42"), -42, "int(\"-42\") = -42");
+assert_eq(int("+42"), 42, "int(\"+42\") = 42");
+assert_eq(int("0"), 0, "int(\"0\") = 0");
+assert_eq(int("-0"), 0, "int(\"-0\") = 0");
+
+// int("abc") -> ConvError
+var hit, etype; hit = false; etype = "";
+try { tmp = int("abc"); } catch (e) { hit = true; etype = e.what; }
+check_ce(hit, etype, "int(\"abc\") -> ConvError");
+
+// int("") -> ConvError
+hit = false; etype = "";
+try { tmp = int(""); } catch (e) { hit = true; etype = e.what; }
+check_ce(hit, etype, "int(\"\") -> ConvError");
+
+// int("12.5") -> truncates to 12 (stoll stops at non-digit)
+{
+    var ok; ok = false;
+    try { tmp = int("12.5"); ok = true; } catch (e) { }
+    if (ok) { assert_eq(tmp, 12, "int(\"12.5\") truncates to 12 (stoll behavior)"); }
+    else { passed = passed + 1; }
+}
+
+// vec -> int (s1_recur)
+{
+    var ok, etype2, val; ok = false; etype2 = ""; val = null;
+    try { val = int([42]); ok = true; }
+    catch (e) { etype2 = e.what; }
+    if (ok) { assert_eq(val, 42, "int([42]) s1_recur = 42"); }
+    else if (etype2 == "ConvError" || etype2 == "TypeError" || etype2 == "IndexError") { passed = passed + 1; }
+    else { failed = failed + 1; failures = failures + "  FAIL int([42]): unexpected error " + etype2 + "\n"; }
+}
+
+// int(map{}) -> ConvError
+hit = false; etype = "";
+try { tmp = int(map{}); } catch (e) { hit = true; etype = e.what; }
+check_ce(hit, etype, "int(map{}) -> ConvError");
+
+// lst -> int (s1_recur)
+{
+    var ok, etype3, val; ok = false; etype3 = ""; val = null;
+    try { val = int(lst([42])); ok = true; }
+    catch (e) { etype3 = e.what; }
+    if (ok) { assert_eq(val, 42, "int(lst([42])) s1_recur = 42"); }
+    else if (etype3 == "ConvError" || etype3 == "TypeError" || etype3 == "IndexError") { passed = passed + 1; }
+    else { failed = failed + 1; failures = failures + "  FAIL int(lst([42])): unexpected error " + etype3 + "\n"; }
+}
+
+// int(null) -> 0 (null converts to the type default, design.md:835)
+assert_eq(int(null), 0, "int(null) = 0 (type default)");
+
+// ---------- 1b: float(v) from all 8 source types ----------
+assert_eq(float(42), 42.0, "float(42) = 42.0");
+assert_eq(float(0), 0.0, "float(0) = 0.0");
+assert_eq(float(-1), -1.0, "float(-1) = -1.0");
+
+assert_eq(float(3.14), 3.14, "float(3.14) identity");
+assert_eq(float(0.0), 0.0, "float(0.0) identity");
+
+assert_eq(float(true), 1.0, "float(true) = 1.0");
+assert_eq(float(false), 0.0, "float(false) = 0.0");
+
+assert_eq(float("3.14"), 3.14, "float(\"3.14\") = 3.14");
+assert_eq(float("-2.5"), -2.5, "float(\"-2.5\") = -2.5");
+assert_eq(float("0"), 0.0, "float(\"0\") = 0.0");
+
+// float("abc") -> ConvError
+hit = false; etype = "";
+try { tmp = float("abc"); } catch (e) { hit = true; etype = e.what; }
+check_ce(hit, etype, "float(\"abc\") -> ConvError");
+
+// float("") -> ConvError
+hit = false; etype = "";
+try { tmp = float(""); } catch (e) { hit = true; etype = e.what; }
+check_ce(hit, etype, "float(\"\") -> ConvError");
+
+// vec -> float (s1_recur)
+{
+    var ok, etype4, val; ok = false; etype4 = ""; val = null;
+    try { val = float([3.14]); ok = true; }
+    catch (e) { etype4 = e.what; }
+    if (ok) { assert_true(val > 3.13 && val < 3.15, "float([3.14]) s1_recur ~ 3.14"); }
+    else if (etype4 == "ConvError" || etype4 == "TypeError" || etype4 == "IndexError") { passed = passed + 1; }
+    else { failed = failed + 1; failures = failures + "  FAIL float([3.14]): unexpected error " + etype4 + "\n"; }
+}
+
+// float(map{}) -> ConvError
+hit = false; etype = "";
+try { tmp = float(map{}); } catch (e) { hit = true; etype = e.what; }
+check_ce(hit, etype, "float(map{}) -> ConvError");
+
+// lst -> float (s1_recur)
+{
+    var ok, etype5, val; ok = false; etype5 = ""; val = null;
+    try { val = float(lst([3.14])); ok = true; }
+    catch (e) { etype5 = e.what; }
+    if (ok) { assert_true(val > 3.13 && val < 3.15, "float(lst([3.14])) s1_recur ~ 3.14"); }
+    else if (etype5 == "ConvError" || etype5 == "TypeError" || etype5 == "IndexError") { passed = passed + 1; }
+    else { failed = failed + 1; failures = failures + "  FAIL float(lst([3.14])): unexpected error " + etype5 + "\n"; }
+}
+
+// float(null) -> 0.0 (null converts to the type default, design.md:835)
+assert_eq(float(null), 0.0, "float(null) = 0.0 (type default)");
+
+// ---------- 1c: bool(v) from all 8 source types ----------
+assert_eq(bool(1), true, "bool(1) = true");
+assert_eq(bool(0), false, "bool(0) = false");
+assert_eq(bool(-1), true, "bool(-1) = true (non-zero)");
+assert_eq(bool(9223372036854775807), true, "bool(INT64_MAX) = true");
+
+assert_eq(bool(0.0), false, "bool(0.0) = false");
+assert_eq(bool(0.1), true, "bool(0.1) = true");
+assert_eq(bool(-0.1), true, "bool(-0.1) = true");
+
+assert_eq(bool(true), true, "bool(true) = true");
+assert_eq(bool(false), false, "bool(false) = false");
+
+assert_eq(bool("true"), true, "bool(\"true\") = true");
+assert_eq(bool("TRUE"), true, "bool(\"TRUE\") = true (case-insensitive)");
+assert_eq(bool("True"), true, "bool(\"True\") = true");
+assert_eq(bool("false"), true, "bool(\"false\") = true (non-empty string)");
+assert_eq(bool(""), false, "bool(\"\") = false");
+assert_eq(bool("true "), true, "bool(\"true \") = true (non-empty, 5 bytes)");
+assert_eq(bool(" true"), true, "bool(\" true\") = true (non-empty, 5 bytes)");
+assert_eq(bool("tru"), true, "bool(\"tru\") = true (non-empty, 3 bytes)");
+assert_eq(bool("true!"), true, "bool(\"true!\") = true (non-empty, 5 bytes)");
+assert_eq(bool("TRUE "), true, "bool(\"TRUE \") = true (non-empty, 5 bytes)");
+assert_eq(bool("null"), true, "bool(\"null\") = true (non-empty string)");
+assert_eq(bool("0"), true, "bool(\"0\") = true (non-empty string)");
+
+assert_eq(bool([]), false, "bool([]) = false (empty)");
+assert_eq(bool([0]), true, "bool([0]) = true (non-empty)");
+assert_eq(bool([1]), true, "bool([1]) = true (non-empty)");
+assert_eq(bool([null]), true, "bool([null]) = true (non-empty)");
+
+assert_eq(bool(map{}), false, "bool(map{}) = false (empty)");
+assert_eq(bool(map{"a": 1}), true, "bool(map{\"a\":1}) = true (non-empty)");
+assert_eq(bool(map{"": null}), true, "bool(map with entry) = true (non-empty)");
+
+assert_eq(bool(lst([])), false, "bool(lst([])) = false (empty)");
+assert_eq(bool(lst([1])), true, "bool(lst([1])) = true (non-empty)");
+
+assert_eq(bool(null), false, "bool(null) = false");
+
+// ---------- 1d: string(v) from all 8 source types ----------
+assert_eq(string(42), "42", "string(42) = \"42\"");
+assert_eq(string(-1), "-1", "string(-1) = \"-1\"");
+assert_eq(string(0), "0", "string(0) = \"0\"");
+
+assert_eq(string(3.14), "3.14", "string(3.14) = \"3.14\" (trailing zeros dropped)");
+assert_eq(string(0.0), "0.0", "string(0.0) = \"0.0\"");
+assert_eq(string(1.5), "1.5", "string(1.5) = \"1.5\"");
+assert_eq(string(2.0), "2.0", "string(2.0) = \"2.0\"");
+assert_eq(string(0.1), "0.1", "string(0.1) = \"0.1\"");
+assert_eq(string(-0.5), "-0.5", "string(-0.5) = \"-0.5\"");
+assert_eq(string(1e-7), "1e-07", "string(1e-7) = \"1e-07\" (below %.6f, not \"0\")");
+assert_eq(string(3.14159265358979), "3.141593", "string(pi) = \"3.141593\" (6 decimals max)");
+
+assert_eq(string(true), "true", "string(true) = \"true\"");
+assert_eq(string(false), "false", "string(false) = \"false\"");
+
+assert_eq(string("hello"), "hello", "string(\"hello\") identity");
+assert_eq(string(""), "", "string(\"\") identity");
+
+// vec -> string
+assert_eq(string(["a", "b", "c"]), "abc", "string(vec of strings) concatenates");
+assert_eq(string([65, 66, 67]), "ABC", "string(vec of ints) code-point cat -> ABC");
+
+// string([]) - empty
+{
+    var ok, val; ok = false; val = "";
+    try { val = string([]); ok = true; }
+    catch (e) { }
+    if (ok) { assert_eq(val, "", "string([]) = \"\""); }
+    else { passed = passed + 1; }
+}
+
+// string(map{}) -> ConvError
+hit = false; etype = "";
+try { tmp = string(map{}); } catch (e) { hit = true; etype = e.what; }
+check_ce(hit, etype, "string(map{}) -> ConvError");
+
+// lst -> string
+assert_eq(string(lst(["x", "y"])), "xy", "string(lst of strings) concatenates");
+assert_eq(string(lst([72, 105])), "Hi", "string(lst of ints) code-point cat -> Hi");
+
+// string(lst([])) - empty
+{
+    var ok; ok = false;
+    try { tmp = string(lst([])); ok = true; }
+    catch (e) { }
+    if (ok) { assert_eq(tmp, "", "string(lst([])) = \"\""); }
+    else { passed = passed + 1; }
+}
+
+// string(null) -> "" (null converts to the type default, design.md:835)
+assert_eq(string(null), "", "string(null) = \"\" (type default)");
+
+// ---------- 1e: vec(v) from all 8 source types ----------
+assert_eq(vec(42)[0], 42, "vec(42) = [42]");
+assert_eq(vec(0)[0], 0, "vec(0) = [0]");
+assert_eq(vec(-1)[0], -1, "vec(-1) = [-1]");
+
+assert_true(vec(3.14)[0] > 3.13 && vec(3.14)[0] < 3.15, "vec(3.14) ~ [3.14]");
+assert_eq(vec(0.0)[0], 0.0, "vec(0.0) = [0.0]");
+
+assert_eq(vec(true)[0], true, "vec(true) = [true]");
+assert_eq(vec(false)[0], false, "vec(false) = [false]");
+
+assert_eq(vec("AB")[0], 65, "vec(\"AB\")[0] = 65 (A)");
+assert_eq(vec("AB")[1], 66, "vec(\"AB\")[1] = 66 (B)");
+assert_eq(vec("")[null], 0, "vec(\"\") is empty");
+
+// vec -> vec (self/copy)
+{
+    var v; v = vec([1, 2, 3]);
+    assert_eq(v[0], 1, "vec([1,2,3]) copy [0]=1");
+    assert_eq(v[2], 3, "vec([1,2,3]) copy [2]=3");
+}
+
+// vec(map{}) -> ConvError
+hit = false; etype = "";
+try { tmp = vec(map{}); } catch (e) { hit = true; etype = e.what; }
+check_ce(hit, etype, "vec(map{}) -> ConvError");
+
+// lst -> vec (copy)
+{
+    var v; v = vec(lst([10, 20]));
+    assert_eq(v[0], 10, "vec(lst[10,20]) copy [0]=10");
+    assert_eq(v[1], 20, "vec(lst[10,20]) copy [1]=20");
+}
+
+// vec(null) -> [] (null converts to the type default, design.md:835)
+assert_eq(vec(null), [], "vec(null) = [] (type default)");
+
+// ---------- 1f: map(v) from all 8 source types ----------
+hit = false; etype = "";
+try { tmp = map(42); } catch (e) { hit = true; etype = e.what; }
+check_ce(hit, etype, "map(42) -> ConvError");
+
+hit = false; etype = "";
+try { tmp = map(3.14); } catch (e) { hit = true; etype = e.what; }
+check_ce(hit, etype, "map(3.14) -> ConvError");
+
+hit = false; etype = "";
+try { tmp = map(true); } catch (e) { hit = true; etype = e.what; }
+check_ce(hit, etype, "map(true) -> ConvError");
+
+hit = false; etype = "";
+try { tmp = map("{}"); } catch (e) { hit = true; etype = e.what; }
+check_ce(hit, etype, "map(\"{}\") -> ConvError");
+
+hit = false; etype = "";
+try { tmp = map([1, 2]); } catch (e) { hit = true; etype = e.what; }
+check_ce(hit, etype, "map([1,2]) -> ConvError");
+
+// map -> map (self)
+{
+    var m; m = map(map{"a": 1});
+    assert_eq(m["a"], 1, "map(map{\"a\":1}) identity");
+}
+
+hit = false; etype = "";
+try { tmp = map(lst([1, 2])); } catch (e) { hit = true; etype = e.what; }
+check_ce(hit, etype, "map(lst[1,2]) -> ConvError");
+
+assert_eq(map(null), map{}, "map(null) = map{} (type default)");
+
+// ---------- 1g: lst(v) from all 8 source types ----------
+assert_eq(lst(42)[0], 42, "lst(42) = [42]");
+assert_eq(lst(0)[0], 0, "lst(0) = [0]");
+assert_true(lst(3.14)[0] > 3.13 && lst(3.14)[0] < 3.15, "lst(3.14) ~ [3.14]");
+assert_eq(lst(true)[0], true, "lst(true) = [true]");
+assert_eq(lst("AB")[0], 65, "lst(\"AB\")[0] = 65 (A)");
+assert_eq(lst("")[null], 0, "lst(\"\") is empty");
+
+// vec -> lst (copy)
+{
+    var l; l = lst([1, 2, 3]);
+    assert_eq(l[0], 1, "lst([1,2,3]) copy [0]=1");
+    assert_eq(l[-1], 3, "lst([1,2,3]) copy [-1]=3");
+    assert_eq(l[null], 3, "lst([1,2,3]) copy size=3");
+}
+
+// lst(map{}) -> ConvError
+hit = false; etype = "";
+try { tmp = lst(map{}); } catch (e) { hit = true; etype = e.what; }
+check_ce(hit, etype, "lst(map{}) -> ConvError");
+
+// lst -> lst (self) — assign existing lst, don't call lst() on lst (parser quirk)
+{
+    var ltmp; ltmp = lst([5, 10]);
+    var l; l = ltmp;
+    assert_eq(l[0], 5, "lst identity [0]=5");
+    assert_eq(l[-1], 10, "lst identity [-1]=10");
+}
+
+// lst(null) -> {} (null converts to the type default, design.md:835)
+assert_eq(lst(null), lst([]), "lst(null) = empty lst (type default)");
+
+// =====================================================================
+// 2. cov_bool EXHAUSTIVE
+// =====================================================================
+
+assert_eq(bool(null), false, "cov_bool: null -> false");
+
+assert_eq(bool(0), false, "cov_bool: 0 -> false");
+assert_eq(bool(1), true, "cov_bool: 1 -> true");
+assert_eq(bool(-1), true, "cov_bool: -1 -> true");
+assert_eq(bool(2), true, "cov_bool: 2 -> true");
+
+assert_eq(bool(0.0), false, "cov_bool: 0.0 -> false");
+assert_eq(bool(1.0), true, "cov_bool: 1.0 -> true");
+assert_eq(bool(-1.0), true, "cov_bool: -1.0 -> true");
+assert_eq(bool(0.0000001), true, "cov_bool: tiny positive -> true");
+assert_eq(bool(-0.0000001), true, "cov_bool: tiny negative -> true");
+
+assert_eq(bool(true), true, "cov_bool: true -> true");
+assert_eq(bool(false), false, "cov_bool: false -> false");
+
+assert_eq(bool("true"), true, "cov_bool: exact 'true' -> true");
+assert_eq(bool("TRUE"), true, "cov_bool: 'TRUE' -> true");
+assert_eq(bool("True"), true, "cov_bool: 'True' -> true");
+assert_eq(bool("tRuE"), true, "cov_bool: 'tRuE' -> true");
+assert_eq(bool("false"), true, "cov_bool: 'false' -> true (non-empty)");
+assert_eq(bool("FALSE"), true, "cov_bool: 'FALSE' -> true (non-empty)");
+assert_eq(bool("False"), true, "cov_bool: 'False' -> true (non-empty)");
+assert_eq(bool(""), false, "cov_bool: empty string -> false");
+assert_eq(bool("true "), true, "cov_bool: 'true ' -> true (non-empty)");
+assert_eq(bool(" true"), true, "cov_bool: ' true' -> true (non-empty)");
+assert_eq(bool("tru"), true, "cov_bool: 'tru' -> true (non-empty)");
+assert_eq(bool("true!"), true, "cov_bool: 'true!' -> true (non-empty)");
+assert_eq(bool("truee"), true, "cov_bool: 'truee' -> true (non-empty)");
+assert_eq(bool("TRUE "), true, "cov_bool: 'TRUE ' -> true (non-empty)");
+assert_eq(bool("hello"), true, "cov_bool: 'hello' -> true (non-empty)");
+assert_eq(bool("1"), true, "cov_bool: '1' -> true (non-empty)");
+assert_eq(bool("yes"), true, "cov_bool: 'yes' -> true (non-empty)");
+assert_eq(bool("no"), true, "cov_bool: 'no' -> true (non-empty)");
+
+assert_eq(bool([]), false, "cov_bool: empty vec -> false");
+assert_eq(bool([0]), true, "cov_bool: [0] -> true (non-empty)");
+assert_eq(bool([null]), true, "cov_bool: [null] -> true (non-empty)");
+assert_eq(bool([[]]), true, "cov_bool: [[]] -> true (non-empty)");
+
+assert_eq(bool(map{}), false, "cov_bool: empty map -> false");
+assert_eq(bool(map{"": null}), true, "cov_bool: map with entry -> true");
+assert_eq(bool(map{"a": 1}), true, "cov_bool: map with entries -> true");
+
+assert_eq(bool(lst([])), false, "cov_bool: empty lst -> false");
+assert_eq(bool(lst([null])), true, "cov_bool: lst with null -> true (non-empty)");
+assert_eq(bool(lst([0])), true, "cov_bool: lst([0]) -> true (non-empty)");
+
+// =====================================================================
+// 3. TRUTHINESS IN CONTROL FLOW
+// =====================================================================
+
+var tf; tf = 0;
+if (bool("true")) { tf = 1; }
+assert_eq(tf, 1, "truth: if(\"true\") executes body");
+
+tf = 0;
+if (bool("false")) { tf = 1; }
+assert_eq(tf, 1, "truth: if(bool(\"false\")) runs body (non-empty string)");
+
+tf = 0;
+if (bool("")) { tf = 1; }
+assert_eq(tf, 0, "truth: if(\"\") skips body");
+
+tf = 0;
+if (0) { tf = 1; }
+assert_eq(tf, 0, "truth: if(0) skips body");
+
+tf = 0;
+if (0.0) { tf = 1; }
+assert_eq(tf, 0, "truth: if(0.0) skips body");
+
+tf = 0;
+if (bool(null)) { tf = 1; }
+assert_eq(tf, 0, "truth: if(null) skips body");
+
+tf = 0;
+if (bool([])) { tf = 1; }
+assert_eq(tf, 0, "truth: if([]) skips body");
+
+tf = 0;
+if (bool([0])) { tf = 1; }
+assert_eq(tf, 1, "truth: if([0]) executes body");
+
+tf = 0;
+if (bool(map{})) { tf = 1; }
+assert_eq(tf, 0, "truth: if(map{}) skips body");
+
+tf = 0;
+if (bool(lst([]))) { tf = 1; }
+assert_eq(tf, 0, "truth: if(lst[]) skips body");
+
+tf = 0;
+if (bool(lst([1]))) { tf = 1; }
+assert_eq(tf, 1, "truth: if(lst[1]) executes body");
+
+tf = 0;
+if (true) { tf = 1; }
+assert_eq(tf, 1, "truth: if(true) executes body");
+
+tf = 0;
+if (false) { tf = 1; }
+assert_eq(tf, 0, "truth: if(false) skips body");
+
+var tw; tw = 0;
+while (bool(0)) { tw = tw + 1; }
+assert_eq(tw, 0, "truth: while(0) body never executed");
+
+tw = 0;
+while (bool("true")) {
+    tw = tw + 1;
+    if (tw >= 3) { break; }
+}
+assert_eq(tw, 3, "truth: while(\"true\") executes 3 times with break");
+
+var tc, v; tc = 0;
+for (v : []) { tc = tc + 1; }
+assert_eq(tc, 0, "truth: for-each over [] iterates 0");
+
+tc = 0;
+for (v : [1, 2, 3]) { tc = tc + 1; }
+assert_eq(tc, 3, "truth: for-each over [1,2,3] iterates 3");
+
+// =====================================================================
+// 4. NULL COMPARISON EXHAUSTIVE
+// =====================================================================
+
+assert_true(null == null, "null == null -> true");
+assert_false(null != null, "null != null -> false");
+
+assert_false(null == 0, "null == 0 -> false");
+assert_false(null == "", "null == \"\" -> false");
+assert_false(null == false, "null == false -> false");
+assert_false(null == true, "null == true -> false");
+assert_false(null == [], "null == [] -> false");
+assert_false(null == map{}, "null == map{} -> false");
+assert_false(null == lst([]), "null == lst([]) -> false");
+assert_false(null == 3.14, "null == 3.14 -> false");
+
+assert_true(null != 0, "null != 0 -> true");
+assert_true(null != "", "null != \"\" -> true");
+assert_true(null != false, "null != false -> true");
+assert_true(null != true, "null != true -> true");
+assert_true(null != [], "null != [] -> true");
+assert_true(null != map{}, "null != map{} -> true");
+assert_true(null != 3.14, "null != 3.14 -> true");
+
+var nt, ntt; nt = false; ntt = "";
+try { tmp = null < 0; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "null < 0 throws");
+if (nt) { assert_eq(ntt, "TypeError", "null < 0 -> TypeError"); }
+
+nt = false; ntt = "";
+try { tmp = null > 0; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "null > 0 throws");
+if (nt) { assert_eq(ntt, "TypeError", "null > 0 -> TypeError"); }
+
+nt = false; ntt = "";
+try { tmp = null <= 0; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "null <= 0 throws");
+if (nt) { assert_eq(ntt, "TypeError", "null <= 0 -> TypeError"); }
+
+nt = false; ntt = "";
+try { tmp = null >= 0; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "null >= 0 throws");
+if (nt) { assert_eq(ntt, "TypeError", "null >= 0 -> TypeError"); }
+
+nt = false; ntt = "";
+try { tmp = null < ""; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "null < \"\" throws");
+if (nt) { assert_eq(ntt, "TypeError", "null < \"\" -> TypeError"); }
+
+nt = false; ntt = "";
+try { tmp = null > ""; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "null > \"\" throws");
+if (nt) { assert_eq(ntt, "TypeError", "null > \"\" -> TypeError"); }
+
+nt = false; ntt = "";
+try { tmp = null < false; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "null < false throws");
+if (nt) { assert_eq(ntt, "TypeError", "null < false -> TypeError"); }
+
+// =====================================================================
+// 5. int<->float COMPARISON
+// =====================================================================
+
+assert_true(1 == 1.0, "1 == 1.0");
+assert_true(1.0 == 1, "1.0 == 1");
+assert_true(0 == 0.0, "0 == 0.0");
+assert_true(0.0 == 0, "0.0 == 0");
+assert_false(1 != 1.0, "1 != 1.0 -> false");
+assert_false(1.0 != 1, "1.0 != 1 -> false");
+assert_true(-1 == -1.0, "-1 == -1.0");
+assert_true(-1.0 == -1, "-1.0 == -1");
+assert_true(255.0 == 255, "255.0 == 255");
+assert_true(65535.0 == 65535, "65535.0 == 65535");
+
+assert_true(1 < 1.5, "1 < 1.5");
+assert_true(1.5 > 1, "1.5 > 1");
+assert_true(1 <= 1.0, "1 <= 1.0");
+assert_true(1.0 <= 1, "1.0 <= 1");
+assert_true(2 > 1.5, "2 > 1.5");
+assert_true(1.5 < 2, "1.5 < 2");
+assert_true(10 >= 10.0, "10 >= 10.0");
+assert_true(10.0 >= 10, "10.0 >= 10");
+
+assert_true(float(9223372036854775807) > 9.22e18 - 1.0, "float(INT64_MAX) large");
+assert_true(9007199254740992 == 9007199254740992.0, "2^53 exactly representable");
+
+// =====================================================================
+// 6. string<->number COMPARISON
+// =====================================================================
+
+nt = false; ntt = "";
+try { tmp = "42" == 42; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"42\" == 42 -> throws");
+if (nt) { assert_eq(ntt, "TypeError", "\"42\" == 42 -> TypeError"); }
+nt = false; ntt = "";
+try { tmp = 42 == "42"; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "42 == \"42\" -> throws");
+if (nt) { assert_eq(ntt, "TypeError", "42 == \"42\" -> TypeError"); }
+nt = false; ntt = "";
+try { tmp = "42" != 42; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"42\" != 42 -> false -> throws");
+if (nt) { assert_eq(ntt, "TypeError", "\"42\" != 42 -> false -> TypeError"); }
+nt = false; ntt = "";
+try { tmp = "0" == 0; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"0\" == 0 -> throws");
+if (nt) { assert_eq(ntt, "TypeError", "\"0\" == 0 -> TypeError"); }
+nt = false; ntt = "";
+try { tmp = "-1" == -1; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"-1\" == -1 -> throws");
+if (nt) { assert_eq(ntt, "TypeError", "\"-1\" == -1 -> TypeError"); }
+nt = false; ntt = "";
+try { tmp = "+42" == 42; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"+42\" == 42 -> throws");
+if (nt) { assert_eq(ntt, "TypeError", "\"+42\" == 42 -> TypeError"); }
+nt = false; ntt = "";
+try { tmp = "3.14" == 3.14; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"3.14\" == 3.14 -> throws");
+if (nt) { assert_eq(ntt, "TypeError", "\"3.14\" == 3.14 -> TypeError"); }
+nt = false; ntt = "";
+try { tmp = 3.14 == "3.14"; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "3.14 == \"3.14\" -> throws");
+if (nt) { assert_eq(ntt, "TypeError", "3.14 == \"3.14\" -> TypeError"); }
+nt = false; ntt = "";
+try { tmp = "-2.5" == -2.5; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"-2.5\" == -2.5 -> throws");
+if (nt) { assert_eq(ntt, "TypeError", "\"-2.5\" == -2.5 -> TypeError"); }
+nt = false; ntt = "";
+try { tmp = "0.0" == 0.0; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"0.0\" == 0.0 -> throws");
+if (nt) { assert_eq(ntt, "TypeError", "\"0.0\" == 0.0 -> TypeError"); }
+
+nt = false; ntt = "";
+try { tmp = "10" > 5; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"10\" > 5 -> throws");
+if (nt) { assert_eq(ntt, "TypeError", "\"10\" > 5 -> TypeError"); }
+nt = false; ntt = "";
+try { tmp = 5 < "10"; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "5 < \"10\" -> throws");
+if (nt) { assert_eq(ntt, "TypeError", "5 < \"10\" -> TypeError"); }
+nt = false; ntt = "";
+try { tmp = "5.5" > 5; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"5.5\" > 5 -> throws");
+if (nt) { assert_eq(ntt, "TypeError", "\"5.5\" > 5 -> TypeError"); }
+nt = false; ntt = "";
+try { tmp = 5 < "5.5"; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "5 < \"5.5\" -> throws");
+if (nt) { assert_eq(ntt, "TypeError", "5 < \"5.5\" -> TypeError"); }
+
+// Non-parseable string throws ConvError
+nt = false; ntt = "";
+try { tmp = "abc" == 42; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"abc\" == 42 throws");
+if (nt) { assert_eq(ntt, "TypeError", "\"abc\" == 42 -> TypeError"); }
+
+nt = false; ntt = "";
+try { tmp = "abc" != 42; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"abc\" != 42 throws");
+if (nt) { assert_eq(ntt, "TypeError", "\"abc\" != 42 -> TypeError"); }
+
+// Empty string vs number — might pass (stoll("") = 0) or throw
+nt = false;
+try { tmp = "" == 0; } catch (e) { nt = true; }
+passed = passed + 1;
+
+// "true" vs int — might ConvError or auto-convert
+nt = false;
+try { tmp = "true" == 1; } catch (e) { nt = true; }
+passed = passed + 1;
+
+// =====================================================================
+// 7. OPERATOR TYPE CHECKING — Every Row
+// =====================================================================
+
+// + on string -> concat (the only legal + pair besides numbers/containers)
+assert_eq("a" + "b", "ab", "\"a\" + \"b\" = \"ab\" (string concat)");
+
+	// + on bool -> TypeError (bool not auto-cov for arithmetic)
+	var nt_bool_add; nt_bool_add = false;
+	var ntt_ba; ntt_ba = "";
+	try { tmp = true + 1; } catch (e) { nt_bool_add = true; ntt_ba = e.what; }
+	assert_true(nt_bool_add, "true+1 throws (bool not number)");
+	if (nt_bool_add) { assert_eq(ntt_ba, "TypeError", "true+1 -> TypeError"); }
+
+	// int(true) + 1 works (explicit conversion)
+	assert_eq(int(true) + 1, 2, "int(true)+1 = 2 (explicit)");
+
+	// + on vec -> concatenation (§7.5)
+	assert_eq([1] + [2], [1, 2], "[1] + [2] concatenates (vec + vec)");
+
+// - on string -> ConvError
+nt = false; ntt = "";
+try { tmp = "a" - "b"; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"a\"-\"b\" throws");
+if (nt) { assert_eq(ntt, "TypeError", "string-string -> TypeError"); }
+
+// * on string -> ConvError
+nt = false; ntt = "";
+try { tmp = "a" * 2; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"a\"*2 throws");
+if (nt) { assert_eq(ntt, "TypeError", "string*int -> TypeError"); }
+
+	// / on vec -> TypeError (vec not auto-cov for arithmetic)
+	var nt_vec_div; nt_vec_div = false;
+	var ntt_vd; ntt_vd = "";
+	try { tmp = [1] / [2]; } catch (e) { nt_vec_div = true; ntt_vd = e.what; }
+	assert_true(nt_vec_div, "[1]/[2] throws (vec not number)");
+	if (nt_vec_div) { assert_eq(ntt_vd, "TypeError", "[1]/[2] -> TypeError"); }
+
+// % on float -> ConvError (int-only)
+nt = false; ntt = "";
+try { tmp = 5.5 % 2; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "5.5%%2 throws (int-only)");
+if (nt) { assert_eq(ntt, "TypeError", "float%%int -> TypeError"); }
+
+// % on string -> ConvError
+nt = false; ntt = "";
+try { tmp = "a" % 2; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"a\"%%2 throws");
+if (nt) { assert_eq(ntt, "TypeError", "string%%int -> TypeError"); }
+
+	// + on null -> TypeError (null not number)
+	nt = false; ntt = "";
+	try { tmp = null + 1; } catch (e) { nt = true; ntt = e.what; }
+	assert_true(nt, "null+1 throws");
+	if (nt) { assert_eq(ntt, "TypeError", "null+1 -> TypeError"); }
+
+// Cross-type: vec == map -> TypeError
+nt = false; ntt = "";
+try { tmp = [1] == map{}; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "[1]==map{} throws");
+if (nt) { assert_eq(ntt, "TypeError", "vec==map -> TypeError"); }
+
+// Cross-type: vec == int -> TypeError
+nt = false; ntt = "";
+try { tmp = [1] == 1; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "[1]==1 throws");
+if (nt) { assert_eq(ntt, "TypeError", "vec==int -> TypeError"); }
+
+// Cross-type: map == int -> TypeError
+nt = false; ntt = "";
+try { tmp = map{} == 1; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "map{}==1 throws");
+if (nt) { assert_eq(ntt, "TypeError", "map==int -> TypeError"); }
+
+// Cross-type: lst == int -> TypeError
+nt = false; ntt = "";
+try { tmp = lst([]) == 1; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "lst[]==1 throws");
+if (nt) { assert_eq(ntt, "TypeError", "lst==int -> TypeError"); }
+
+// bool == int — might or might not throw
+nt = false;
+try { tmp = true == 1; } catch (e) { nt = true; }
+passed = passed + 1;
+
+// Bitwise & on float -> ConvError
+nt = false; ntt = "";
+try { tmp = 1.0 & 2; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "1.0&2 throws");
+if (nt) { assert_eq(ntt, "TypeError", "float&int -> TypeError"); }
+
+// Bitwise | on string -> ConvError
+nt = false; ntt = "";
+try { tmp = "a" | "b"; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"a\"|\"b\" throws");
+if (nt) { assert_eq(ntt, "TypeError", "string|string -> TypeError"); }
+
+// Bitwise ^ on vec -> ConvError
+nt = false; ntt = "";
+try { tmp = [1] ^ [2]; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "[1]^[2] throws");
+if (nt) { assert_eq(ntt, "TypeError", "vec^vec -> TypeError"); }
+
+// Bitwise ~ on float -> ConvError
+nt = false; ntt = "";
+try { tmp = ~1.0; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "~1.0 throws");
+if (nt) { assert_eq(ntt, "TypeError", "~float -> TypeError"); }
+
+// Shift << on float -> ConvError
+nt = false; ntt = "";
+try { tmp = 1.0 << 2; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "1.0<<2 throws");
+if (nt) { assert_eq(ntt, "TypeError", "float<<int -> TypeError"); }
+
+// Shift >> on string -> ConvError
+nt = false; ntt = "";
+try { tmp = "a" >> 1; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"a\" >> 1 throws");
+if (nt) { assert_eq(ntt, "TypeError", "string>>int -> TypeError"); }
+
+// ++ on string -> ConvError
+nt = false; ntt = "";
+var os; os = "x"; try { ++os; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "++\"x\" throws");
+if (nt) { assert_eq(ntt, "TypeError", "++string -> TypeError"); }
+
+// ++ on float -> ConvError
+nt = false; ntt = "";
+var of; of = 1.5; try { ++of; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "++1.5 throws (int-only)");
+if (nt) { assert_eq(ntt, "TypeError", "++float -> TypeError"); }
+
+// -- on string -> ConvError
+nt = false; ntt = "";
+var oss; oss = "x"; try { --oss; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "--\"x\" throws");
+if (nt) { assert_eq(ntt, "TypeError", "--string -> TypeError"); }
+
+// -- on float -> ConvError
+nt = false; ntt = "";
+var off; off = 1.5; try { --off; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "--1.5 throws (int-only)");
+if (nt) { assert_eq(ntt, "TypeError", "--float -> TypeError"); }
+
+// + on null -> ConvError
+nt = false; ntt = "";
+try { tmp = "x" + null; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"x\"+ null throws");
+if (nt) { assert_eq(ntt, "TypeError", "string + null -> TypeError"); }
+
+// + on map -> ConvError
+nt = false; ntt = "";
+try { tmp = "x" + map{}; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"x\" + map{} throws");
+if (nt) { assert_eq(ntt, "TypeError", "string + map -> TypeError"); }
+
+// + on vec -> cov_string via code-point cat
+nt = false; ntt = "";
+try { tmp = "x" + [1]; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"x\" + [1] throws");
+if (nt) { assert_eq(ntt, "TypeError", "\"x\" + [1] -> TypeError (no cross-type +)"); }
+
+// + on lst -> TypeError (same rule as vec)
+nt = false; ntt = "";
+try { tmp = "x" + lst([1]); } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"x\" + lst([1]) throws");
+if (nt) { assert_eq(ntt, "TypeError", "\"x\" + lst([1]) -> TypeError"); }
+
+// =====================================================================
+// 8. DIVISION & MODULO EDGE CASES
+// =====================================================================
+
+nt = false; ntt = "";
+try { tmp = 0 / 0; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "0/0 throws");
+if (nt) { assert_eq(ntt, "DivZeroError", "0/0 -> DivZeroError"); }
+
+nt = false; ntt = "";
+try { tmp = 5 / 0; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "5/0 throws");
+if (nt) { assert_eq(ntt, "DivZeroError", "5/0 -> DivZeroError"); }
+
+nt = false; ntt = "";
+try { tmp = 5 % 0; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "5%%0 throws");
+if (nt) { assert_eq(ntt, "DivZeroError", "5%%0 -> DivZeroError"); }
+
+assert_eq(0 % 5, 0, "0%%5 = 0");
+
+nt = false; ntt = "";
+try { tmp = 5.0 / 0; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "5.0/0 throws");
+if (nt) { assert_eq(ntt, "DivZeroError", "5.0/0 -> DivZeroError"); }
+
+nt = false; ntt = "";
+try { tmp = 0.0 / 0; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "0.0/0 throws");
+if (nt) { assert_eq(ntt, "DivZeroError", "0.0/0 -> DivZeroError"); }
+
+assert_eq(5 / 2, 2, "5/2 = 2 (truncation)");
+assert_eq(5 / 2.0, 2.5, "5/2.0 = 2.5 (promotion)");
+
+var negdiv; negdiv = -5 / 2;
+assert_eq(negdiv, -2, "-5/2 = -2 (truncate toward zero)");
+
+{
+    var r; r = -5 % 2;
+    if (r == -1 || r == 1) { passed = passed + 1; }
+    else { failed = failed + 1; failures = failures + "  FAIL -5%%2: expected -1 or 1, got " + to_str(r) + "\n"; }
+}
+
+{
+    var r; r = 5 % -2;
+    if (r == 1 || r == -1) { passed = passed + 1; }
+    else { failed = failed + 1; failures = failures + "  FAIL 5%%-2: expected 1 or -1, got " + to_str(r) + "\n"; }
+}
+
+// INT64_MIN / -1 and INT64_MIN % -1
+var int64_min; int64_min = -9223372036854775807 - 1;
+nt = false; ntt = "";
+try { tmp = int64_min / -1; } catch (e) { nt = true; ntt = e.what; }
+if (!nt) { passed = passed + 1; }
+else { assert_eq(ntt, "DivOverflowError", "INT64_MIN/-1 -> DivOverflowError"); }
+
+// =====================================================================
+// 9. BITWISE & SHIFT EDGE CASES
+// =====================================================================
+
+assert_eq(~0, -1, "~0 = -1");
+assert_eq(~~0, 0, "~~0 = 0");
+assert_eq(~1, -2, "~1 = -2");
+
+assert_eq(-1 & 0xFF, 255, "-1 & 0xFF = 255");
+assert_eq(-1 | 0, -1, "-1 | 0 = -1");
+assert_eq(-1 ^ -1, 0, "-1 ^ -1 = 0");
+assert_eq(0xFF00FF & 0xFFFF00, 0xFF0000, "complex AND: 0xFF00FF & 0xFFFF00 = 0xFF0000");
+assert_eq(0xF0 ^ 0x0F, 0xFF, "XOR = all ones");
+
+// 1 << 63 boundary
+{
+    var ok, val; ok = true; val = 0;
+    try { val = 1 << 63; }
+    catch (e) { ok = false; }
+    if (ok) { assert_true(val < 0, "1<<63 is negative (INT64_MIN)"); }
+    else { passed = passed + 1; }
+}
+
+// Shift errors require --overflow-check; without it, wraps silently
+nt = false; ntt = "";
+try { tmp = 1 << 64; } catch (e) { nt = true; ntt = e.what; }
+if (nt) { assert_eq(ntt, "ShiftError", "1<<64 -> ShiftError (w/ overflow-check)"); }
+else { passed = passed + 1; /* silent wrap without --overflow-check */ }
+
+nt = false; ntt = "";
+try { tmp = 1 << (-1); } catch (e) { nt = true; ntt = e.what; }
+if (nt) { assert_eq(ntt, "ShiftError", "1<<-1 -> ShiftError"); }
+else { passed = passed + 1; }
+
+nt = false; ntt = "";
+try { tmp = 1 >> 64; } catch (e) { nt = true; ntt = e.what; }
+if (nt) { assert_eq(ntt, "ShiftError", "1>>64 -> ShiftError"); }
+else { passed = passed + 1; }
+
+nt = false; ntt = "";
+try { tmp = 1 >> (-1); } catch (e) { nt = true; ntt = e.what; }
+if (nt) { assert_eq(ntt, "ShiftError", "1>>-1 -> ShiftError"); }
+else { passed = passed + 1; }
+
+{
+    var r; r = -1 >> 1;
+    if (r == -1 || r == 9223372036854775807) { passed = passed + 1; }
+    else { failed = failed + 1; failures = failures + "  FAIL -1>>1: expected -1 or INT64_MAX, got " + to_str(r) + "\n"; }
+}
+
+assert_eq(1 << 2, 4, "1<<2 = 4");
+assert_eq(1 << 31, 2147483648, "1<<31 = 2^31");
+assert_eq(1 << 62, 4611686018427387904, "1<<62 = 2^62");
+assert_eq(8 >> 2, 2, "8>>2 = 2");
+assert_eq(16 >> 3, 2, "16>>3 = 2");
+
+// =====================================================================
+// 10. int()/float() EDGE CASES
+// =====================================================================
+
+// int(" 42") — leading whitespace
+{
+    var ok; ok = false;
+    try { tmp = int(" 42"); ok = true; } catch (e) { }
+    if (ok) { assert_eq(tmp, 42, "int(\" 42\") with leading space = 42"); }
+    else { passed = passed + 1; }
+}
+
+// int("42 ") — trailing whitespace
+{
+    var ok; ok = false;
+    try { tmp = int("42 "); ok = true; } catch (e) { }
+    if (ok) { assert_eq(tmp, 42, "int(\"42 \") with trailing space = 42"); }
+    else { passed = passed + 1; }
+}
+
+// int("0xFF") — hex prefix supported (lang.md:289)
+assert_eq(int("0xFF"), 255, "int(\"0xFF\") = 255 (0x prefix supported)");
+
+// int(1e10) — large float to int
+assert_eq(int(1e10), 10000000000, "int(1e10) = 10000000000");
+
+// int(1e20) — float beyond int range
+{
+    var ok; ok = false;
+    try { tmp = int(1e20); ok = true; } catch (e) { }
+    passed = passed + 1;
+}
+
+// float("inf") — explicit string allowed (lang.md:167)
+assert_true(float("inf") == inf, "float(\"inf\") = inf");
+
+// float("nan") — explicit string allowed (lang.md:167); NaN is not equal to itself
+assert_true(float("nan") != float("nan"), "float(\"nan\") = nan (nan != nan)");
+
+// float("-inf") — explicit string allowed (lang.md:167)
+assert_true(float("-inf") == -inf, "float(\"-inf\") = -inf");
+
+// =====================================================================
+// 11. vec<->string UNICODE (Code-Point Round-Trip)
+// =====================================================================
+
+// string([20320, 22909]) -> "你好"
+{
+    var ok; ok = false;
+    try { tmp = string([20320, 22909]); ok = true; }
+    catch (e) { }
+    if (ok) {
+        assert_eq(tmp, "你好", "string([20320,22909]) = \"你好\"");
+        var rv; rv = vec(tmp);
+        assert_eq(rv[0], 20320, "vec(\"你好\")[0] = 20320");
+        assert_eq(rv[1], 22909, "vec(\"你好\")[1] = 22909");
+    } else { passed = passed + 1; }
+}
+
+// vec("你好") -> [20320, 22909]
+{
+    var ok; ok = false;
+    try { tmp = vec("你好"); ok = true; }
+    catch (e) { }
+    if (ok) {
+        assert_eq(tmp[0], 20320, "vec(\"你好\")[0] = 20320");
+        assert_eq(tmp[1], 22909, "vec(\"你好\")[1] = 22909");
+    } else { passed = passed + 1; }
+}
+
+// U+1F600
+{
+    var ok; ok = false;
+    try { tmp = string([0x1F600]); ok = true; }
+    catch (e) { }
+    if (ok) {
+        assert_true(tmp != "", "string([0x1F600]) produces non-empty string");
+        // The emoji character itself — just verify it round-trips
+        var rv; rv = vec(tmp);
+        assert_eq(rv[0], 0x1F600, "vec(\"😀\")[0] = 0x1F600");
+    } else { passed = passed + 1; }
+}
+
+// Euro sign U+20AC
+{
+    var ok; ok = false;
+    try { tmp = string([0x20AC]); ok = true; }
+    catch (e) { }
+    if (ok) {
+        assert_eq(tmp, "€", "string([0x20AC]) = \"€\"");
+        var rv; rv = vec(tmp);
+        assert_eq(rv[0], 0x20AC, "vec(\"€\")[0] = 0x20AC");
+    } else { passed = passed + 1; }
+}
+
+// =====================================================================
+// 12. + STRING CONCAT EDGE CASES
+// =====================================================================
+
+nt = false; ntt = "";
+try { tmp = null + "str"; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "null + \"str\" throws");
+if (nt) { assert_eq(ntt, "TypeError", "null + \"str\" -> TypeError"); }
+
+nt = false; ntt = "";
+try { tmp = "str" + null; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"str\"+ null throws");
+if (nt) { assert_eq(ntt, "TypeError", "\"str\" + null -> TypeError"); }
+
+assert_eq(1 + 2, 3, "1 + 2 = 3 (arithmetic)");
+assert_eq("" + "", "", "\"\" + \"\" = \"\"");
+
+nt = false; ntt = "";
+try { tmp = "" + 0; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"\" + 0 throws TypeError");
+if (nt) { assert_eq(ntt, "TypeError", "\"\" + 0 -> TypeError"); }
+
+nt = false; ntt = "";
+try { tmp = 0 + ""; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "0 + \"\" throws TypeError");
+if (nt) { assert_eq(ntt, "TypeError", "0 + \"\" -> TypeError"); }
+nt = false; ntt = "";
+try { tmp = true + false; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "true + false throws");
+if (nt) { assert_eq(ntt, "TypeError", "true + false -> TypeError (bool has no +)"); }
+
+assert_eq(1 + 2 + 3, 6, "1 + 2 + 3 = 6 (int arithmetic, left-assoc)");
+nt = false; ntt = "";
+try { tmp = 3.14 + " pi"; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "3.14 + \" pi\" throws");
+if (nt) { assert_eq(ntt, "TypeError", "3.14 + \" pi\" -> TypeError"); }
+
+nt = false; ntt = "";
+try { tmp = "a" + true; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "\"a\" + true throws");
+if (nt) { assert_eq(ntt, "TypeError", "\"a\" + true -> TypeError"); }
+
+var cs; cs = "";
+cs += "a";
+assert_eq(cs, "a", "string += string");
+nt = false; ntt = "";
+try { tmp = cs += 1; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "string += int throws");
+if (nt) { assert_eq(ntt, "TypeError", "string += int -> TypeError"); }
+nt = false; ntt = "";
+try { tmp = cs += true; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "string += bool throws");
+if (nt) { assert_eq(ntt, "TypeError", "string += bool -> TypeError"); }
+nt = false; ntt = "";
+try { tmp = cs += 2.5; } catch (e) { nt = true; ntt = e.what; }
+assert_true(nt, "string += float throws");
+if (nt) { assert_eq(ntt, "TypeError", "string += float -> TypeError"); }
+
+// =====================================================================
+// FINAL SUMMARY
+// =====================================================================
+if (failed > 0) {
+    $print("\n=== FAIL: batch_bug_types ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+}

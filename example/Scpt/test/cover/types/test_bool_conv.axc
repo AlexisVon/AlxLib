@@ -1,0 +1,38 @@
+// truthiness rules — explicit bool() conversion
+$print("--- test_bool_conv ---");
+
+// bool(int/float/bool)
+$print("bool(42) = %1", bool(42));
+$print("bool(0) = %1", bool(0));
+$print("bool(-1) = %1", bool(-1));
+$print("bool(3.14) = %1", bool(3.14));
+$print("bool(0.0) = %1", bool(0.0));
+$print("bool(true) = %1", bool(true));
+$print("bool(false) = %1", bool(false));
+
+// bool(string): "true" (4 bytes, case-insensitive) → true, anything else → false
+var str_true  = "true";
+var str_True  = "True";
+var str_TRUE  = "TRUE";
+var str_false = "false";
+var str_empty = "";
+var str_hello = "hello";
+var str_truex = "truex";
+$print("bool(true) = %1", bool(str_true));
+$print("bool(True) = %1", bool(str_True));
+$print("bool(TRUE) = %1", bool(str_TRUE));
+$print("bool(false) = %1", bool(str_false));
+$print("bool(empty) = %1", bool(str_empty));
+$print("bool(hello) = %1", bool(str_hello));
+$print("bool(truex) = %1", bool(str_truex));
+
+// bool(vec/map/lst): non-empty → true, empty → false
+$print("bool([1,2]) = %1", bool([1, 2]));
+$print("bool([]) = %1", bool([]));
+$print("bool(map{a:1}) = %1", bool(map{"a": 1}));
+$print("bool(map{}) = %1", bool(map{}));
+$print("bool(lst[1,2]) = %1", bool(lst[1, 2]));
+$print("bool(lst[]) = %1", bool(lst[]));
+
+// bool(null) → false
+$print("bool(null) = %1", bool(null));

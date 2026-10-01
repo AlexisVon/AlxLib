@@ -1,0 +1,35 @@
+// $datetime() — current local time as a numeric map
+// 8 numeric fields: year month day h m s ms us
+
+// 1. shape: a map with 8 numeric fields
+var t = $datetime();
+if (type(t) != "map") { $print("FAIL DT.1 type"); throw("assert"); }
+if (t.year < 2020 || t.year > 2100) { $print("FAIL DT.1 year: ", t.year); throw("assert"); }
+if (t.month < 1 || t.month > 12) { $print("FAIL DT.1 month"); throw("assert"); }
+if (t.day < 1 || t.day > 31) { $print("FAIL DT.1 day"); throw("assert"); }
+if (t.h < 0 || t.h > 23) { $print("FAIL DT.1 h"); throw("assert"); }
+if (t.m < 0 || t.m > 59) { $print("FAIL DT.1 m"); throw("assert"); }
+if (t.s < 0 || t.s > 59) { $print("FAIL DT.1 s"); throw("assert"); }
+if (t.ms < 0 || t.ms > 999) { $print("FAIL DT.1 ms"); throw("assert"); }
+if (t.us < 0 || t.us > 999999) { $print("FAIL DT.1 us"); throw("assert"); }
+$print("DT.1 fields: y=", t.year, " mo=", t.month, " d=", t.day,
+       " h=", t.h, " m=", t.m, " s=", t.s, " ms=", t.ms, " us=", t.us);
+$print("OK");
+
+// 2. one snapshot: ms and us agree (us = ms*1000 + the remainder)
+if (t.us < t.ms * 1000 || t.us >= (t.ms + 1) * 1000) {
+    $print("FAIL DT.2 ms/us mismatch: ", t.ms, " ", t.us);
+    throw("assert");
+}
+$print("OK");
+
+// 3. composes into an expression
+var t2 = $datetime();
+var y3 = t2.year;
+if (y3 < 2020 || y3 > 2100) { $print("FAIL DT.3"); throw("assert"); }
+$print("OK");
+
+// 4. reflection call
+var t3 = @("$datetime")();
+if (t3.year < 2020 || t3.year > 2100) { $print("FAIL DT.4"); throw("assert"); }
+$print("OK");

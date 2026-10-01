@@ -1,0 +1,20 @@
+// auto suffix demo
+// ────────────────────────────────────────────────────────────
+// import / link without file extension — the engine guesses
+// the correct suffix automatically.
+//
+// import: tries .axp first, then .axc
+// link:   tries platform suffix (.so / .dll / .dylib)
+//
+// If the path already has an extension, no guessing occurs.
+
+// link without ".so" — engine appends the platform suffix
+link "link/base" as bs;
+
+$print("sqrt(2) = %1\n", string(bs.mt.sqrt(2.0), -18));
+
+// import without ".axc" — engine appends .axp / .axc
+import "demo" as d;
+// (demo.axc exports nothing useful to print here — the point is the path resolves)
+
+delete bs;

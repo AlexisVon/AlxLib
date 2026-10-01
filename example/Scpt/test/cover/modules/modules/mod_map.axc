@@ -1,0 +1,3 @@
+// mod_map.axc - nested map module
+var a = map{"b": map{"c": 99}};
+var arr = vec[10, 20, 30];

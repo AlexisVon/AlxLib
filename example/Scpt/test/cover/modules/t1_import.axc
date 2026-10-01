@@ -1,0 +1,78 @@
+// ====== t1_import.axc — Import Tests ======
+
+var passed = 0;
+var failed = 0;
+
+def assert_eq(a, b, name) {
+    if (a == b) { passed = passed + 1; }
+    else { failed = failed + 1; $print("FAIL " + name + ": expected " + string(b) + " got " + string(a)); }
+}
+def assert_true(c, name) {
+    if (c) { passed = passed + 1; }
+    else { failed = failed + 1; $print("FAIL " + name + ": expected true"); }
+}
+
+// ── Setup: load modules ──
+import "modules/modules/mod_a.axc" as ma;
+import "modules/modules/mod_a.axc" as ma2;
+import "modules/modules/mod_class.axc" as cls;
+import "modules/modules/mod_class.axc" as cls2;
+
+// 1. syntax: import "path" as name;
+assert_true(true, "1.0 import syntax");
+
+// 2. cross-module function call
+var r = ma.greet("World");
+assert_eq(r, "Hello, World", "1.1 cross-module fn call");
+
+// 3. cross-module variable read
+assert_eq(ma.x, 42, "1.2 cross-module var read");
+
+// 4. cross-module variable write
+ma.x = 5;
+assert_eq(ma.x, 5, "1.3 cross-module var write");
+
+// 5. cross-module variable create -> error
+var caught_new = false;
+try { ma.y = 99; } catch (e) { caught_new = true; }
+assert_true(caught_new, "1.4 cross-module var create -> NameError");
+
+// 6. cross-module variable delete -> blocked (ownership guard)
+var del_blocked = false; var del_err = "";
+try { delete ma.x; } catch (e) { del_blocked = true; del_err = string(e.what); }
+assert_true(del_blocked, "1.5a cross-module var delete -> blocked");
+assert_eq(del_err, "NameError", "1.5b cross-module var delete -> NameError");
+// ma.x still accessible after blocked delete
+assert_eq(ma.x, 5, "1.5c ma.x unchanged after blocked delete");
+
+// 7. data isolation: ma2 unaffected by delete on ma
+assert_eq(ma2.x, 42, "1.6a data isolation: ma2.x unchanged after ma.x deleted");
+ma2.x = 999;
+assert_eq(ma2.x, 999, "1.6b data isolation: copy writes independent");
+
+// 8. shared defs
+var r2 = ma2.greet("Test");
+assert_eq(r2, "Hello, Test", "1.7 shared defs");
+
+// 9. delete alias -> reimport
+delete ma2;
+import "modules/modules/mod_a.axc" as ma2;
+assert_eq(ma2.x, 42, "1.8 delete alias -> reimport");
+
+// 10. alias conflict -> NameError
+// Pre-import mod_b as mb, then trying to import mod_a as mb should fail
+import "modules/modules/mod_b.axc" as mb;
+// Now MB is taken. Importing another as mb in a sub-exec would fail.
+// We verify mb works first
+assert_eq(mb.y, 100, "1.9a mod_b.y works");
+
+// 11. class pattern
+assert_eq(cls.inc(), 1, "1.10a class: inc() -> 1");
+assert_eq(cls.inc(), 2, "1.10b class: inc() -> 2");
+assert_eq(cls.get_count(), 2, "1.10c class: get_count() -> 2");
+
+// 12. fresh import -> fresh state
+assert_eq(cls2.get_count(), 0, "1.11 fresh import resets state");
+
+// ── Summary ──
+$print("--- t1_import: " + string(passed) + " passed, " + string(failed) + " failed ---");

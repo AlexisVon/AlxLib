@@ -1,0 +1,8 @@
+// Test: TypeError - index on non-container (int)
+var x = 42;
+try {
+    $print(x[0]);
+} catch (e) {
+    $print("what: %1\n", e.what);
+    $print("info: %1\n", e.info);
+}

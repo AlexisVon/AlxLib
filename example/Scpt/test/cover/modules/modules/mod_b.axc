@@ -1,0 +1,12 @@
+// mod_b.axc
+var y = 100;
+var value = 0;
+def add(a, b) {
+    return a + b;
+}
+def set_value(v) {
+    value = v;
+}
+def get_value() {
+    return value;
+}

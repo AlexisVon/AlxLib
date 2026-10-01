@@ -1,0 +1,11 @@
+// Test 5a: block {} pushes a frame implicitly
+var tmp; tmp = null; // probes below assign through it
+var outer; outer = "before";
+{
+    var inner; inner = "inside";
+    outer = "modified";
+}
+if (outer == "modified") { $print("PASS: 5a outer modified from block\n"); } else { $print("FAIL\n"); }
+var caught; caught = false;
+try { tmp = inner; } catch (e) { caught = true; }
+if (caught) { $print("PASS: 5a inner not visible outside block\n"); } else { $print("FAIL: 5a inner leaked or no error\n"); }

@@ -1,0 +1,137 @@
+// T08: edge cases
+// delete + @ combined, @ read/write on a deep namespace path, changing the @ target name inside a loop
+
+// ===== 1. delete + @ combined =====
+// read @x again after delete @x
+var x = 42;
+var name = "x";
+delete @name;
+var got_error = false;
+try {
+    var val = @name;
+    $print("ERROR: @name should fail after delete");
+} catch (e) {
+    got_error = true;
+    $print("T08.1 read after delete caught: ", e);
+}
+if (!got_error) { $print("FAIL T08.1"); throw("assert"); }
+$print("OK");
+
+// re-declare, then read and write again
+var x = 100;
+name = "x";
+var val = @name;
+$print("T08.1b re-declare + @ read:", val);
+if (val != 100) { $print("FAIL T08.1b"); throw("assert"); }
+$print("OK");
+
+// ===== 2. @ read and write on a deep namespace path =====
+var deep = map();
+deep.level1 = map();
+deep.level1.level2 = map();
+deep.level1.level2.level3 = map();
+deep.level1.level2.level3.info = 999;
+
+var dp = "deep.level1.level2.level3.info";
+var dval = @dp;
+$print("T08.2 deep read:", dval);
+if (dval != 999) { $print("FAIL T08.2"); throw("assert"); }
+$print("OK");
+
+// write a deep path
+@dp = 777;
+$print("T08.2b deep write:", deep.level1.level2.level3.info);
+// @dp = 777 navigates the dotted path: with dp = "deep.level1.level2.level3.info" the
+// write lands on that leaf (measured), so no top-level "deep.level1..." variable appears
+// what this block tests is reading and writing a deep path through a string
+var long_path = "deep.level1.level2.level3.info";
+// read the path
+var rpath = @long_path;
+$print("T08.2c deep read via string:", rpath);
+if (rpath != 777) { $print("FAIL T08.2c"); throw("assert"); }
+$print("OK (note: deep path read navigation works)");
+
+// write the deep path through a string: @long_path = 555 navigates to the same leaf
+// the direct form below reaches it without going through @
+deep.level1.level2.level3.info = 555;
+$print("T08.2d direct write to deep path:", deep.level1.level2.level3.info);
+if (deep.level1.level2.level3.info != 555) { $print("FAIL T08.2d"); throw("assert"); }
+$print("OK");
+
+// ===== 3. changing the @ target name inside a loop =====
+var a = 1;
+var b = 2;
+var cur = "a";
+var results = [0, 0, 0];
+
+// changing the @ target name: switching between variables by changing cur
+var i = 0;
+while (i < 3) {
+    if (i == 0) {
+        cur = "a";
+    } else if (i == 1) {
+        cur = "b";
+    } else {
+        cur = "a";
+    }
+    var rval = @cur;
+    results[i] = rval;
+    i = i + 1;
+}
+$print("T08.3 loop results:", results[0], results[1], results[2]);
+if (results[0] != 1) { $print("FAIL T08.3a"); throw("assert"); }
+if (results[1] != 2) { $print("FAIL T08.3b"); throw("assert"); }
+if (results[2] != 1) { $print("FAIL T08.3c"); throw("assert"); }
+$print("OK");
+
+// writing different variables through @ inside a loop
+i = 0;
+cur = "a";
+while (i < 2) {
+    if (i == 0) {
+        cur = "a";
+        @cur = 100;
+    } else {
+        cur = "b";
+        @cur = 200;
+    }
+    i = i + 1;
+}
+$print("T08.4 loop write a=", a, " b=", b);
+if (a != 100) { $print("FAIL T08.4a"); throw("assert"); }
+if (b != 200) { $print("FAIL T08.4b"); throw("assert"); }
+$print("OK");
+
+// ===== 4. indirect reflection call: @name as a function argument =====
+def process(n) {
+    $print("T08.5 process called with:", n);
+    return n * 2;
+}
+var fn_name = "process";
+var result = @fn_name(21);
+$print("T08.5 indirect call result:", result);
+if (result != 42) { $print("FAIL T08.5"); throw("assert"); }
+$print("OK");
+
+// ===== 5. @(expr) write =====
+var target_var = "z";
+var z = 0;
+@(target_var) = 888;
+$print("T08.6 @(expr)= val:", z);
+if (z != 888) { $print("FAIL T08.6"); throw("assert"); }
+$print("OK");
+
+// ===== 6. @ combined with a conditional =====
+var cond = true;
+var res_name = "if_true";
+var if_true = 0;
+
+if (cond) {
+    // read the variable of that name
+    @res_name = 111;
+}
+$print("T08.7 @ in conditional:", if_true);
+if (if_true != 111) { $print("FAIL T08.7"); throw("assert"); }
+$print("OK");
+
+$print("T08 all passed");

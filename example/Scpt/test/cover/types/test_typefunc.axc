@@ -1,0 +1,12 @@
+// the type() function — every type returns the right type-name string
+$print("--- test_typefunc ---");
+
+var sv = "hello";
+$print("type(42) = %1", type(42));
+$print("type(3.14) = %1", type(3.14));
+$print("type(hello) = %1", type(sv));
+$print("type(true) = %1", type(true));
+$print("type(null) = %1", type(null));
+$print("type([1,2]) = %1", type([1, 2]));
+$print("type(lst[]) = %1", type(lst[]));
+$print("type(map{}) = %1", type(map{}));

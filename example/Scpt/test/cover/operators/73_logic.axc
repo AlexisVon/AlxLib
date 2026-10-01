@@ -1,0 +1,91 @@
+// §7.3 Logic — &&, ||, !, short-circuit, operand type checking
+
+var tmp; tmp = null; // probes below assign through it
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) { if (v == null) { return "null"; } return string(v); }
+def assert_eq(a,e,n) { if (a == e) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected " + to_str(e) + " got " + to_str(a) + "\n"; }
+def assert_true(c,n) { if (c) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected true\n"; }
+def assert_false(c,n) { if (!c) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected false\n"; }
+
+// --- && ---
+assert_true(true && true, "true && true");
+assert_false(true && false, "true && false");
+assert_false(false && true, "false && true");
+assert_false(false && false, "false && false");
+
+// --- || ---
+assert_true(true || false, "true || false");
+assert_true(false || true, "false || true");
+assert_false(false || false, "false || false");
+assert_true(true || true, "true || true");
+
+// --- && short-circuit ---
+var sc1; sc1 = false;
+def side_effect() { sc1 = true; return true; }
+var r1; r1 = false && side_effect();
+assert_false(sc1, "&& short-circuit: false && side_effect() skips rhs");
+assert_false(r1, "&& false result");
+
+sc1 = false;
+r1 = true && side_effect();
+assert_true(sc1, "&& no short-circuit when lhs true");
+assert_true(r1, "&& true result");
+
+// --- || short-circuit ---
+sc1 = false;
+r1 = true || side_effect();
+assert_false(sc1, "|| short-circuit: true || side_effect() skips rhs");
+assert_true(r1, "|| true result");
+
+sc1 = false;
+r1 = false || side_effect();
+assert_true(sc1, "|| no short-circuit when lhs false");
+assert_true(r1, "|| result when lhs false");
+
+// --- ! (not) ---
+assert_false(!true, "!true");
+assert_true(!false, "!false");
+assert_true(!0, "!0 == true");
+assert_false(!1, "!1 == false");
+assert_false(!(-1), "!(-1) == false");
+
+// --- falsy (0 is falsy) ---
+assert_false(0 && true, "0 && true is false (0 is falsy)");
+assert_true(1 && true, "1 && true is true");
+assert_false(0 || false, "0 || false is false");
+assert_true(0 || 1, "0 || 1 is true");
+
+// --- non-bool/int/float operand -> TypeError ---
+var lt1; lt1 = false; try { tmp = "a" && true; } catch (e) { lt1 = true; }
+assert_true(lt1, "string && bool -> TypeError");
+
+var lt2; lt2 = false; try { tmp = true && "a"; } catch (e) { lt2 = true; }
+assert_true(lt2, "bool && string -> TypeError");
+
+var lt3; lt3 = false; try { tmp = "a" || true; } catch (e) { lt3 = true; }
+assert_true(lt3, "string || bool -> TypeError");
+
+var lt4; lt4 = false; try { tmp = !"a"; } catch (e) { lt4 = true; }
+assert_true(lt4, "!string -> TypeError");
+
+var lt5; lt5 = false; try { tmp = [1] && true; } catch (e) { lt5 = true; }
+assert_true(lt5, "vec && bool -> TypeError");
+
+var lt6; lt6 = false; try { tmp = null && true; } catch (e) { lt6 = true; }
+assert_true(lt6, "null && bool -> TypeError");
+
+// --- mixed int/bool in logic ---
+assert_true(1 && true, "int 1 && bool true");
+assert_true(true && 1, "bool true && int 1");
+assert_true(1 || false, "int 1 || bool false");
+
+if (failed > 0) {
+    $print("\n=== FAIL: 73_logic ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+} else {
+    $print("73_logic: All %1 tests passed\n", passed);
+}

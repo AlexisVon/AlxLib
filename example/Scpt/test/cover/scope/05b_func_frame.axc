@@ -1,0 +1,12 @@
+// Test 5b: a function call pushes a frame
+def outer_f() {
+    var of_v; of_v = "outer";
+    def inner_f() {
+        var inf_v; inf_v = "inner";
+        if (of_v == "outer") { $print("PASS: 5b inner reads outer\n"); } else { $print("FAIL\n"); }
+        return inf_v;
+    }
+    return inner_f();
+}
+var r; r = outer_f();
+if (r == "inner") { $print("PASS: 5b inner returns own var\n"); } else { $print("FAIL\n"); }

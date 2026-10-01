@@ -1,0 +1,22 @@
+// Parent nav from imported module: ::root_var access
+// Uses :: (root module) nav from within the test script
+
+var root_val = 12345;
+
+// :: access to root variable from current (root) module
+if (::root_val != 12345) {
+    throw "::root_val nav failed";
+}
+
+var ok = false;
+try {
+    var dummy = ..root_val;
+} catch (e) {
+    ok = true;
+    if (e.what != "NavError") {
+        throw ".. from root expected NavError, got " + e.what;
+    }
+}
+if (!ok) {
+    throw ".. from root should throw NavError";
+}

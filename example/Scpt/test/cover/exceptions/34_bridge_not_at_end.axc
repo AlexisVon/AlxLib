@@ -1,0 +1,3 @@
+// M-P5: bridge .(...) must be at chain end — .b after bridge is invalid
+var m = map{"a": map{"b": 42}};
+var x = m.(a).b;

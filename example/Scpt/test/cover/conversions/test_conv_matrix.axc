@@ -1,0 +1,97 @@
+// §5.2: Full 8×8 type conversion matrix
+// lang-guide §5.2
+
+var passed = 0;
+var failed = 0;
+var failures = "";
+
+def to_str(v) { if (v == null) { return "null"; } return string(v); }
+def assert_eq(a, e, n) { if (a == e) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected " + to_str(e) + " got " + to_str(a) + "\n"; }
+def assert_true(c, n) { if (c) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected true\n"; }
+
+// ---- int → others ----
+assert_eq(float(42), 42.0, "int→float promotion");
+assert_eq(bool(42), true, "int(≠0)→bool = true");
+assert_eq(bool(0), false, "int(0)→bool = false");
+assert_eq(string(42), "42", "int→string");
+assert_eq(vec(42)[0], 42, "int→vec = [int]");
+assert_eq(lst(42)[0], 42, "int→lst = [int]");
+// int→map is ConvError
+var _hit = false; try { var _t = map(42); } catch(_e) { _hit = true; }
+assert_true(_hit, "int→map ConvError");
+
+// ---- float → others ----
+assert_eq(int(3.14), 3, "float→int truncation");
+assert_eq(bool(0.1), true, "float(≠0)→bool = true");
+assert_eq(bool(0.0), false, "float(0.0)→bool = false");
+assert_eq(vec(3.14)[0], 3.14, "float→vec = [float]");
+assert_eq(lst(3.14)[0], 3.14, "float→lst = [float]");
+_hit = false; try { var _t = map(3.14); } catch(_e) { _hit = true; }
+assert_true(_hit, "float→map ConvError");
+
+// ---- bool → others ----
+assert_eq(int(true), 1, "bool(true)→int = 1");
+assert_eq(int(false), 0, "bool(false)→int = 0");
+assert_eq(float(true), 1.0, "bool(true)→float = 1.0");
+assert_eq(string(true), "true", "bool(true)→string");
+assert_eq(string(false), "false", "bool(false)→string");
+assert_eq(vec(true)[0], true, "bool→vec = [bool]");
+_hit = false; try { var _t = map(true); } catch(_e) { _hit = true; }
+assert_true(_hit, "bool→map ConvError");
+
+// ---- string → others ----
+assert_eq(int("42"), 42, "string→int");
+assert_eq(int("0xFF"), 255, "string '0xFF'→int");
+assert_eq(float("3.14"), 3.14, "string→float");
+assert_eq(bool("true"), true, "string 'true'→bool");
+assert_eq(bool("false"), true, "non-empty string→bool");
+
+// ---- string → vec (UTF-8 code points) ----
+var sv = vec("AB");
+assert_eq(sv[0], 65, "vec(\"AB\")[0] = 65 'A'");
+assert_eq(sv[1], 66, "vec(\"AB\")[1] = 66 'B'");
+
+// ---- string → lst (UTF-8 code points) ----
+var sl = lst("AB");
+assert_eq(sl[0], 65, "lst(\"AB\")[0] = 65");
+
+// ---- vec → others (s1_recur for size=1) ----
+assert_eq(int([42]), 42, "vec([42])→int = 42");
+assert_eq(float([3.14]), 3.14, "vec([3.14])→float = 3.14");
+
+// ---- vec → string (all-string concatenation) ----
+assert_eq(string(["a", "b"]), "ab", "vec of strings → string concat");
+assert_eq(string(["x"]), "x", "vec single string → string");
+
+// ---- vec → bool ----
+assert_eq(bool([1]), true, "non-empty vec→bool = true");
+assert_eq(bool([]), false, "empty vec→bool = false");
+
+// ---- lst → bool ----
+assert_eq(bool(lst([1])), true, "non-empty lst→bool = true");
+assert_eq(bool(lst([])), false, "empty lst→bool = false");
+
+// ---- map → bool ----
+assert_eq(bool(map{"a": 1}), true, "non-empty map→bool = true");
+assert_eq(bool(map{}), false, "empty map→bool = false");
+
+// ---- null → others (null→default) ----
+assert_eq(bool(null), false, "null→bool = false");
+assert_eq(int(null), 0, "null→int = 0");
+assert_eq(float(null), 0.0, "null→float = 0.0");
+assert_eq(string(null), "", "null→string = empty");
+
+// ---- fmjs failure → null ----
+assert_eq($fmjs("not json"), null, "fmjs bad input returns null");
+assert_eq($fmjs("{bad}"), null, "fmjs malformed returns null");
+
+// ---- tojs compact mode ----
+var compact = $tojs([1, 2, 3], true);
+assert_true(compact != "", "tojs compact non-empty");
+
+// Summary
+if (failed > 0) {
+    $print("\n=== FAIL: test_conv_matrix ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+}

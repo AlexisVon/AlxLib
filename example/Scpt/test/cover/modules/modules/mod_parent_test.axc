@@ -1,0 +1,5 @@
+// mod_parent_test.axc — for testing .. nav
+var parent_x = 100;
+def get_parent_x() {
+    return ..parent_x;
+}

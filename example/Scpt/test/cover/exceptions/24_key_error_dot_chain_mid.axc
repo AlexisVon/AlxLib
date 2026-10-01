@@ -1,0 +1,8 @@
+// Test: KeyError - dot chain mid segment doesn't exist
+var d = map{"a": map{"b": 1}};
+try {
+    $print(d.a.nonexist.b);
+} catch (e) {
+    $print("what: %1\n", e.what);
+    $print("info: %1\n", e.info);
+}

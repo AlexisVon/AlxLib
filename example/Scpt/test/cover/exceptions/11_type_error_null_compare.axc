@@ -1,0 +1,7 @@
+// Test: TypeError - null ordered comparison (<, >, <=, >= with null)
+try {
+    var r = null < 5;
+} catch (e) {
+    $print("what: %1\n", e.what);
+    $print("info: %1\n", e.info);
+}

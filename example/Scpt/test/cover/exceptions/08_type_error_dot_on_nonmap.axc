@@ -1,0 +1,9 @@
+// Test: TypeError - dot access on non-map
+// String indexing with a string key should fail
+try {
+    var s = "hello";
+    $print(s.x);
+} catch (e) {
+    $print("what: %1\n", e.what);
+    $print("info: %1\n", e.info);
+}

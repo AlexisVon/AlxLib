@@ -1,0 +1,6 @@
+// Test 7a: reading v[0], v[-1], v[null]
+var v; v = [10, 20, 30];
+if (v[0] == 10) { $print("PASS: 7a vec[0] read\n"); } else { $print("FAIL\n"); }
+if (v[1] == 20) { $print("PASS: 7a vec[1] read\n"); } else { $print("FAIL\n"); }
+if (v[-1] == 30) { $print("PASS: 7a vec[-1] read\n"); } else { $print("FAIL\n"); }
+if (v[null] == 3) { $print("PASS: 7a vec[null] read = size\n"); } else { $print("FAIL\n"); }

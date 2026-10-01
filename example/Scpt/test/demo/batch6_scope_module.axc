@@ -1,0 +1,230 @@
+// Batch 6: Scope, Module, Import, Link (lang-guide.md §10, §11)
+// Tests scope rules, module/entity isolation, link basics, env paths
+env(["../bin"]);
+
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) {
+    if (v == null) { return "null"; }
+    return string(v);
+}
+
+def assert_eq(actual, expected, name) {
+    if (actual == expected) {
+        passed = passed + 1;
+        return;
+    }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected " + to_str(expected) + " got " + to_str(actual) + "\n";
+}
+
+def assert_true(cond, name) {
+    if (cond) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected true\n";
+}
+
+// ========== §10.3 Scope rules ==========
+// Variable lookup: current frame → parent frame → entity initial var_map
+var global_x; global_x = 10;
+{
+    var block_x; block_x = 20;
+    assert_eq(global_x, 10, "access outer var from block");
+    assert_eq(block_x, 20, "access block var");
+}
+// block_x should NOT be accessible here
+var block_out_of_scope; block_out_of_scope = false;
+try { tmp = block_x; } catch (e) { block_out_of_scope = true; }
+assert_true(block_out_of_scope, "block var NOT visible outside block");
+
+// var always creates in current scope (shadowing allowed)
+var shadow; shadow = 1;
+{
+    var shadow; shadow = 2;
+    assert_eq(shadow, 2, "var shadows outer in block");
+}
+assert_eq(shadow, 1, "original var unchanged after block");
+
+// No var → search chain + assign
+var chain_test; chain_test = 1;
+{
+    chain_test = 2;
+}
+assert_eq(chain_test, 2, "no-var assign modifies outer var");
+
+// var in block does not leak outside
+{
+    var new_var_in_block; new_var_in_block = 99;
+}
+var new_var_leaked; new_var_leaked = false;
+try { tmp = new_var_in_block; } catch (e) { new_var_leaked = true; }
+// var in block: variable is block-scoped, not visible outside
+
+// ========== Function scope isolation ==========
+def scope_a() {
+    var fx; fx = 100;
+    def scope_b() {
+        return fx;  // closure: inner accesses outer func var
+    }
+    return scope_b();
+}
+assert_eq(scope_a(), 100, "nested function captures outer var");
+
+// ========== Delete function ==========
+def del_me2() { return 1; }
+assert_eq(del_me2(), 1, "function exists before delete");
+delete del_me2;
+// Calling deleted/undefined function → NameError
+var df_hit; df_hit = false; var df_type; df_type = "";
+try { var tmp; tmp = del_me2(); } catch (e) { df_hit = true; df_type = e.what; }
+assert_true(df_hit, "delete function: call throws NameError");
+assert_eq(df_type, "NameError", "delete function: call → NameError");
+
+// ========== type() on various values ==========
+assert_eq(type(42), "int", "type int");
+assert_eq(type(3.14), "float", "type float");
+assert_eq(type(true), "bool", "type bool");
+assert_eq(type("s"), "string", "type string");
+assert_eq(type(null), "null", "type null");
+assert_eq(type([1]), "vec", "type vec");
+assert_eq(type(map{}), "map", "type map");
+assert_eq(type(lst([])), "lst", "type lst");
+
+// ========== tojs / fmjs round-trip ==========
+var original; original = [1, 2, map{"a": 3}];
+var json_str; json_str = $tojs(original);
+var back; back = $fmjs(json_str);
+assert_eq(back[0], 1, "tojs→fmjs roundtrip [0]");
+assert_eq(back[2].a, 3, "tojs→fmjs roundtrip nested dict");
+
+// compact mode
+var compact_json; compact_json = $tojs(original, true);
+var back2; back2 = $fmjs(compact_json);
+assert_eq(back2[0], 1, "tojs compact roundtrip [0]");
+
+// fmjs null input
+assert_eq($fmjs("invalid json!!!"), null, "fmjs invalid = null");
+
+// ========== cov_bool detailed edge cases ==========
+// Only EXACTLY "true" (case insensitive) is true
+assert_true(bool("true"), "bool('true') = true");
+assert_true(bool("TRUE"), "bool('TRUE') = true");
+assert_true(bool("True"), "bool('True') = true");
+assert_true(bool("tRuE"), "bool('tRuE') = true");
+
+// Non-empty string = true, empty = false
+assert_true(bool("true "), "bool('true ') = true (non-empty)");
+assert_true(bool(" true"), "bool(' true') = true (non-empty)");
+assert_true(bool("true\n"), "bool('true\\n') = true (non-empty)");
+assert_true(bool("false"), "bool('false') = true (non-empty)");
+assert_true(bool("1"), "bool('1') = true (non-empty)");
+assert_true(bool("0"), "bool('0') = true (non-empty)");
+assert_true(!bool(""), "bool('') = false (empty)");
+
+// ========== Conversion: string ↔ vec (UTF-8 code points) ==========
+var chars; chars = vec("abc");
+assert_eq(chars[0], 97, "vec(\"abc\") UTF-8: 'a' = 97");
+assert_eq(chars[1], 98, "vec(\"abc\") UTF-8: 'b' = 98");
+assert_eq(chars[2], 99, "vec(\"abc\") UTF-8: 'c' = 99");
+assert_eq(string(chars), "abc", "string(int vec) UTF-8 encode → \"abc\"");
+
+// UTF-8 encode: ASCII code points → same bytes
+var byte_arr; byte_arr = [72, 101, 108, 108, 111]; // "Hello" in ASCII
+var str_from_bytes; str_from_bytes = string(byte_arr);
+assert_eq(str_from_bytes, "Hello", "string(int vec) UTF-8 encode → \"Hello\"");
+
+// UTF-8 encode: multi-byte code points
+var cp_vec; cp_vec = [20320, 22909]; // "你好" as Unicode code points
+assert_eq(string(cp_vec), "你好", "string(int vec) UTF-8 encode → 你好");
+assert_eq(vec("你好")[0], 20320, "vec(\"你好\") UTF-8 decode: 你 = 20320");
+assert_eq(vec("你好")[1], 22909, "vec(\"你好\") UTF-8 decode: 好 = 22909");
+
+// vec → bool: !empty
+assert_true(bool([1]), "non-empty vec = true");
+assert_true(!bool([]), "empty vec = false");
+
+// map → bool: !empty
+assert_true(bool(map{"a": 1}), "non-empty map = true");
+assert_true(!bool(map{}), "empty map = false");
+
+// ========== Conversion: vec size 1 recursion ==========
+// vec of size 1 → int (recursive conversion of element)
+var single_vec; single_vec = [42];
+assert_eq(int(single_vec), 42, "int([42]) s1_recur");
+
+// vec of size > 1 → int throws
+var multi_vec_int_fail; multi_vec_int_fail = false;
+try { tmp = int([1, 2]); } catch (e) { multi_vec_int_fail = true; }
+assert_true(multi_vec_int_fail, "int([1,2]) size>1 throws ConvError");
+
+// ========== Concatenation edge cases ==========
+assert_eq("" + "", "", "concat empty + empty");
+assert_eq("" + "x", "x", "concat empty + char");
+assert_eq("x" + "", "x", "concat char + empty");
+
+// ========== Link basic test ==========
+// link must be at PURE TOP LEVEL (not inside any try/block/function)
+// NOTE: bin/*.so may be stale; use bin/link/*.so for current versions
+
+var link_tests_run; link_tests_run = 0;
+var link_tests_pass; link_tests_pass = 0;
+
+// Try to link built-in modules (pure top level)
+var link_ok; link_ok = true;
+
+link "base.so" as b;
+// If we get here, link succeeded
+link_tests_run = link_tests_run + 1;
+link_tests_pass = link_tests_pass + 1; // link succeeded
+
+// Test list.so functions
+try {
+    var lv; lv = [1, 2, 3, 4, 5][1, 4];
+    link_tests_run = link_tests_run + 1;
+    if (lv[0] == 2) { link_tests_pass = link_tests_pass + 1; }
+    else {
+        failed = failed + 1;
+        failures = failures + "  FAIL link list.slice result\n";
+    }
+} catch (e) {
+    failed = failed + 1;
+    failures = failures + "  FAIL link list.slice: " + e.what + " — func may not exist in stale bin/*.so\n";
+}
+
+link "base.so" as b2;
+link_tests_run = link_tests_run + 1;
+link_tests_pass = link_tests_pass + 1;
+
+try {
+    var keys; keys = b2.ex.keys(map{"a": 1, "b": 2});
+    link_tests_run = link_tests_run + 1;
+    if (keys != null) { link_tests_pass = link_tests_pass + 1; }
+    else {
+        failed = failed + 1;
+        failures = failures + "  FAIL link dict.keys returned null\n";
+    }
+} catch (e) {
+    failed = failed + 1;
+    failures = failures + "  FAIL link dict.keys: " + e.what + "\n";
+}
+
+    try {
+        b.fs.info("fs_mod", "demo.axc");
+        var fexists; fexists = b.fs_mod.is_exist();
+        link_tests_run = link_tests_run + 2;
+        link_tests_pass = link_tests_pass + 2;
+    } catch (e) {
+        failed = failed + 1;
+        failures = failures + "  FAIL file_info.is_exist: " + e.what + "\n";
+    }
+
+// Add link test results to global tally
+passed = passed + link_tests_pass;
+
+if (failed > 0) {
+    $print("\n=== FAIL: batch6_scope_module ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+}

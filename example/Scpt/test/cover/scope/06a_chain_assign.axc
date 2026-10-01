@@ -1,0 +1,4 @@
+// Test 6a: chained assignment a = b = 42
+var a, b; a = 0; b = 0;
+a = b = 42;
+if (a == 42 && b == 42) { $print("PASS: 6a chain assign a=b=42\n"); } else { $print("FAIL\n"); }

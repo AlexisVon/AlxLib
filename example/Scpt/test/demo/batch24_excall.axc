@@ -1,0 +1,20 @@
+// Demo: Extension functions ($xxx)
+// Tests: $exec, $fwrite, $fread
+
+// 1. $exec — run shell command
+var r = $exec("echo hello");
+if (!r["success"]) throw "exec should succeed";
+if (r["excode"] != 0) throw "exit code should be 0";
+
+// 2. $fwrite + $fread — file I/O
+var path = "/tmp/alexis_demo_excall.txt";
+$fwrite(path, "demo content");
+var content = $fread(path);
+if (content != "demo content") throw "fread/fwrite mismatch";
+
+// 3. $exec in expression
+var r2 = $exec(string("echo %1", 42));
+if (r2["excode"] != 0) throw "echo 42 should succeed";
+
+// Cleanup
+$exec(string("rm -f %1", path));

@@ -1,0 +1,107 @@
+// Cover test: Functions
+// Tests: def, default args, return, closure, tail recursion, param spread
+
+// === Basic function ===
+def add(a, b) {
+    return a + b;
+}
+if (add(3, 4) != 7) { $print("FAIL: add\n"); }
+
+// === Default args ===
+def greet(name, times) {
+    return name + "x" + string(times);
+}
+if (greet("hi", 2) != "hix2") { $print("FAIL: greet\n"); }
+
+def power(base, exp) {
+    var result = 1;
+    for (var i = 0; i < exp; ++i) {
+        result *= base;
+    }
+    return result;
+}
+if (power(2, 10) != 1024) { $print("FAIL: power\n"); }
+
+// === Return ===
+def early(n) {
+    if (n > 0) return "positive";
+    if (n < 0) return "negative";
+    return "zero";
+}
+if (early(5) != "positive") { $print("FAIL: early pos\n"); }
+if (early(-3) != "negative") { $print("FAIL: early neg\n"); }
+if (early(0) != "zero") { $print("FAIL: early zero\n"); }
+
+// Return null
+def ret_null() {
+    return;
+}
+if (ret_null() != null) { $print("FAIL: ret null\n"); }
+
+// === Closure ===
+def test_closure() {
+    var count = 0;
+    def inc() {
+        count = count + 1;
+        return count;
+    }
+    if (inc() != 1) { $print("FAIL: closure 1\n"); }
+    if (inc() != 2) { $print("FAIL: closure 2\n"); }
+    if (inc() != 3) { $print("FAIL: closure 3\n"); }
+}
+test_closure();
+
+// === Tail recursion (TCO) ===
+def countdown(n) {
+    if (n <= 0) { return 0; }
+    return countdown(n - 1);
+}
+if (countdown(50000) != 0) { $print("FAIL: tco countdown\n"); }
+
+def fib_tail(n, a, b) {
+    if (n <= 1) { return b; }
+    return fib_tail(n - 1, b, a + b);
+}
+if (fib_tail(30, 0, 1) != 832040) { $print("FAIL: fib tail\n"); }
+
+// === Param spread ===
+def sum3(a, b, c) {
+    return a + b + c;
+}
+
+var v = [1, 2, 3];
+if (sum3(v[]) != 6) { $print("FAIL: spread vec\n"); }
+if (sum3(10, [20, 30][]) != 60) { $print("FAIL: spread partial\n"); }
+
+var lv = lst[4, 5, 6];
+if (sum3(lv[]) != 15) { $print("FAIL: spread lst\n"); }
+
+// Map spread
+def display(name, age) {
+    return name + ":" + string(age);
+}
+if (display(map{"age": 30, "name": "Alice"}[]) != "Alice:30") { $print("FAIL: spread map\n"); }
+
+// Map spread with position
+def greet2(who, times) {
+    return who + "x" + string(times);
+}
+if (greet2("?", map{"times": 3}[]) != "?x3") { $print("FAIL: spread map pos\n"); }
+
+// === Nested functions ===
+def outer() {
+    def inner() {
+        return 42;
+    }
+    return inner();
+}
+if (outer() != 42) { $print("FAIL: nested\n"); }
+
+// === Recursive ===
+def factorial(n) {
+    if (n <= 1) return 1;
+    return n * factorial(n - 1);
+}
+if (factorial(10) != 3628800) { $print("FAIL: factorial\n"); }
+
+$print("functions: OK\n");

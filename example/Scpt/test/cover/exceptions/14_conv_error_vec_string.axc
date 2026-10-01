@@ -1,0 +1,7 @@
+// Test: ConvError - string to vec fail (via map to string conversion)
+try {
+    var x = vec(map{});
+} catch (e) {
+    $print("what: %1\n", e.what);
+    $print("info: %1\n", e.info);
+}

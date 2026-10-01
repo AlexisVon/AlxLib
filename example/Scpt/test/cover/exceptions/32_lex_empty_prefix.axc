@@ -1,0 +1,2 @@
+// M-L1: 0x/0o/0b without digits should produce a lexer error
+var x = 0x;

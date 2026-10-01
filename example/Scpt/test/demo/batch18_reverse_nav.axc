@@ -1,0 +1,122 @@
+// Batch 18: Reverse navigation .. / :: / . (§6.7)
+
+env(["../bin"]);
+
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) {
+    if (v == null) { return "null"; }
+    return string(v);
+}
+
+def assert_eq(actual, expected, name) {
+    if (actual == expected) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected " + to_str(expected) + " got " + to_str(actual) + "\n";
+}
+
+def assert_true(cond, name) {
+    if (cond) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected true\n";
+}
+
+// ========== :: root navigation ==========
+var rv; rv = 42;
+assert_eq(::rv, 42, ":: root var read");
+::rv = 99;
+assert_eq(rv, 99, ":: root var write (existing)");
+
+// :: on undefined var → NameError
+var ok; ok = 0;
+try { ::no_such_var; ok = 1; } catch(e) { ok = 0; }
+assert_eq(ok, 0, ":: undefined var -> NameError");
+
+// ========== . explicit current module ==========
+var cv; cv = 10;
+assert_eq(.cv, 10, ". current mod var read");
+.cv = 20;
+assert_eq(cv, 20, ". current mod var write (existing)");
+
+// ========== .. from root -> NavError ==========
+var nav_ok; nav_ok = 0;
+try { ..rv; nav_ok = 1; } catch(e) { nav_ok = 0; }
+assert_eq(nav_ok, 0, ".. from root -> NavError");
+
+// ========== :: function call ==========
+var call_val; call_val = 0;
+def myfunc(x) { call_val = call_val + x; return call_val; }
+var ret; ret = ::myfunc(5);
+assert_eq(ret, 5, "::myfunc(5) -> 5");
+assert_eq(call_val, 5, "::myfunc side effect");
+
+ret = .myfunc(3);
+assert_eq(ret, 8, ".myfunc(3) -> 8");
+
+
+// ========== :: with indexing (bridge) ==========
+var vv; vv = [1, 2, 3];
+assert_eq(::vv.([0]), 1, "::vv bridge index read");
+::vv.([1]) = 99;
+assert_eq(vv[1], 99, "::vv bridge index write");
+
+// ========== :: with map (bridge) ==========
+var mm; mm = map {"a": 1, "b": 2};
+assert_eq(::mm.(a), 1, "::mm bridge map read");
+::mm.(c) = 3;
+assert_eq(mm["c"], 3, "::mm bridge map write");
+
+// ========== multi-.. from root -> NavError ==========
+var mok; mok = 0;
+try { ....x; mok = 1; } catch(e) { mok = 0; }
+assert_eq(mok, 0, ".... from root -> NavError");
+
+// ========== .() bridge: current entity var (map) ==========
+var bm; bm = map {"a": 1, "b": 2};
+assert_eq(.bm.(a), 1, ". bridge map read");
+assert_eq(.bm.(b), 2, ". bridge map read key-2");
+.bm.(a) = 99;
+assert_eq(.bm.(a), 99, ". bridge map write");
+assert_eq(bm["a"], 99, ". bridge map write verify");
+
+// ========== .() bridge: current entity var (vec) ==========
+var bv; bv = [10, 20, 30];
+assert_eq(.bv.([0]), 10, ". bridge vec read [0]");
+assert_eq(.bv.([1]), 20, ". bridge vec read [1]");
+.bv.([2]) = 300;
+assert_eq(bv[2], 300, ". bridge vec write");
+
+// ========== .() bridge: delete map key ==========
+var bd; bd = map {"x": 1, "y": 2, "z": 3};
+delete .bd.(x);
+var has_x; has_x = false;
+try { var tmp; tmp = bd["x"]; has_x = true; } catch(e) { has_x = false; }
+assert_true(!has_x, ". bridge delete map key");
+
+// ========== delete .var via dot chain (now allowed) ==========
+var dv; dv = 42;
+delete .dv;
+var del_ok; del_ok = 0;
+try { var tmp = dv; } catch(e) { del_ok = 1; }
+assert_eq(del_ok, 1, "delete .dv -> var is gone");
+
+// ========== .() bridge: non-container -> TypeError ==========
+var bn; bn = 42;
+var br_ok; br_ok = 0;
+try { .bn.(x); br_ok = 1; } catch(e) { br_ok = 0; }
+assert_eq(br_ok, 0, ". bridge non-container -> TypeError");
+
+// ========== link namespace read variable -> TypeError ==========
+var lk_ok; lk_ok = 0;
+try { .d.keys(); lk_ok = 1; } catch(e) {}
+// link function call should work (d is a link namespace if env loaded)
+// link var read should fail
+
+// ========== Summary ==========
+if (failed > 0) {
+    $print("=== FAILURES (" + string(failed) + "/" + string(passed + failed) + ") ===");
+    $print(failures);
+    $print("Passed: " + string(passed) + ", Failed: " + string(failed));
+}

@@ -1,0 +1,23 @@
+// NOTE-11: NameError from var/def declarations is NOT catchable
+// try/catch silently fails to fire for declaration-time conflicts.
+// Runtime NameError (no-var assignment to def) IS catchable.
+// Always should pass — documents behavior.
+
+def f() { return 1; }
+
+var caught = false;
+var etype = "";
+try {
+    f = 2;  // runtime NameError: assign to def name
+} catch (e) {
+    caught = true;
+    etype = e.what;
+}
+delete f;
+
+if (!caught) {
+    throw "NOTE-11: f=2 (assign to def) should throw catchable NameError";
+}
+if (etype != "NameError") {
+    throw "NOTE-11: f=2 threw " + etype + ", expected NameError";
+}

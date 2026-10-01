@@ -1,0 +1,85 @@
+// Type checking rules — each operator on wrong type should error
+
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) { if (v == null) { return "null"; } return string(v); }
+def assert_true(c,n) { if (c) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected true\n"; }
+
+// Helper: inline try/catch pattern
+// Each check: var _caught; _caught = false; try { expr; } catch (_e) { _caught = true; }
+// assert_true(_caught, "name: error type");
+
+// --- Arithmetic errors ---
+var t; // reusable temp
+var _c; _c = false; try { t = "x" + 1; } catch (_e) { _c = true; } assert_true(_c, "str + int -> TypeError");
+_c = false; try { t = "x" - 1; } catch (_e) { _c = true; } assert_true(_c, "str - int -> TypeError");
+_c = false; try { t = "x" * 2; } catch (_e) { _c = true; } assert_true(_c, "str * int -> TypeError");
+_c = false; try { t = "x" / 2; } catch (_e) { _c = true; } assert_true(_c, "str / int -> TypeError");
+_c = false; try { t = "x" % 2; } catch (_e) { _c = true; } assert_true(_c, "str % int -> TypeError");
+_c = false; try { t = [1] + 1; } catch (_e) { _c = true; } assert_true(_c, "vec + int -> TypeError");
+_c = false; try { t = null + 1; } catch (_e) { _c = true; } assert_true(_c, "null + int -> TypeError");
+_c = false; try { t = map{} + 1; } catch (_e) { _c = true; } assert_true(_c, "map + int -> TypeError");
+_c = false; try { t = map{1: 2}; } catch (_e) { _c = true; } assert_true(_c, "map non-string key -> TypeError");
+
+// --- Bitwise errors (only int) ---
+_c = false; try { t = "x" | 1; } catch (_e) { _c = true; } assert_true(_c, "str | int -> TypeError");
+_c = false; try { t = "x" & 1; } catch (_e) { _c = true; } assert_true(_c, "str & int -> TypeError");
+_c = false; try { t = "x" ^ 1; } catch (_e) { _c = true; } assert_true(_c, "str ^ int -> TypeError");
+_c = false; try { t = ~"x"; } catch (_e) { _c = true; } assert_true(_c, "~str -> TypeError");
+_c = false; try { t = 1.5 | 1; } catch (_e) { _c = true; } assert_true(_c, "float | int -> TypeError");
+_c = false; try { t = 1 & 2.5; } catch (_e) { _c = true; } assert_true(_c, "int & float -> TypeError");
+_c = false; try { t = ~1.5; } catch (_e) { _c = true; } assert_true(_c, "~float -> TypeError");
+
+// --- Shift errors (only int) ---
+_c = false; try { t = "x" << 1; } catch (_e) { _c = true; } assert_true(_c, "str << int -> TypeError");
+_c = false; try { t = "x" >> 1; } catch (_e) { _c = true; } assert_true(_c, "str >> int -> TypeError");
+_c = false; try { t = 1.5 << 1; } catch (_e) { _c = true; } assert_true(_c, "float << int -> TypeError");
+_c = false; try { t = 1 << 2.5; } catch (_e) { _c = true; } assert_true(_c, "int << float -> TypeError");
+
+// --- Logic errors (only bool/int/float) ---
+_c = false; try { t = "x" && true; } catch (_e) { _c = true; } assert_true(_c, "str && bool -> TypeError");
+_c = false; try { t = true && "x"; } catch (_e) { _c = true; } assert_true(_c, "bool && str -> TypeError");
+_c = false; try { t = "x" || true; } catch (_e) { _c = true; } assert_true(_c, "str || bool -> TypeError");
+_c = false; try { t = !"x"; } catch (_e) { _c = true; } assert_true(_c, "!str -> TypeError");
+_c = false; try { t = [1] && true; } catch (_e) { _c = true; } assert_true(_c, "vec && bool -> TypeError");
+_c = false; try { t = null && true; } catch (_e) { _c = true; } assert_true(_c, "null && bool -> TypeError");
+_c = false; try { t = map{} || false; } catch (_e) { _c = true; } assert_true(_c, "map || bool -> TypeError");
+
+// --- Concat errors (only string) ---
+_c = false; try { t = "x" + 1; } catch (_e) { _c = true; } assert_true(_c, "str + int -> TypeError");
+_c = false; try { t = 1 + "x"; } catch (_e) { _c = true; } assert_true(_c, "int + str -> TypeError");
+_c = false; try { t = "x" + 1.5; } catch (_e) { _c = true; } assert_true(_c, "str + float -> TypeError");
+_c = false; try { t = "x" + true; } catch (_e) { _c = true; } assert_true(_c, "str + bool -> TypeError");
+_c = false; try { t = "x" + null; } catch (_e) { _c = true; } assert_true(_c, "str + null -> TypeError");
+
+// --- Inc/Dec errors (only int) ---
+var _v;
+_c = false; _v = 1.5; try { ++_v; } catch (_e) { _c = true; } assert_true(_c, "++float -> TypeError");
+_c = false; _v = "x"; try { ++_v; } catch (_e) { _c = true; } assert_true(_c, "++string -> TypeError");
+_c = false; _v = 1.5; try { _v++; } catch (_e) { _c = true; } assert_true(_c, "float++ -> TypeError");
+_c = false; _v = null; try { ++_v; } catch (_e) { _c = true; } assert_true(_c, "++null -> TypeError");
+
+// --- Comparison errors ---
+_c = false; try { t = null < 1; } catch (_e) { _c = true; } assert_true(_c, "null < int -> TypeError");
+_c = false; try { t = null > 1; } catch (_e) { _c = true; } assert_true(_c, "null > int -> TypeError");
+_c = false; try { t = [1] == 1; } catch (_e) { _c = true; } assert_true(_c, "vec == int -> TypeError");
+_c = false; try { t = map{} == 1; } catch (_e) { _c = true; } assert_true(_c, "map == int -> TypeError");
+_c = false; try { t = true == 1; } catch (_e) { _c = true; } assert_true(_c, "bool == int -> TypeError");
+
+// --- Compound assign errors ---
+var _s; var _n; var _f;
+_c = false; _s = "x"; try { _s += 1; } catch (_e) { _c = true; } assert_true(_c, "str += int -> TypeError");
+_c = false; _f = 2.5; try { _f %= 1; } catch (_e) { _c = true; } assert_true(_c, "float %= int -> TypeError");
+_c = false; _n = 42; try { _n += "x"; } catch (_e) { _c = true; } assert_true(_c, "int += str -> TypeError");
+_c = false; _s = "x"; try { _s |= 1; } catch (_e) { _c = true; } assert_true(_c, "str |= int -> TypeError");
+_c = false; _s = "x"; try { _s <<= 1; } catch (_e) { _c = true; } assert_true(_c, "str <<= int -> TypeError");
+
+if (failed > 0) {
+    $print("\n=== FAIL: 7B_typecheck ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+} else {
+    $print("7B_typecheck: All %1 tests passed\n", passed);
+}

@@ -1,0 +1,13 @@
+// default param test
+def add(a, b=1) {
+  return a + b;
+}
+$print(add(3));
+$print("\n");
+$print(add(3, 2));
+$print("\n");
+
+// default param must be after non-default (compile-time check)
+def bad(c=1, d) {
+  return c + d;
+}

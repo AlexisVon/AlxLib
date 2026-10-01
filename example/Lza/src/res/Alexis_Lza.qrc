@@ -1,0 +1,7 @@
+<RCC>
+    <qresource prefix="/">
+        <file>FiraCode.ttf</file>
+        <file>icon.ico</file>
+        <file>dark.qss</file>
+    </qresource>
+</RCC>

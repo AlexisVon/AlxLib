@@ -1,0 +1,29 @@
+// ====== t6_env.axc — Env Tests ======
+
+var passed = 0;
+var failed = 0;
+
+def assert_eq(a, b, name) {
+    if (a == b) { passed = passed + 1; }
+    else { failed = failed + 1; $print("FAIL " + name + ": expected " + string(b) + " got " + string(a)); }
+}
+def assert_true(c, name) {
+    if (c) { passed = passed + 1; }
+    else { failed = failed + 1; $print("FAIL " + name + ": expected true"); }
+}
+
+// ── §7.1 env([path1, path2]) ──
+env(["../modules/modules"]);
+
+// After env set, import using relative filename should work
+import "mod_a.axc" as envmod;
+assert_eq(envmod.greet("Env"), "Hello, Env", "7.1 env() enables relative import");
+
+// ── §7.2 env accepts variable ──
+var mypath = "../modules/modules";
+env([mypath]);
+import "mod_b.axc" as envmod2;
+assert_eq(envmod2.add(10, 20), 30, "7.2 env() with variable");
+
+// ── Summary ──
+$print("--- t6_env: " + string(passed) + " passed, " + string(failed) + " failed ---");

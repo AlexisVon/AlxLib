@@ -1,0 +1,45 @@
+// §3.3 bool — true, false, independent of int
+// lang-guide §3.3
+
+var passed = 0;
+var failed = 0;
+var failures = "";
+
+def to_str(v) { if (v == null) { return "null"; } return string(v); }
+def assert_eq(a, e, n) { if (a == e) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected " + to_str(e) + " got " + to_str(a) + "\n"; }
+def assert_true(c, n) { if (c) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected true\n"; }
+def assert_false(c, n) { if (!c) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected false\n"; }
+
+// ---- literals ----
+assert_true(true, "true is true");
+assert_false(false, "false is false");
+
+// ---- ! operator ----
+assert_false(!true, "!true = false");
+assert_true(!false, "!false = true");
+
+// ---- bool is independent of int ----
+// true == 1 → TypeError (not convertible)
+var _hit = false;
+try { var _tmp = true == 1; } catch (_e) { _hit = true; }
+assert_true(_hit, "true == 1 throws TypeError (bool != int)");
+
+// true & true → TypeError (bitwise on bool)
+_hit = false;
+try { var _tmp = true & true; } catch (_e) { _hit = true; }
+assert_true(_hit, "true & true throws TypeError");
+
+// ---- bool == bool ----
+assert_true(true == true, "true == true");
+assert_true(false == false, "false == false");
+assert_false(true == false, "true != false");
+
+// ---- type check ----
+assert_eq(type(true), "bool", "type(true) = bool");
+assert_eq(type(false), "bool", "type(false) = bool");
+
+if (failed > 0) {
+    $print("\n=== FAIL: test_bool ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+}

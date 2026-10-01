@@ -1,0 +1,3 @@
+// bridge without nav prefix → compile error
+var a = map {b: 1};
+var y = a.(b);

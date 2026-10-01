@@ -1,0 +1,10 @@
+// ====== t6b_env_in_module.axc — env() inside an imported module ======
+// env() relative paths resolve against the module's own directory, not the
+// module file path itself (regression: file was joined as a directory).
+
+// t6_env.axc runs env(["../modules/modules"]) at module init — this only
+// resolves if the base is cover/modules/ (dir of t6_env.axc), not the file.
+// Import failure (env path wrong) throws and exits non-zero.
+import "t6_env.axc" as envmod;
+// t6_env init ran env() + relative imports + its own asserts (2 passed above)
+$print("--- t6b_env_in_module: ok ---");

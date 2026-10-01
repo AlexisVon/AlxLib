@@ -1,0 +1,5 @@
+// mod_nested.axc - nested modules scenario
+var name = "parent";
+def parent_fn() {
+    return "parent_fn";
+}

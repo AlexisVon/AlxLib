@@ -1,0 +1,46 @@
+$print("= 4.1 vec tests =\n");
+
+// --- Literal creation ---
+var a, b; a = [1, 2, 3]; b = vec[1, 2, 3];
+$print("[1,2,3] type: %1\n", type(a));
+$print("vec[1,2,3] type: %1\n", type(b));
+$print("vec[1,2,3][0]: %1\n", b[0]);
+
+// --- Index read ---
+$print("a[0]=%1, a[-1]=%2, a[1]=%3\n", a[0], a[-1], a[1]);
+
+// --- Index write ---
+a[0] = 99; a[-1] = 100;
+$print("after write: a[0]=%1, a[-1]=%2\n", a[0], a[-1]);
+
+// --- null index read = size ---
+$print("a[null]=%1\n", a[null]);
+// null index write = push_back
+a[null] = 200;
+$print("after push: a[null]=%1, a[-1]=%2\n", a[null], a[-1]);
+
+// --- Compound assign ---
+a[0] += 1; a[-1] *= 2;
+$print("after compound: a[0]=%1, a[-1]=%2\n", a[0], a[-1]);
+
+// --- null compound push 0 (append-index compound rejected at parse) ---
+a[null] = 0;
+a[-1] += 10;
+$print("after null compound push+assign: a[-1]=%1, a[null]=%2\n", a[-1], a[null]);
+
+// --- IndexError on out-of-bounds ---
+try {
+    tmp = a[999];
+    $print("ERROR: should have thrown IndexError for a[999]\n");
+} catch (e) {
+    $print("correctly caught IndexError: %1\n", e);
+}
+
+// --- for-each iteration ---
+var sum, x; sum = 0;
+for (x : a) {
+    sum = sum + x;
+}
+$print("for-each sum of a = %1\n", sum);
+
+$print("=== vec tests done ===\n");

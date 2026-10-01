@@ -1,0 +1,71 @@
+// T04: value reflection — delete
+// delete @x; deletes the target variable
+
+// 1. delete @x; deletes the target variable
+var x = 42;
+var name = "x";
+delete @name;
+var got_error = false;
+try {
+    var tmp = x;
+    $print("x after delete: ", tmp);
+} catch (e) {
+    got_error = true;
+    $print("T04.1 delete @x caught: ", e);
+}
+if (!got_error) { $print("FAIL T04.1 - x should be gone"); throw("assert"); }
+$print("OK");
+
+// 2. delete @(expr)
+var y = 99;
+var target = "y";
+delete @(target);
+got_error = false;
+try {
+    var tmp = y;
+    $print("y after delete: ", tmp);
+} catch (e) {
+    got_error = true;
+    $print("T04.2 delete @(expr) caught: ", e);
+}
+if (!got_error) { $print("FAIL T04.2 - y should be gone"); throw("assert"); }
+$print("OK");
+
+// 3. delete @nonexistent → silent no-op (already doesn't exist)
+var missing = "does_not_exist_xyz";
+delete @missing;
+$print("T04.3 delete @nonexistent silent no-op OK");
+
+// 4. delete @non_string → TypeError
+var not_str = 123;
+var caught = false;
+try {
+    delete @not_str;
+    $print("ERROR: should have thrown TypeError for non-string delete target");
+} catch (e) {
+    caught = true;
+    $print("T04.4 non-string delete caught: ", e);
+}
+if (!caught) { $print("FAIL T04.4"); throw("assert"); }
+$print("OK");
+
+// 5. @ delete navigates a dotted path as well
+// delete @p where p="ns.a.b" removes ns.a.b itself
+var ns = map();
+ns.a = map();
+ns.a.b = 42;
+var p = "ns.a.b";
+// delete @p navigates to the leaf and removes it (measured: ns.a.b reads null afterwards)
+caught = false;
+try {
+    delete @p;
+    $print("T04.5 delete @p (dotted) succeeded");
+} catch (e) {
+    caught = true;
+    $print("T04.5 delete dotted path caught: ", e);
+}
+var vb = ns.a.b;
+$print("T04.5 ns.a.b after the delete=", vb);
+$print("OK (measured: @ delete navigates the dotted path)");
+
+$print("T04 all passed");

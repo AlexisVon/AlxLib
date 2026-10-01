@@ -1,0 +1,106 @@
+// 80: ass opcode (purity-pass) safety — dangling ptr / error parity / values
+
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) { if (v == null) { return "null"; } return string(v); }
+def assert_eq(a,e,n) { if (a == e) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected " + to_str(e) + " got " + to_str(a) + "\n"; }
+def assert_true(c,n) { if (c) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected true\n"; }
+
+// --- 1. undefined target -> NameError (opcode resolve path) ---
+var c1; c1 = false;
+try { zz_undef += 1; } catch (e) { c1 = (e.what == "NameError"); }
+assert_true(c1, "undefined target += -> NameError");
+
+// --- 2. function must not be overwritten by += (call_able write guard) ---
+def fn_prot() { return 1; }
+var c2; c2 = false;
+try { fn_prot += "x"; } catch (e) { c2 = (e.what == "TypeError"); }
+assert_true(c2, "f += string -> TypeError (arith on call_able)");
+assert_eq(fn_prot(), 1, "function intact after blocked +=");
+
+// --- 3. type errors match desugar form (same message path) ---
+var c3; c3 = false;
+try { var s; s = "x"; s += 1; } catch (e) { c3 = (e.what == "TypeError"); }
+assert_true(c3, "string += int -> TypeError");
+var c3b; c3b = false;
+try { var s; s = "x"; s = s + 1; } catch (e) { c3b = (e.what == "TypeError"); }
+assert_true(c3b, "string = string + int -> same TypeError");
+
+// --- 4. div zero / shift range on opcode path ---
+var c4; c4 = false;
+try { var n; n = 10; n /= 0; } catch (e) { c4 = (e.what == "DivZeroError"); }
+assert_true(c4, "n /= 0 -> DivZeroError");
+// shift range check is guarded by --overflow-check (covered in 71/78)
+
+// --- 5. assignment expression value: y = (x += 1) returns new value ---
+var x5; x5 = 10;
+var y5; y5 = (x5 += 5);
+assert_eq(x5, 15, "x5 incremented by += ");
+assert_eq(y5, 15, "x += returns new value");
+
+// --- 6. same-container read+write: single resolve, no dangling write ---
+var m6; m6 = map{"x": 10, "y": 5};
+m6.x = m6.x + m6.y;
+assert_eq(m6.x, 15, "m.x = m.x + m.y");
+m6.x += m6.y;
+assert_eq(m6.x, 20, "m.x += m.y (repeated opcode on same map)");
+
+// --- 7. pure binary rhs tree ---
+var a7; a7 = 1;
+var b7; b7 = 2; var c7; c7 = 3; var d7; d7 = 4;
+a7 += b7 * c7 + d7 % 3;
+assert_eq(a7, 8, "a += b*c + d%3");
+
+// --- 8. vec-of-map index target (literal index) ---
+var v8; v8 = [map{"x": 1}, map{"x": 2}];
+v8[1].x += 10;
+assert_eq(v8[1].x, 12, "v[1].x += 10");
+v8[0].x = v8[0].x + v8[1].x;
+assert_eq(v8[0].x, 13, "v[0].x = v[0].x + v[1].x");
+
+// --- 9. string concat compound on dot ---
+var m9; m9 = map{"s": "ab"};
+m9.s += "cd";
+assert_eq(m9.s, "abcd", "m.s += cd");
+
+// --- 10. plain form with target as both operands ---
+var k10; k10 = 5;
+k10 = k10 - 2;
+assert_eq(k10, 3, "k = k - 2 plain form");
+k10 = k10 * k10;
+assert_eq(k10, 9, "k = k * k (both operands pure)");
+
+// --- 11. shift/bitwise chain ---
+var s11; s11 = 1;
+s11 <<= 3; s11 >>= 1; s11 |= 4; s11 &= 6; s11 ^= 1;
+assert_eq(s11, 5, "shift/bit chain");
+
+// --- 12. int += float promotion ---
+var f12; f12 = 10;
+f12 += 2.5;
+assert_eq(f12, 12.5, "int += float -> float");
+
+// --- 13. undefined rhs operand (plain form, opcode path) ---
+var c13; c13 = false;
+try { var t13; t13 = t13 + zz_missing; } catch (e) { c13 = (e.what == "NameError"); }
+assert_true(c13, "t = t + undefined -> NameError");
+
+// --- 14. dot-chain target repeated with mixed ops ---
+var m14; m14 = map{"n": 100};
+m14.n -= 40; m14.n %= 7; m14.n *= 3; m14.n /= 2;
+assert_eq(m14.n, 6, "m.n -= %= *= /= chain");
+
+// --- 15. null literal rhs (desugar fallback keeps parity) ---
+var c15; c15 = false;
+try { var n15; n15 = 5; n15 += null; } catch (e) { c15 = (e.what == "TypeError"); }
+assert_true(c15, "n += null -> TypeError");
+
+if (failed > 0) {
+    $print("\n=== FAIL: 80_ass_safety ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+} else {
+    $print("80_ass_safety: All %1 tests passed\n", passed);
+}

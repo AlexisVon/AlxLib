@@ -1,0 +1,3 @@
+// def → set: def f(){}; then f=1 — should throw NameError (set creates var over function)
+def f() {}
+f = 1;

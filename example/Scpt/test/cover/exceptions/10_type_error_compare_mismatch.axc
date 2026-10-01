@@ -1,0 +1,7 @@
+// Test: TypeError - comparing mismatched types (int vs map)
+try {
+    var r = 1 < map{};
+} catch (e) {
+    $print("what: %1\n", e.what);
+    $print("info: %1\n", e.info);
+}

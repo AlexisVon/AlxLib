@@ -1,0 +1,184 @@
+// compound assignment += -= *= /= %= <<= >>= compound assignment += -= *= /= %= <<= >>= &= |= ^= #== |= ^=
+
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) { if (v == null) { return "null"; } return string(v); }
+def assert_eq(a,e,n) { if (a == e) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected " + to_str(e) + " got " + to_str(a) + "\n"; }
+def assert_true(c,n) { if (c) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected true\n"; }
+
+// --- arithmetic compound ---
+var a; a = 10;
+a += 5;
+assert_eq(a, 15, "a += 5");
+
+a = 10;
+a -= 3;
+assert_eq(a, 7, "a -= 3");
+
+a = 10;
+a *= 2;
+assert_eq(a, 20, "a *= 2");
+
+a = 10;
+a /= 3;
+assert_eq(a, 3, "a /= 3 (int)");
+
+a = 10;
+a %= 3;
+assert_eq(a, 1, "a %= 3");
+
+// --- float compound ---
+var b; b = 10.0;
+b += 2.5;
+assert_eq(b, 12.5, "float b += 2.5");
+
+b = 10.0;
+b -= 2.5;
+assert_eq(b, 7.5, "float b -= 2.5");
+
+b = 10.0;
+b *= 2.0;
+assert_eq(b, 20.0, "float b *= 2.0");
+
+b = 10.0;
+b /= 2.5;
+assert_eq(b, 4.0, "float b /= 2.5");
+
+// --- int += float promotion ---
+var c; c = 5;
+c += 2.5;
+assert_eq(c, 7.5, "int c += float -> float");
+
+// --- shift compound ---
+var d; d = 1;
+d <<= 2;
+assert_eq(d, 4, "d <<= 2");
+
+d = 8;
+d >>= 2;
+assert_eq(d, 2, "d >>= 2");
+
+// --- bitwise compound ---
+var e; e = 1;
+e |= 2;
+assert_eq(e, 3, "e |= 2");
+
+e = 3;
+e &= 1;
+assert_eq(e, 1, "e &= 1");
+
+e = 3;
+e ^= 1;
+assert_eq(e, 2, "e ^= 1");
+
+// --- += string concat compound ---
+var f; f = "hello";
+f += " world";
+assert_eq(f, "hello world", "f += world");
+
+f += "!";
+assert_eq(f, "hello world!", "f += !");
+
+// --- chained compound ---
+var x; x = 0;
+var y; y = 0;
+x = y = 42;
+assert_eq(x, 42, "chained: x = y = 42");
+assert_eq(y, 42, "chained: y = 42");
+
+x = 10; y = 5;
+x += y += 2;
+assert_eq(y, 7, "chained: y += 2");
+assert_eq(x, 17, "chained: x += (y += 2)");
+
+// --- compound on map member ---
+var m; m = map{"n": 10, "s": "hello"};
+m.n += 5;
+assert_eq(m.n, 15, "map.n += 5");
+m.s += " world";
+assert_eq(m.s, "hello world", "map.s += world");
+
+// --- compound wrong types ---
+var wt1; wt1 = false;
+try { var s; s = "x"; s += 1; } catch (e) { wt1 = true; }
+assert_true(wt1, "string += int throws TypeError");
+
+var wt2; wt2 = false;
+try { var s; s = "x"; s <<= 1; } catch (e) { wt2 = true; }
+assert_true(wt2, "string <<= int throws TypeError");
+
+var wt3; wt3 = false;
+try { var s; s = "x"; s |= 1; } catch (e) { wt3 = true; }
+assert_true(wt3, "string |= int throws TypeError");
+
+var wt4; wt4 = false;
+try { var n; n = 10; n += "x"; } catch (e) { wt4 = true; }
+assert_true(wt4, "int += string throws TypeError");
+
+var wt5; wt5 = false;
+try { var n; n = 10.5; n %= 2; } catch (e) { wt5 = true; }
+assert_true(wt5, "float %= throws TypeError");
+
+// --- desugar semantics: read-before-call, RHS may modify target ---
+var mr; mr = 1;
+def mod_f() { mr = 100; return 5; }
+mr += mod_f();
+assert_eq(mr, 6, "x += f() where f modifies x → old + ret (read first)");
+
+// --- RHS grows frame store (vector reallocation pressure) ---
+var grow; grow = 0;
+def grow_f() {
+    var p1; var p2; var p3; var p4; var p5;
+    p1 = 1; p2 = 1; p3 = 1; p4 = 1; p5 = 1;
+    return p1 + p2 + p3 + p4 + p5;
+}
+var gi; gi = 0;
+var giter; giter = 0;
+while (giter < 500) { giter = giter + 1; gi += grow_f(); }
+assert_eq(gi, 2500, "loop x += f() survives store reallocation");
+
+// --- indexed target + RHS grows the container ---
+var gv; gv = [1, 2, 3];
+def grow_v() { gv[null] = 99; return 10; }
+gv[0] += grow_v();
+assert_eq(gv[0], 11, "v[i] += f() where f grows v");
+
+// --- undefined target → NameError (not crash) ---
+var wt6; wt6 = false;
+try { zz_missing += 1; } catch (e) { wt6 = true; }
+assert_true(wt6, "x += on undefined → NameError");
+
+var wt7; wt7 = false;
+try { zz_missing2++; } catch (e) { wt7 = true; }
+assert_true(wt7, "x++ on undefined → NameError");
+
+// --- plain assignment isomorphic shape: a = a op b → same opcode ---
+var pa; pa = 10;
+pa = pa + 5;
+assert_eq(pa, 15, "a = a + b (plain)");
+pa = pa * 2;
+assert_eq(pa, 30, "a = a * b (plain)");
+var ps; ps = "ab";
+ps = ps + "c";
+assert_eq(ps, "abc", "a = a + b (plain)");
+
+// --- dot chain target with index element: single eval, correct result ---
+var dv; dv = [map{"x": 0}, map{"x": 0}];
+dv[1].x += 5;
+assert_eq(dv[1].x, 5, "arr[i].x += n");
+
+// --- impure rhs falls back to desugar: a += @(f()) keeps read-first ---
+var ir; ir = 1;
+def impure_f() { ir = 100; return 7; }
+ir += @("impure_f")();
+assert_eq(ir, 8, "a += @(f()) → desugar read-first (old + ret)");
+
+if (failed > 0) {
+    $print("\n=== FAIL: 79_compound_assign ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+} else {
+    $print("79_compound_assign: All %1 tests passed\n", passed);
+}

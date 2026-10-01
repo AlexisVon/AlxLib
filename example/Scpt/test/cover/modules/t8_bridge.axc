@@ -1,0 +1,55 @@
+// ====== t8_bridge.axc — Bridge .() Tests ======
+
+var passed = 0;
+var failed = 0;
+
+def assert_eq(a, b, name) {
+    if (a == b) { passed = passed + 1; }
+    else { failed = failed + 1; $print("FAIL " + name + ": expected " + string(b) + " got " + string(a)); }
+}
+def assert_true(c, name) {
+    if (c) { passed = passed + 1; }
+    else { failed = failed + 1; $print("FAIL " + name + ": expected true"); }
+}
+
+// ── Setup ──
+var bm = map{"a": 1, "b": 2};
+var bv = vec[10, 20, 30];
+var nested = map{"x": vec[100, 200]};
+
+// ── §9.1 .(d.f) — nav to var then bridge to map key ──
+assert_eq(.bm.(a), 1, "9.1a .bridge map read key 'a'");
+assert_eq(.bm.(b), 2, "9.1b .bridge map read key 'b'");
+
+// ── §9.2 .(d.f) — bridge write ──
+.bm.(a) = 99;
+assert_eq(.bm.(a), 99, "9.2a .bridge map write");
+assert_eq(bm["a"], 99, "9.2b .bridge map write verify");
+
+// ── §9.3 .([1]) — bridge index read ──
+assert_eq(.bv.([0]), 10, "9.3a .bridge vec read [0]");
+assert_eq(.bv.([1]), 20, "9.3b .bridge vec read [1]");
+
+// ── §9.4 .([1]) — bridge index write ──
+.bv.([2]) = 300;
+assert_eq(.bv.([2]), 300, "9.4a .bridge vec write");
+assert_eq(bv[2], 300, "9.4b .bridge vec write verify");
+
+// ── §9.5 ::.(f) — root bridge ──
+assert_eq(::bm.(a), 99, "9.5 :: bridge map read");
+
+// ── §9.6 scalar through bridge -> TypeError ──
+var scal = 42;
+def test_scalar() {
+    var caught = false;
+    try {
+        var x = ::scal.(a);
+    } catch (e) {
+        caught = true;
+    }
+    return caught;
+}
+assert_true(test_scalar(), "9.6 scalar bridge -> TypeError");
+
+// ── Summary ──
+$print("--- t8_bridge: " + string(passed) + " passed, " + string(failed) + " failed ---");

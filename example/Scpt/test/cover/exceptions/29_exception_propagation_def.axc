@@ -1,0 +1,19 @@
+// Test: exception propagation through def boundaries
+def level3() {
+    throw "from level3";
+}
+
+def level2() {
+    level3();
+}
+
+def level1() {
+    level2();
+}
+
+try {
+    level1();
+} catch (e) {
+    $print("what: %1\n", e.what);
+    $print("info: %1\n", e.info);
+}

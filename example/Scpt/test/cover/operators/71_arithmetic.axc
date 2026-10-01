@@ -1,0 +1,119 @@
+// §7.1 Arithmetic — int/float add, sub, mul, div, mod, div-by-zero, overflow
+
+var tmp; tmp = null; // probes below assign through it
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) { if (v == null) { return "null"; } return string(v); }
+
+def assert_eq(actual, expected, name) {
+    if (actual == expected) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected " + to_str(expected) + " got " + to_str(actual) + "\n";
+}
+
+def assert_true(cond, name) {
+    if (cond) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected true\n";
+}
+
+// --- int arithmetic ---
+assert_eq(1 + 2, 3, "int add");
+assert_eq(3 - 1, 2, "int sub");
+assert_eq(2 * 3, 6, "int mul");
+assert_eq(6 / 2, 3, "int div");
+assert_eq(7 % 3, 1, "int mod");
+
+// --- float arithmetic ---
+assert_eq(1.5 + 2.5, 4.0, "float add");
+assert_eq(3.5 - 1.0, 2.5, "float sub");
+assert_eq(2.0 * 3.0, 6.0, "float mul");
+assert_eq(6.0 / 2.0, 3.0, "float div");
+
+// --- int+float promotion ---
+assert_eq(1 + 2.5, 3.5, "int+float → float");
+assert_eq(2.5 + 1, 3.5, "float+int → float");
+
+// --- div by zero (int) ---
+var dz1; dz1 = false;
+try { tmp = 1 / 0; } catch (e) { dz1 = true; }
+assert_true(dz1, "int / 0 throws DivZeroError");
+
+// --- div by zero (float) ---
+var dz2; dz2 = false;
+try { tmp = 1.0 / 0.0; } catch (e) { dz2 = true; }
+assert_true(dz2, "float / 0.0 throws DivZeroError");
+
+// --- mod by zero ---
+var mz; mz = false;
+try { tmp = 1 % 0; } catch (e) { mz = true; }
+assert_true(mz, "1 % 0 throws DivZeroError");
+
+// --- INT64_MIN / -1 → DivOverflowError ---
+var do1; do1 = false;
+try {
+    var big_neg; big_neg = -9223372036854775807; // -(2^63-1), not quite INT64_MIN but large
+    // Real INT64_MIN is -9223372036854775808, which cannot be literal
+    // Instead use -big_neg trick:
+    big_neg = 0 - 9223372036854775807 - 1; // -9223372036854775808 = INT64_MIN
+    tmp = big_neg / -1;
+} catch (e) { do1 = true; }
+assert_true(do1, "INT64_MIN / -1 throws DivOverflowError");
+
+// --- integer overflow: add (requires --overflow-check) ---
+// Without --overflow-check, wrap silently; we test the flag is active
+var oa; oa = false;
+try {
+    var x; x = 9223372036854775807; // INT64_MAX
+    x = x + 1;
+} catch (e) { oa = true; }
+assert_true(oa, "INT64_MAX + 1 throws OverflowError (needs --overflow-check)");
+
+// --- integer overflow: sub ---
+var os; os = false;
+try {
+    var x; x = -9223372036854775807 - 1; // INT64_MIN
+    x = x - 1;
+} catch (e) { os = true; }
+assert_true(os, "INT64_MIN - 1 throws OverflowError (needs --overflow-check)");
+
+// --- integer overflow: mul ---
+var om; om = false;
+try {
+    var x; x = 9223372036854775807; // INT64_MAX
+    x = x * 2;
+} catch (e) { om = true; }
+assert_true(om, "INT64_MAX * 2 throws OverflowError (needs --overflow-check)");
+
+// --- negative int arithmetic ---
+assert_eq(-5 + 3, -2, "neg int add");
+assert_eq(-5 - (-3), -2, "neg int sub");
+assert_eq(-4 * 3, -12, "neg int mul");
+assert_eq(-7 / 2, -3, "neg int div (trunc toward zero)");
+assert_eq(-7 % 3, -1, "neg int mod");
+
+// --- float remainder not allowed ---
+var fr; fr = false;
+try { tmp = 5.5 % 2.0; } catch (e) { fr = true; }
+assert_true(fr, "float % throws error");
+
+// --- negative mod ---
+assert_eq(7 % -3, 1, "positive % negative");
+assert_eq(-7 % -3, -1, "negative % negative");
+
+// --- mixed div (int/float) → float ---
+assert_eq(5 / 2.0, 2.5, "int / float → float");
+assert_eq(5.0 / 2, 2.5, "float / int → float");
+
+// --- mod with negative divisor ---
+assert_eq(7 % -3, 1, "7 % -3 = 1");
+
+if (failed > 0) {
+    $print("\n=== FAIL: 71_arithmetic ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+} else {
+    $print("71_arithmetic: All %1 tests passed\n", passed);
+}

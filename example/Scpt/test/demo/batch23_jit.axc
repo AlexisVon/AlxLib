@@ -1,0 +1,55 @@
+// JIT demo: generate C++, compile, link, call, clean up
+// Uses $exec and $fwrite extension functions
+
+var gcc = "g++";
+var inc  = "../../../../include";
+var dir  = "/tmp/alexis_jit";
+var src  = string("%1/gen.cpp", dir);
+var so   = string("%1/gen.so", dir);
+
+// 1. Ensure g++ and prep dir
+$exec(string("mkdir -p %1", dir));
+var r = $exec(string("%1 --version 2>&1", gcc));
+if (r["excode"] != 0) {
+    $print("FAIL: g++ not available\n");
+    $exec(string("rm -rf %1", dir));
+    return;
+}
+
+// 2. Write C++ source
+var cpp = `#include "ascript.h"
+using namespace alx;
+using namespace alx::script;
+
+static void fn_sq(fwrap& args) {
+    int_64 x = args[0].is<int_64>() ? args[0].to<int_64>() : 0;
+    args.freturn(x * x);
+}
+
+extern "C" void alexis_script_load(fwrap& args) {
+    args.bind("sq", fn_sq);
+}
+`;
+$fwrite(src, cpp);
+
+// 3. Compile
+r = $exec(string("%1 -std=c++17 -fPIC -shared -O2 -I%2 -I%2/alxscpt -I%2/alxbase -o %3 %4 2>&1", gcc, inc, so, src));
+if (!r["success"]) {
+    $print("FAIL: compile\n%1\n", r["output"]);
+    $exec(string("rm -rf %1", dir));
+    return;
+}
+
+// 4. Link & call
+link "/tmp/alexis_jit/gen.so" as jit;
+var v = jit.sq(7);
+if (v != 49) {
+    $print("FAIL: jit.sq(7) = %1, expected 49\n", v);
+    delete jit;
+    $exec(string("rm -rf %1", dir));
+    return;
+}
+
+// 5. Cleanup
+delete jit;
+$exec(string("rm -rf %1", dir));

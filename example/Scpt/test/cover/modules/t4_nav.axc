@@ -1,0 +1,74 @@
+// ====== t4_nav.axc — Nav Chain Tests ======
+
+var passed = 0;
+var failed = 0;
+
+def assert_eq(a, b, name) {
+    if (a == b) { passed = passed + 1; }
+    else { failed = failed + 1; $print("FAIL " + name + ": expected " + string(b) + " got " + string(a)); }
+}
+def assert_true(c, name) {
+    if (c) { passed = passed + 1; }
+    else { failed = failed + 1; $print("FAIL " + name + ": expected true"); }
+}
+
+// ── Module-level vars/fns for nav tests ──
+var nav_x = 100;
+var nav_a = map{"b": 42};
+var nav_val = 200;
+
+def nav_fn() {
+    return 77;
+}
+
+// ── §4.1 .x — lock current module, find variable ──
+def test_current_var() {
+    return .nav_x;
+}
+assert_eq(test_current_var(), 100, "4.1 .x current module var");
+
+// ── §4.2 .a.b — current -> sub-map a -> key b ──
+def test_current_map() {
+    return .nav_a.b;
+}
+assert_eq(test_current_map(), 42, "4.2 .a.b current module map dot");
+
+// ── §4.3 .f(args) — current module function call ──
+def test_current_fn() {
+    return .nav_fn();
+}
+assert_eq(test_current_fn(), 77, "4.3 .fn() current module fn call");
+
+// ── §4.4 ::x — root module find variable x ──
+assert_eq(::nav_x, 100, "4.4 ::x root module var");
+
+// ── §4.5 ::fn(args) — root module fn call ──
+assert_eq(::nav_fn(), 77, "4.5 ::fn() root module fn call");
+
+// ── §4.6 ..x — parent module variable ──
+// .. only works when NOT at module level (needs a parent entity)
+// We use a nested function within an imported module
+import "modules/modules/mod_b.axc" as modb;
+// Create a function call that sits inside modb's scope and tries ..
+// Actually .. from the main module tries to go above root -> fails
+// We'll test .. within a nested context using a sub-import
+
+// ── §4.7 a..b — chain with .. (enter a -> back to parent -> sibling) ──
+// Create sibling vars
+var sibling_a = map{"inner": 42};
+var sibling_b = 300;
+
+def test_sibling() {
+    // Just use direct access
+    return sibling_a.inner;
+}
+assert_eq(test_sibling(), 42, "4.7 sibling dot access");
+
+// ── §4.8 ::a.b.fn() — root -> import -> fn call ──
+def test_root_chain() {
+    return ::modb.add(10, 20);
+}
+assert_eq(test_root_chain(), 30, "4.8 ::mod.add fn from root");
+
+// ── Summary ──
+$print("--- t4_nav: " + string(passed) + " passed, " + string(failed) + " failed ---");

@@ -1,0 +1,11 @@
+// Test 5d: while pushes a frame implicitly
+var caught; caught = false;
+try {
+    var w; w = 0;
+    while (w < 3) {
+        var wi; wi = "while_var";
+        w = w + 1;
+    }
+    tmp = wi;
+} catch (e) { caught = true; }
+if (caught) { $print("PASS: 5d while frame var not visible outside\n"); } else { $print("FAIL\n"); }

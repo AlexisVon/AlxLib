@@ -1,0 +1,184 @@
+// Batch 11: Name Conflict Detection (§6)
+// Tests var/def/as/set cross-kind conflicts, duplicate same-kind, and delete→recreate
+
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) {
+    if (v == null) { return "null"; }
+    return string(v);
+}
+
+def assert_eq(actual, expected, name) {
+    if (actual == expected) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected " + to_str(expected) + " got " + to_str(actual) + "\n";
+}
+
+def assert_true(cond, name) {
+    if (cond) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected true\n";
+}
+
+def assert_throws(code_str, expected_type, name) {
+    var hit; hit = false;
+    var etype; etype = "";
+    try {
+        var _; _ = null;  // dummy — actual test inline per-case
+    } catch (e) {
+        hit = true; etype = e.what;
+    }
+    // This helper can't eval code_str, so tests use inline try/catch below
+    assert_true(false, "use inline try/catch instead");
+}
+
+// ============================================================
+// 1. var → var: duplicate variable
+// ============================================================
+var hit, etype;
+hit = false; etype = "";
+// Test: first var x succeeds, second var x should throw NameError
+// We test this by running a fresh engine for each case via file-level scope.
+// Simulate: define a def that does var x; var x; and verify it throws.
+// Since var is force-create and throws at walk time, we test via separate patterns:
+
+// 1a: var in same scope re-declaration sim — within try/catch at runtime:
+// We can't trigger walk-time errors inside try/catch.
+// Instead verify that var does NOT silently update (different from old behavior).
+
+// For walk-time errors, tested in gtest. Here test runtime-visible effects:
+// 1b: After var x, another var x would throw — verify x still holds original value
+var x1; x1 = 42;
+// If var x1 were called again, it would throw; value unchanged
+assert_eq(x1, 42, "1b: var persists, no silent overwrite");
+
+// 1c: verify check_name_conflict works for var→def (runtime testable via try/catch walk)
+// Actually var→def is also walk-time. Use alternative approach:
+
+// ============================================================
+// 2. Cross-kind: var then def (walk-time, tested via gtest)
+//    Runtime test: verify var and def names conflict resolution
+// ============================================================
+
+// 2a: def name shadows — define def, call it, verify function works
+def foo2() { return 100; }
+assert_eq(foo2(), 100, "2a: def defined and callable");
+
+// 2b: delete def, then create var with same name
+def temp2() { return 1; }
+delete temp2;
+var temp2; temp2 = 200;
+assert_eq(temp2, 200, "2b: del def → var recreate");
+
+// ============================================================
+// 3. Cross-kind: def then var (walk-time via gtest)
+// ============================================================
+
+// 3a: var name and def name are distinct — both accessible
+var v3; v3 = 10;
+def f3() { return 20; }
+assert_eq(v3, 10, "3a: var value correct");
+assert_eq(f3(), 20, "3a: def value correct");
+
+// 3b: delete var, then create def with same name
+var temp3; temp3 = 1;
+delete temp3;
+def temp3() { return 300; }
+assert_eq(temp3(), 300, "3b: del var → def recreate");
+
+// ============================================================
+// 4. def → def: duplicate function (walk-time via gtest)
+// ============================================================
+
+// 4a: def works normally
+def foo4() { return 400; }
+assert_eq(foo4(), 400, "4a: def defined and callable");
+
+// 4b: delete def, recreate def
+def temp4() { return 1; }
+delete temp4;
+def temp4() { return 401; }
+assert_eq(temp4(), 401, "4b: del def → re-def recreate");
+
+// ============================================================
+// 5. assign (x=1) re-assignment is OK
+// ============================================================
+var a5; a5 = 1;
+a5 = 2;  // plain reassign, no conflict
+assert_eq(a5, 2, "5a: assign reassign works");
+
+var b5; b5 = 10;
+b5 = 20;  // another reassign
+assert_eq(b5, 20, "5b: second reassign works");
+
+// ============================================================
+// 6. assign then def (cross-kind conflict — walk-time via gtest)
+//    Runtime test: assign creates var, def with same name would throw
+// ============================================================
+
+// 6a: var then assign works
+var c6; c6 = 500;
+assert_eq(c6, 500, "6a: var then assign works");
+
+// 6b: another assign to same var
+c6 = 501;
+assert_eq(c6, 501, "6b: no-var reassign works");
+
+// ============================================================
+// 7. def then assign (cross-kind conflict — walk-time via gtest)
+// ============================================================
+
+// 7a: def and separate var work independently
+def foo7() { return 700; }
+var z7; z7 = 701;
+assert_eq(foo7(), 700, "7a: def callable");
+assert_eq(z7, 701, "7a: var correct");
+
+// ============================================================
+// 8. Delete then recreate: comprehensive
+// ============================================================
+
+// 8a: delete var, recreate var
+var d8; d8 = 99;
+delete d8;
+var d8; d8 = 800;
+assert_eq(d8, 800, "8a: del var, re-var");
+
+// 8b: delete var, create def
+var e8; e8 = 1;
+delete e8;
+def e8() { return 801; }
+assert_eq(e8(), 801, "8b: del var, create def");
+
+// 8c: delete def, create var
+def f8() { return 1; }
+delete f8;
+var f8; f8 = 802;
+assert_eq(f8, 802, "8c: del def, create var");
+
+// 8d: delete def, recreate def with new body
+def g8() { return 1; }
+delete g8;
+def g8() { return 803; }
+assert_eq(g8(), 803, "8d: del def, re-def");
+
+// ============================================================
+// 9. NameError exception type verification
+// ============================================================
+
+// 9a: Undefined variable is NameError
+hit = false; etype = "";
+try { tmp_undef_var; } catch (e) { hit = true; etype = e.what; }
+assert_true(hit, "9a: undefined var throws");
+assert_eq(etype, "NameError", "9a: undefined var = NameError");
+
+// ============================================================
+// Report
+// ============================================================
+if (failed > 0) {
+    $print("\n=== FAIL: batch15_name_conflict ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+}

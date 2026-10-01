@@ -1,0 +1,2 @@
+// float() overflow rejection — "1e999" overflows to inf, should throw ConvError
+var x = float("1e999");

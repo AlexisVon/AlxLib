@@ -1,0 +1,76 @@
+// ====== t5_delete.axc — Delete Tests ======
+
+var passed = 0;
+var failed = 0;
+
+def assert_eq(a, b, name) {
+    if (a == b) { passed = passed + 1; }
+    else { failed = failed + 1; $print("FAIL " + name + ": expected " + string(b) + " got " + string(a)); }
+}
+def assert_true(c, name) {
+    if (c) { passed = passed + 1; }
+    else { failed = failed + 1; $print("FAIL " + name + ": expected true"); }
+}
+
+// ── §6.1 delete variable ──
+var del_x = 10;
+delete del_x;
+var caught = false;
+try { $print(del_x); } catch (e) { caught = true; }
+assert_true(caught, "6.1 delete variable");
+
+// ── §6.2 delete function ──
+def del_fn() { return 1; }
+delete del_fn;
+var caught_fn = false;
+try { del_fn(); } catch (e) { caught_fn = true; }
+assert_true(caught_fn, "6.2 delete function");
+
+// ── §6.3 delete non-existent -> silent no-op ──
+var caught_none = true;
+try { delete nonexistent; caught_none = true; } catch (e) { caught_none = false; }
+assert_true(caught_none, "6.3 delete non-existent -> silent no-op");
+
+// ── §6.4 delete map key: d.key / d["k"] ──
+var mymap = map{"a": 1, "b": 2, "c": 3};
+delete mymap.a;
+assert_eq(mymap.a, null, "6.4a delete map key via dot");
+assert_eq(mymap.b, 2, "6.4b sibling key preserved after dot delete");
+delete mymap["c"];
+assert_eq(mymap.c, null, "6.4c delete map key via index");
+
+// ── §6.5 delete vec[-1] (pop_back) ──
+var myarr = vec[10, 20, 30];
+delete myarr[-1];
+assert_eq(myarr[0], 10, "6.5a vec[0] unchanged after pop_back");
+assert_eq(myarr[1], 20, "6.5b vec[1] preserved after pop_back");
+
+// ── §6.6 delete lst[-1] (pop_back), delete l[0] (pop_front) ──
+var l = lst[1, 2, 3, 4];
+delete l[-1];
+assert_eq(l[0], 1, "6.6a lst[0] after pop_back");
+delete l[0];
+assert_eq(l[0], 2, "6.6b lst[0] after pop_front");
+
+// ── §6.7 delete import/link alias, then re-import ──
+import "modules/modules/mod_a.axc" as delmod;
+assert_eq(delmod.x, 42, "6.7a import before delete");
+delete delmod;
+import "modules/modules/mod_a.axc" as delmod;
+assert_eq(delmod.x, 42, "6.7b reimport after delete");
+
+env(["../../bin"]);
+link "base.so" as b;
+assert_eq(b.mt.abs(-5), 5, "6.7c link before delete");
+delete b;
+link "base.so" as b;
+assert_eq(b.mt.abs(-5), 5, "6.7d relink after delete");
+
+// ── §6.8 delete variable, then redeclare ──
+var tmpvar = 111;
+delete tmpvar;
+var tmpvar = 222;
+assert_eq(tmpvar, 222, "6.8 delete then redeclare");
+
+// ── Summary ──
+$print("--- t5_delete: " + string(passed) + " passed, " + string(failed) + " failed ---");

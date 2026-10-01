@@ -1,0 +1,7 @@
+// Test: OverflowError - arithmetic overflow (requires --overflow-check)
+try {
+    var x = 9223372036854775807 + 1;
+} catch (e) {
+    $print("what: %1\n", e.what);
+    $print("info: %1\n", e.info);
+}

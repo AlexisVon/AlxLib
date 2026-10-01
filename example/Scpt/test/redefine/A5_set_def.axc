@@ -1,0 +1,3 @@
+// set → def: x=1; then def x(){} — should throw NameError (def over existing var)
+x = 1;
+def x() {}

@@ -1,0 +1,22 @@
+// Test import module: math_util
+var call_count; call_count = 0;
+var module_name; module_name = "math_util";
+
+def add(a, b) {
+    call_count = call_count + 1;
+    return a + b;
+}
+
+def mul(a, b) {
+    call_count = call_count + 1;
+    return a * b;
+}
+
+def square(x) {
+    call_count = call_count + 1;
+    return x * x;
+}
+
+def get_calls() {
+    return call_count;
+}

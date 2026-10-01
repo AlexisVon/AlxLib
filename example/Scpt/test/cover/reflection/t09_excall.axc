@@ -1,0 +1,45 @@
+// T09: value reflection — extension function call
+// @("$xxx")() — the $ prefix looks the name up in the extend table directly (fast path)
+
+// 1. literal name string
+$print("T09.1 @(\"$print\")(): ");
+@("$print")("reflect call ok");
+$print("OK");
+
+// 2. computed name
+var n = "$print";
+@(n)("reflect computed name ok");
+$print("OK");
+
+// 3. the return value joins an expression
+@("$print")("T09.3 reflect in expr: ", 1 + 1);
+$print("OK");
+
+// 4. missing extension → NameError (the string form is not checked at compile time)
+var got_error = false;
+try {
+    @("$no_such_ext_xyz")();
+} catch (e) {
+    got_error = true;
+    $print("T09.4 missing caught: ", e);
+}
+if (!got_error) { $print("FAIL T09.4"); throw("assert"); }
+$print("OK");
+
+// 5. static definition read (folded at compile time): a bare $name = a constant
+var pi = $PI;
+if (pi != 3.14159) { $print("FAIL T09.5 fold"); throw("assert"); }
+$print("T09.5 $PI folded: ", pi);
+
+// 6. reflection read (the run-time fast path looks in the define table)
+var pi2 = @("$PI");
+if (pi2 != 3.14159) { $print("FAIL T09.6 reflect"); throw("assert"); }
+$print("T09.6 @(\"$PI\") ok");
+
+// 7. version static definitions (registered by the example host): $vtype / $etype
+if ($vtype != 4) { $print("FAIL T09.7 vtype: ", $vtype); throw("assert"); } // + O_EVAL (2026-08-07)
+if ($etype != "example-0.1") { $print("FAIL T09.7 etype: ", $etype); throw("assert"); }
+$print("T09.7 $vtype/$etype: ", $vtype, " / ", $etype);
+
+// 8. unregistered static definition → compile error (parse stage)
+// var bad = $no_such_def;  // compile error, uncatchable by try here, shown as a comment only

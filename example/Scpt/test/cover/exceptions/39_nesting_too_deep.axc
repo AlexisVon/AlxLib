@@ -1,0 +1,2 @@
+// deep unary chain → nesting guard compile error (was: stack overflow)
+var x = ------- 1;

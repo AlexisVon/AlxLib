@@ -1,0 +1,54 @@
+// §3.1 int — decimal, hex, octal, binary literals, boundary values
+// lang-guide §3.1
+
+var passed = 0;
+var failed = 0;
+var failures = "";
+
+def to_str(v) { if (v == null) { return "null"; } return string(v); }
+def assert_eq(a, e, n) { if (a == e) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected " + to_str(e) + " got " + to_str(a) + "\n"; }
+def assert_true(c, n) { if (c) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected true\n"; }
+
+// ---- decimal ----
+assert_eq(42, 42, "decimal 42");
+assert_eq(-1, -1, "decimal -1");
+assert_eq(1000000, 1000000, "decimal 1000000");
+
+// ---- hexadecimal ----
+assert_eq(0xFF, 255, "hex 0xFF = 255");
+assert_eq(0x0, 0, "hex 0x0 = 0");
+assert_eq(0xFFFF, 65535, "hex 0xFFFF = 65535");
+assert_eq(0xABCDEF, 11259375, "hex 0xABCDEF = 11259375");
+
+// ---- octal ----
+assert_eq(0o77, 63, "oct 0o77 = 63");
+assert_eq(0o7777, 4095, "oct 0o7777 = 4095");
+assert_eq(0o0, 0, "oct 0o0 = 0");
+
+// ---- binary ----
+assert_eq(0b1010, 10, "bin 0b1010 = 10");
+assert_eq(0b11111111, 255, "bin 0b11111111 = 255");
+assert_eq(0b0, 0, "bin 0b0 = 0");
+
+// ---- INT64_MIN construction ----
+var int_min = -9223372036854775807 - 1;
+assert_eq(type(int_min), "int", "INT64_MIN is int");
+
+// ---- large values ----
+var big = 9223372036854775800;  // near INT64_MAX
+assert_true(big > 0, "near INT64_MAX is positive");
+
+// ---- negative ----
+assert_eq(-42, -42, "negative -42");
+
+// ---- zero ----
+assert_eq(0, 0, "zero");
+
+// ---- type check ----
+assert_eq(type(42), "int", "type(42) = int");
+
+if (failed > 0) {
+    $print("\n=== FAIL: test_int ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+}

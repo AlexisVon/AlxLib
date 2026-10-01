@@ -1,0 +1,4 @@
+// Test 1b: var y = 42; — declaration with initialiser
+var y = 42;
+if (y == 42) { $print("PASS: 1b var y = 42 -> 42\n"); }
+else { $print("FAIL: 1b expected 42 got " + string(y) + "\n"); }

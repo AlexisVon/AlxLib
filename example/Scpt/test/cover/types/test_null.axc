@@ -1,0 +1,103 @@
+// §3.5 null — default init, ==/!=, type
+// lang-guide §3.5
+
+var passed = 0;
+var failed = 0;
+var failures = "";
+
+def to_str(v) { if (v == null) { return "null"; } return string(v); }
+def assert_eq(a, e, n) { if (a == e) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected " + to_str(e) + " got " + to_str(a) + "\n"; }
+def assert_true(c, n) { if (c) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected true\n"; }
+
+// ---- uninitialized var = null ----
+var x;
+assert_eq(x, null, "uninitialized var = null");
+
+// ---- explicit null ----
+var n = null;
+assert_eq(n, null, "explicit null = null");
+
+// ---- null == null ----
+assert_true(null == null, "null == null = true");
+
+// ---- null != null ----
+assert_true(!(null != null), "null != null = false");
+
+// ---- null vs other types ----
+assert_true(!(null == 0), "null == 0 = false");
+assert_true(null != 0, "null != 0 = true");
+assert_true(!(null == ""), "null == \"\" = false");
+
+// ---- null ordered comparison → TypeError ----
+var _hit = false;
+try { var _tmp = null < 1; } catch (_e) { _hit = true; }
+assert_true(_hit, "null < 1 throws TypeError");
+
+_hit = false;
+try { var _tmp = null > 0; } catch (_e) { _hit = true; }
+assert_true(_hit, "null > 0 throws TypeError");
+
+// ---- type check ----
+assert_eq(type(null), "null", "type(null) = null");
+
+// ---- [null] index: read = size on every container, dot chain included ----
+var _v = [10, 20, 30];
+var _l = lst[1, 2];
+var _s = "hello";
+var _m = map{"a": 1, "b": 2};
+var _o = map{"s": "hello", "v": [1, 2, 3], "p": map{"k": 1}};
+
+assert_eq(_v[null], 3, "vec[null] = size");
+assert_eq(_l[null], 2, "lst[null] = size");
+assert_eq(_s[null], 5, "string[null] = size");
+assert_eq(_m[null], 2, "map[null] = size");
+assert_eq(_o.v[null], 3, "dot chain vec[null] = size");
+assert_eq(_o.s[null], 5, "dot chain string[null] = size");
+assert_eq(_o.p[null], 1, "dot chain map[null] = size");
+
+// ---- [null] write: append on vec/lst only ----
+_hit = false;
+try { _m[null] = 1; } catch (_e) { _hit = true; }
+assert_true(_hit, "map[null] write throws TypeError");
+assert_eq(_m[null], 2, "map unchanged after failed [null] write");
+
+_hit = false;
+try { _s[null] = "x"; } catch (_e) { _hit = true; }
+assert_true(_hit, "string[null] write throws TypeError");
+
+// ---- map key must be a string (null/int no longer collapse to "") ----
+_hit = false;
+try { _m[0]; } catch (_e) { _hit = true; }
+assert_true(_hit, "map[int] read throws TypeError");
+
+_hit = false;
+try { delete _m[null]; } catch (_e) { _hit = true; }
+assert_true(_hit, "delete map[null] throws ConvError");
+
+_hit = false;
+try { delete _o.p[null]; } catch (_e) { _hit = true; }
+assert_true(_hit, "delete dot chain map[null] throws ConvError");
+
+_hit = false;
+try { delete _o.s[null]; } catch (_e) { _hit = true; }
+assert_true(_hit, "delete dot chain string[null] throws ConvError");
+
+// scalar parent: [null] is not a size query either
+var _n = map{"n": 5};
+_hit = false;
+try { _n.n[null]; } catch (_e) { _hit = true; }
+assert_true(_hit, "dot chain scalar[null] read throws TypeError");
+
+// map still readable/writable by string key after the guards
+_m["c"] = 3;
+assert_eq(_m["c"], 3, "map[string] write still works");
+assert_eq(_m["a"], 1, "map[string] read still works");
+
+// ---- $print(null) outputs "null" (visual verification) ----
+// Covered by batch1 demo tests. Skip here.
+
+if (failed > 0) {
+    $print("\n=== FAIL: test_null ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+}

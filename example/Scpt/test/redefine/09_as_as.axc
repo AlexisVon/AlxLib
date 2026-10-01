@@ -1,0 +1,4 @@
+// 9: link namespace redefines link namespace — should throw LinkError
+env(["../../../../bin/link"]);
+link "base.so" as b;
+link "test_store.so" as b;

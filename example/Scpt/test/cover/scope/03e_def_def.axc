@@ -1,0 +1,13 @@
+// Test 3e: def x -> def x in the same scope -> NameError.
+// Note: a try block pushes a frame, so def inside try is frame-scoped and does
+// NOT conflict with an outer def (documented). Test the conflict in one scope
+// inside a function, catch from the call site.
+def outer() {
+    def h() { return 1; }
+    def h() { return 2; } // same frame -> NameError
+    return 3;
+}
+var caught; caught = false;
+try { outer(); } catch (e) { caught = true; }
+if (caught) { $print("PASS: 3e def->def NameError caught\n"); }
+else { $print("FAIL: 3e def->def no error\n"); }

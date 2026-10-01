@@ -1,0 +1,120 @@
+// T10: eval — a string function (an anonymous lambda run immediately)
+// three levels of dynamism: data → name (@) → code (eval)
+
+// 1. last value returned
+var r = eval("1+1;");
+$print("T10.1 last-value:", r);
+if (r != 2) { $print("FAIL T10.1"); throw("assert"); }
+$print("OK");
+
+// 2. an explicit return short-circuits
+r = eval("return 42;");
+$print("T10.2 return:", r);
+if (r != 42) { $print("FAIL T10.2"); throw("assert"); }
+$print("OK");
+
+// 3. a statement sequence + the last value
+r = eval("var t = 10; t * 2;");
+$print("T10.3 stmts:", r);
+if (r != 20) { $print("FAIL T10.3"); throw("assert"); }
+$print("OK");
+
+// 4. params (each map entry becomes a named variable in the eval frame)
+r = eval("a + b;", map{"a": 1, "b": 2});
+$print("T10.4 params:", r);
+if (r != 3) { $print("FAIL T10.4"); throw("assert"); }
+$print("OK");
+
+// 5. params shadow an outer variable of the same name
+var a = 100;
+r = eval("a;", map{"a": 1});
+$print("T10.5 shadow:", r);
+if (r != 1) { $print("FAIL T10.5"); throw("assert"); }
+$print("OK");
+
+// 6. frame-chain closure: eval reads a local of the current frame
+var x = 10;
+r = eval("x + 1;");
+$print("T10.6 closure read:", r);
+if (r != 11) { $print("FAIL T10.6"); throw("assert"); }
+$print("OK");
+
+// 7. frame-chain write-through: eval writes an outer variable of the same name
+r = eval("x = 99; x;");
+$print("T10.7 write-through:", r, "x=", x);
+if (r != 99 || x != 99) { $print("FAIL T10.7"); throw("assert"); }
+$print("OK");
+
+// 8. def inside eval: valid in the frame, dropped when it exits
+r = eval("def g(a) { return a * 2; } return g(21);");
+$print("T10.8 def inside:", r);
+if (r != 42) { $print("FAIL T10.8"); throw("assert"); }
+$print("OK");
+var def_died = false;
+try { @("g")(1); } catch (e) { def_died = true; }
+$print("T10.8b def dies with frame:", def_died);
+if (!def_died) { $print("FAIL T10.8b"); throw("assert"); }
+$print("OK");
+
+// 9. nested eval — the script edits a string and evaluates it; that evaluation edits another string and evaluates that
+var s = "1+1;";
+r = eval("return eval(s) * 2;");
+$print("T10.9 nested:", r);
+if (r != 4) { $print("FAIL T10.9"); throw("assert"); }
+$print("OK");
+
+// 10. generation chain: data builds code → eval → the code builds more code → eval again
+var gen = "var t = \"3*3;\"; return eval(t) + 1;";
+r = eval(gen);
+$print("T10.10 gen chain:", r);
+if (r != 10) { $print("FAIL T10.10"); throw("assert"); }
+$print("OK");
+
+// 11. three-layer recursive reflection through eval
+var l1 = "var l2 = \"return eval(\\\"2+2;\\\") + 1;\"; return eval(l2);";
+r = eval(l1);
+$print("T10.11 3-layer:", r);
+if (r != 5) { $print("FAIL T10.11"); throw("assert"); }
+$print("OK");
+
+// 12. eval combined with @: generated code dispatches dynamically through @
+var fname = "double";
+def double(v) { return v * 2; }
+r = eval("return @(fname)(21);");
+$print("T10.12 eval+@:", r);
+if (r != 42) { $print("FAIL T10.12"); throw("assert"); }
+$print("OK");
+
+// 13. TCO recursion of a named def inside eval
+r = eval("def g(n) { if (n <= 0) return 0; return g(n - 1); } return g(100);");
+$print("T10.13 TCO inside:", r);
+if (r != 0) { $print("FAIL T10.13"); throw("assert"); }
+$print("OK");
+
+// 14. TypeError: non-string
+var type_err = false;
+try { eval(123); } catch (e) { type_err = true; }
+$print("T10.14 type error:", type_err);
+if (!type_err) { $print("FAIL T10.14"); throw("assert"); }
+$print("OK");
+
+// 15. ParseError is catchable
+var parse_err = false;
+try { eval("if("); } catch (e) { parse_err = true; }
+$print("T10.15 parse error caught:", parse_err);
+if (!parse_err) { $print("FAIL T10.15"); throw("assert"); }
+$print("OK");
+
+// 16. empty string → null
+r = eval("");
+$print("T10.16 empty:", r == null);
+if (r != null) { $print("FAIL T10.16"); throw("assert"); }
+$print("OK");
+
+// 17. here() inside an eval string returns the position within that string
+var h = eval("here();");
+$print("T10.17 here in eval: row=", h.row, " col=", h.col, " file=", h.file);
+if (h.row < 1 || h.col < 1) { $print("FAIL T10.17"); throw("assert"); }
+$print("OK");
+
+$print("T10 all passed");

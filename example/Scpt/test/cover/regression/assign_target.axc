@@ -1,0 +1,41 @@
+// An @() target is only checked at runtime — the path decides.
+// (regression: a path that is not a target used to be dropped silently)
+
+try {
+    @("1+2") = 5;
+    throw "dynamic assign: raised nothing";
+} catch (e) {
+    if (e.what != "TypeError") {
+        throw "dynamic assign: " + e.what + " / " + e.info;
+    }
+}
+
+// a path that parses to no node at all
+try {
+    @("1") = 5;
+    throw "literal path: raised nothing";
+} catch (e) {
+    if (e.what != "TypeError") { throw "literal path: " + e.what + " / " + e.info; }
+}
+
+// a path naming an undefined variable
+var nk = "nope";
+try {
+    @(nk) = 1;
+    throw "undefined path: raised nothing";
+} catch (e) {
+    if (e.what != "NameError") { throw "undefined path: " + e.what + " / " + e.info; }
+}
+
+// valid targets keep working
+var x = 1; x = 2;
+if (x != 2) { throw "plain assign broke: " + string(x); }
+
+var v = [7]; var k = "v[0]"; @(k) = 8;
+if (v[0] != 8) { throw "dynamic assign broke: " + string(v[0]); }
+
+var m = map{}; m["a"] = 1;
+if (m["a"] != 1) { throw "map write broke"; }
+
+var a = 0; a += 5; a++;
+if (a != 6) { throw "compound/inc broke: " + string(a); }

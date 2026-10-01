@@ -1,0 +1,68 @@
+// Test: container delete operations
+
+$print("= container delete tests =\n");
+
+// --- delete map dot ---
+var d; d = map{"x": 1, "y": 2};
+delete d.x;
+$print("delete d.x: d.x=%1, d[\"x\"] throws check below\n", d.x);
+// After dot delete, dot read returns null; index read throws
+try {
+    tmp = d["x"];
+    $print("ERROR: d[\"x\"] should have thrown after delete\n");
+} catch (e) {
+    $print("d[\"x\"] after delete correctly throws: %1\n", e);
+}
+
+// --- delete map index ---
+var d2; d2 = map{"a": 10, "b": 20};
+delete d2["a"];
+$print("delete d2[\"a\"]: d2[\"a\"] throws check below\n");
+try {
+    tmp = d2["a"];
+    $print("ERROR: should have thrown\n");
+} catch (e) {
+    $print("d2[\"a\"] after delete correctly throws: %1\n", e);
+}
+$print("d2.b after delete: %1\n", d2.b);
+
+// --- delete vec[-1] = pop_back ---
+var v; v = [1, 2, 3];
+delete v[-1];
+$print("delete v[-1] (pop_back): size=%1, values=%2 %3\n", v[null], v[0], v[1]);
+
+// --- delete vec[0] should throw IndexError ---
+try {
+    delete v[0];
+    $print("ERROR: delete vec[0] should throw\n");
+} catch (e) {
+    $print("delete vec[0] correctly throws: %1\n", e);
+}
+
+// --- delete vec[null] should throw ConvError ---
+try {
+    delete v[null];
+    $print("ERROR: delete vec[null] should throw\n");
+} catch (e) {
+    $print("delete vec[null] correctly throws: %1\n", e);
+}
+
+// --- delete lst[-1] = pop_back ---
+var l; l = lst[1, 2, 3];
+delete l[-1];
+$print("delete lst[-1] (pop_back): size=%1, l[0]=%2\n", l[null], l[0]);
+
+// --- delete lst[0] = pop_front ---
+var l2; l2 = lst[10, 20, 30];
+delete l2[0];
+$print("delete l2[0] (pop_front): l2[0]=%1, size=%2\n", l2[0], l2[null]);
+
+// --- delete lst[null] should throw ConvError ---
+try {
+    delete l2[null];
+    $print("ERROR: delete lst[null] should throw\n");
+} catch (e) {
+    $print("delete lst[null] correctly throws: %1\n", e);
+}
+
+$print("=== delete tests done ===\n");

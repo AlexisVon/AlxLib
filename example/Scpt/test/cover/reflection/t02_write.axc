@@ -1,0 +1,60 @@
+// T02: value reflection — write
+// @x = value; @(expr) = value;
+
+// 1. @x = 5; write the target variable
+var x = 0;
+var name = "x";
+@name = 5;
+$print("T02.1 @name=5: x=", x);
+if (x != 5) { $print("FAIL T02.1"); throw("assert"); }
+$print("OK");
+
+// 2. @(expr) = value;
+x = 0;
+var target = "x";
+@(target) = 99;
+$print("T02.2 @(expr)=99: x=", x);
+if (x != 99) { $print("FAIL T02.2"); throw("assert"); }
+$print("OK");
+
+// 3. write a namespace sub-path
+// NOTE: @ on a dotted path navigates -- @p = 77 with p="ns.a.b" writes ns.a.b
+// (measured: ns.a.b reads 77 afterwards, no top-level "ns.a.b" variable appears)
+var ns = map();
+ns.a = map();
+ns.a.b = 0;
+var p = "ns.a.b";
+@p = 77;
+$print("T02.3 after @p=77: ns.a.b=", ns.a.b, " (navigated), @p reads:", @p);
+// The write navigates when the ref string contains dots (see the read-back above)
+// so there is no new top-level variable to clean up
+$print("T02.3 behavior: @ on a dotted path writes through to the leaf (navigation)");
+$print("OK (behavior documented)");
+
+// 4. write a missing variable (auto-created? testing the behaviour)
+// clear the variable first so it is certainly missing
+var nonexist_name = "fresh_var_abc";
+try {
+    @nonexist_name = 123;
+    $print("T02.4 created: ", fresh_var_abc);
+    if (fresh_var_abc != 123) { $print("FAIL T02.4"); throw("assert"); }
+    $print("OK - creates new var");
+} catch (e) {
+    $print("T02.4 write to nonexistent caught: ", e);
+    $print("OK - throws on nonexistent (allowed behavior)");
+}
+
+// 5. non-string reflection target on write → TypeError
+var not_str = 456;
+var got_error = false;
+try {
+    @not_str = 1;
+    $print("ERROR: should have thrown TypeError for non-string write target");
+} catch (e) {
+    got_error = true;
+    $print("T02.5 non-string write caught: ", e);
+}
+if (!got_error) { $print("FAIL T02.5"); throw("assert"); }
+$print("OK");
+
+$print("T02 all passed");

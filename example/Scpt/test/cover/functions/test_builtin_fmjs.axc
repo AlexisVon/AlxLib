@@ -1,0 +1,10 @@
+// fmjs: parse JSON string
+var s = "42";
+var n = $fmjs(s);
+$print(n);
+$print("\n");
+
+// fmjs with array
+var a = $fmjs("[1,2,3]");
+$print(a[0] + a[1] + a[2]);
+$print("\n");

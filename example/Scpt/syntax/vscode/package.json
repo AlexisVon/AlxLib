@@ -1,0 +1,43 @@
+{
+  "name": "vscode-alexis",
+  "displayName": "Alexis Script (Extended)",
+  "description": "Extended syntax highlighting for Alexis Script (.axc) — includes $xxx extension functions",
+  "version": "0.1.0",
+  "publisher": "alexis",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "alexis-script",
+        "aliases": [
+          "Alexis Script",
+          "alexis",
+          "axc"
+        ],
+        "extensions": [
+          ".axc"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "alexis-script",
+        "scopeName": "source.axc",
+        "path": "./syntaxes/alexis.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "alexis-script",
+        "path": "./snippets/axc.json"
+      }
+    ]
+  }
+}

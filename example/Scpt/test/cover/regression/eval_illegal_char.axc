@@ -1,0 +1,25 @@
+// An illegal character inside an eval string must fail the whole string with a
+// ParseError — not silently drop the statement behind it, and not silently
+// succeed when the illegal character is the entire string.
+// (regression: the lexer's error signal was never wired into the eval path)
+
+try {
+    eval("var a = 1; \\ var b = 2;");
+    throw "eval illegal char: raised nothing";
+} catch (e) {
+    if (e.what != "ParseError") {
+        throw "eval illegal char: " + e.what + " / " + e.info;
+    }
+}
+
+try {
+    eval("\\");
+    throw "eval lone illegal char: raised nothing";
+} catch (e) {
+    if (e.what != "ParseError") {
+        throw "eval lone illegal char: " + e.what + " / " + e.info;
+    }
+}
+
+// a clean string must still run
+if (eval("return 7;") != 7) { throw "plain eval broke"; }

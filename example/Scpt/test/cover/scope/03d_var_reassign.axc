@@ -1,0 +1,5 @@
+// Test 3d: var x -> then x = 1 (re-assignment) -> OK
+var x; x = 1;
+x = 42;
+if (x == 42) { $print("PASS: 3d var->reassign OK\n"); }
+else { $print("FAIL\n"); }

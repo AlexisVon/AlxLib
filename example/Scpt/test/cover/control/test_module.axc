@@ -1,0 +1,10 @@
+// Test module for modules.axc
+var x = 10;
+
+def add(a, b) {
+    return a + b;
+}
+
+def set_x(val) {
+    x = val;
+}

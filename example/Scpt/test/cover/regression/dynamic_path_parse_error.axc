@@ -1,0 +1,32 @@
+// The depth guard must report itself through @() and eval instead of degrading
+// to "Cannot parse path", and a called @() must not report NameError.
+// (regression: the parser's error signal was not wired into these paths)
+
+var p = "";
+for (var i = 0; i < 300; i = i + 1) { p = p + "("; }
+
+try {
+    var x = @(p);
+    throw "deep @(): raised nothing";
+} catch (e) {
+    if (e.what != "ParseError") { throw "deep @(): " + e.what + " / " + e.info; }
+}
+
+try {
+    @(p)();
+    throw "deep @()(): raised nothing";
+} catch (e) {
+    if (e.what != "ParseError") { throw "deep @()(): " + e.what + " / " + e.info; }
+}
+
+try {
+    eval(p);
+    throw "deep eval: raised nothing";
+} catch (e) {
+    if (e.what != "ParseError") { throw "deep eval: " + e.what + " / " + e.info; }
+}
+
+// a good path must still resolve
+var v = [10, 20, 30];
+var k = "v[1]";
+if (@(k) != 20) { throw "@() normal path broke"; }

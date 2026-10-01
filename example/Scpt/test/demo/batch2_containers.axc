@@ -1,0 +1,342 @@
+// Batch 2: Containers & Index Semantics (lang-guide.md §4, §6)
+// Tests vec, lst, dict, fill syntax, index, dot chain, delete
+
+var tmp; tmp = null; // probes below assign through it
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) {
+    if (v == null) { return "null"; }
+    return string(v);
+}
+
+def assert_eq(actual, expected, name) {
+    if (actual == expected) {
+        passed = passed + 1;
+        return;
+    }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected " + to_str(expected) + " got " + to_str(actual) + "\n";
+}
+
+def assert_true(cond, name) {
+    if (cond) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected true\n";
+}
+
+def assert_throws(fn_call, name) {
+    failed = failed + 1;
+    failures = failures + "  SKIP " + name + ": dynamic throw test not possible\n";
+}
+
+// ========== §4.1 vec basics ==========
+var v; v = [1, 2, 3];
+assert_eq(v[0], 1, "vec[0] first element");
+assert_eq(v[1], 2, "vec[1] middle");
+assert_eq(v[2], 3, "vec[2] last by index");
+
+// negative index
+assert_eq(v[-1], 3, "vec[-1] last element");
+
+// write
+v[0] = 99;
+assert_eq(v[0], 99, "vec[0] write");
+
+// null index: read = size
+assert_eq(v[null], 3, "vec[null] read = size (3)");
+
+// null index: write = push_back
+v[null] = 100;
+assert_eq(v[-1], 100, "vec[null] write = push_back");
+assert_eq(v[null], 4, "vec size now 4");
+
+// compound assign on append index [null] rejected at parse (desugar would push twice);
+// explicit form: push 0, then += on back
+var v2; v2 = [10, 20];
+v2[null] = 0;
+v2[-1] += 5;
+assert_eq(v2[-1], 5, "vec[null] push 0 then back +=5");
+
+// ========== §4.2 lst ==========
+var l; l = lst([1, 2, 3]);
+assert_eq(l[0], 1, "lst[0] first");
+assert_eq(l[-1], 3, "lst[-1] last");
+assert_eq(l[null], 3, "lst[null] read = size");
+
+// lst write
+l[0] = 10;
+assert_eq(l[0], 10, "lst[0] write");
+
+l[-1] = 30;
+assert_eq(l[-1], 30, "lst[-1] write");
+
+// lst push via null
+l[null] = 99;
+assert_eq(l[-1], 99, "lst[null] push_back");
+assert_eq(l[null], 4, "lst size after push");
+
+// lst supports arbitrary index (O(n) random access, lang.md §6.3)
+assert_eq(l[1], 2, "lst[1] = second element (arbitrary index)");
+
+// ========== §4.3 dict ==========
+var d; d = map{"key": "value", "n": 1};
+assert_eq(d.key, "value", "dict.key dot access");
+assert_eq(d["key"], "value", "dict[\"key\"] index access");
+assert_eq(d.n, 1, "dict.n numeric value");
+
+// insert new key
+d["new"] = 42;
+assert_eq(d.new, 42, "dict insert + dot read");
+
+// key not exist read
+var missing; missing = d.doesNotExist;
+assert_eq(missing, null, "dict missing key read = null");
+
+// key not exist at middle of dot chain
+var mid_missing_fail; mid_missing_fail = false;
+try { tmp = d.doesNotExist.sub; } catch (e) { mid_missing_fail = true; }
+assert_true(mid_missing_fail, "dict dot chain middle missing throws KeyError");
+
+// non-string key throws TypeError
+var non_str_fail; non_str_fail = false;
+try { tmp = d[42]; } catch (e) { non_str_fail = true; }
+assert_true(non_str_fail, "dict[non-string] throws TypeError");
+
+// ========== §4.4 fill syntax ==========
+var f1; f1 = [0:5];
+assert_eq(f1[null], 5, "fill [0:5] size = 5");
+assert_eq(f1[0], 0, "fill [0:5] all zeros");
+assert_eq(f1[4], 0, "fill [0:5] last is 0");
+
+var f2; f2 = [:5];
+assert_eq(f2[null], 5, "fill [:5] size = 5");
+assert_eq(f2[0], null, "fill [:5] all null");
+
+var f3; f3 = [1:3];
+assert_eq(f3[null], 3, "fill [1:3] size = 3");
+assert_eq(f3[2], 1, "fill [1:3] last is 1");
+
+var f4; f4 = [1, 2, 3:3];
+assert_eq(f4[null], 5, "fill suffix [1,2,3:3] size = 5");
+assert_eq(f4[3], 3, "fill suffix elem 3 = 3");
+assert_eq(f4[4], 3, "fill suffix elem 4 = 3");
+
+// ========== §6.1 var declaration ==========
+var scope_test; scope_test = 1;
+assert_eq(scope_test, 1, "var declaration");
+
+// var always creates in current scope
+{
+    var inner; inner = 42;
+    assert_eq(inner, 42, "var in block scope");
+}
+var inner_not_visible; inner_not_visible = false;
+try { tmp = inner; } catch (e) { inner_not_visible = true; }
+assert_true(inner_not_visible, "block var NOT visible outside block");
+
+// ========== §6.2 compound assignment ==========
+var ca; ca = 10;
+ca += 2; assert_eq(ca, 12, "compound +=");
+ca -= 3; assert_eq(ca, 9, "compound -=");
+ca *= 4; assert_eq(ca, 36, "compound *=");
+ca /= 2; assert_eq(ca, 18, "compound /=");
+ca %= 5; assert_eq(ca, 3, "compound %=");
+
+var cb; cb = 1;
+cb <<= 1; assert_eq(cb, 2, "compound <<=");
+cb >>= 1; assert_eq(cb, 1, "compound >>=");
+cb &= 7;  assert_eq(cb, 1, "compound &=");
+cb |= 8;  assert_eq(cb, 9, "compound |=");
+cb ^= 3;  assert_eq(cb, 10, "compound ^=");
+
+// ========== §6.3 dot chain ==========
+var nested; nested = map{"a": map{"b": 42}};
+assert_eq(nested.a.b, 42, "nested dot chain read");
+
+// write via dot chain
+nested.a.b = 99;
+assert_eq(nested.a.b, 99, "dot chain write");
+
+// chain tail key not exist → new
+nested.a.newKey = 88;
+assert_eq(nested.a.newKey, 88, "dot chain tail new key");
+
+// ========== §6.4 [] index table verification ==========
+// vec read: 0, -1, null, arbitrary
+var vi; vi = [10, 20, 30];
+assert_eq(vi[0], 10, "vec read [0]");
+assert_eq(vi[-1], 30, "vec read [-1]");
+assert_eq(vi[null], 3, "vec read [null] = size");
+assert_eq(vi[1], 20, "vec read arbitrary [1]");
+
+// vec write: 0, -1, null, arbitrary
+vi[0] = 100;
+assert_eq(vi[0], 100, "vec write [0]");
+vi[-1] = 300;
+assert_eq(vi[-1], 300, "vec write [-1]");
+vi[null] = 400;
+assert_eq(vi[-1], 400, "vec write [null] push_back");
+vi[1] = 200;
+assert_eq(vi[1], 200, "vec write arbitrary [1]");
+
+// string read: 0, arbitrary, [-1] back, [null] size
+var st; st = "hello";
+assert_eq(st[0], "h", "string read [0]");
+assert_eq(st[4], "o", "string read [4]");
+assert_eq(st[-1], "o", "string[-1] → back");
+assert_eq(st[null], 5, "string[null] → size");
+
+var str_neg2_fail; str_neg2_fail = false;
+try { tmp = st[-2]; } catch (e) { str_neg2_fail = true; }
+assert_true(str_neg2_fail, "string[-2] throws (only -1 is back)");
+
+// string read via dot chain — same semantics as the standalone form
+var so; so = map{"s": "hello"};
+assert_eq(so.s[0], "h", "dot chain string[0]");
+assert_eq(so.s[-1], "o", "dot chain string[-1]");
+
+var str_write_fail; str_write_fail = false;
+try { st[null] = "x"; } catch (e) { str_write_fail = true; }
+assert_true(str_write_fail, "string[null] write throws");
+
+// ========== §6.5 mixed chain ==========
+var mix; mix = map{"arr": [map{"key": 99}]};
+assert_eq(mix.arr[0].key, 99, "mixed dot+index chain");
+
+// a.b[null] = v — dot + null write → push_back
+var obj; obj = map{"arr": [1, 2]};
+obj.arr[null] = 3;
+assert_eq(obj.arr[null], 3, "dot chain with null write → push_back, size=3");
+assert_eq(obj.arr[-1], 3, "pushed value at back");
+
+// ========== §6.6 delete ==========
+// delete variable
+var to_del; to_del = 42;
+delete to_del;
+var del_ok; del_ok = false;
+try { tmp = to_del; } catch (e) { del_ok = true; }
+assert_true(del_ok, "delete variable then NameError");
+
+// delete vec[-1] (pop_back)
+var dv; dv = [1, 2, 3];
+delete dv[-1];
+assert_eq(dv[null], 2, "delete vec[-1] = pop_back, size=2");
+
+// delete vec[0] deletes first element (now supports full range)
+delete dv[0];
+assert_eq(dv[null], 1, "delete vec[0] removes first, size=1");
+
+// delete vec[null] should throw ConvError per doc
+var del_vec_null_fail; del_vec_null_fail = false;
+try { delete dv[null]; } catch (e) { del_vec_null_fail = true; }
+assert_true(del_vec_null_fail, "delete vec[null] throws ConvError");
+
+// delete lst[0] (pop_front)
+var dl; dl = lst([1, 2, 3]);
+delete dl[0];
+assert_eq(dl[0], 2, "delete lst[0] = pop_front, front now 2");
+
+// delete lst[-1] (pop_back)
+delete dl[-1];
+assert_eq(dl[null], 1, "delete lst[-1] = pop_back, size=1");
+
+// delete dict member
+var dd; dd = map{"x": 1, "y": 2};
+delete dd.x;
+// After dot delete, dd.x returns null (dot chain tail missing rule)
+assert_eq(dd.x, null, "delete dict dot: key removed, read returns null");
+
+delete dd["y"];
+// After index delete, dd["y"] throws KeyError
+var dd_y_missing; dd_y_missing = false;
+try { tmp = dd["y"]; } catch (e) { dd_y_missing = true; }
+assert_true(dd_y_missing, "delete dict index: key removed, read throws KeyError");
+
+// delete non-existing variable — silent no-op (already doesn't exist)
+var del_nonexist; del_nonexist = true;
+try { delete iDoNotExist; del_nonexist = true; } catch (e) { del_nonexist = false; }
+assert_true(del_nonexist, "delete non-existing var silent no-op");
+
+	// ========== vec[...] / lst[...] explicit literal syntax ==========
+	var vv; vv = vec[1, 2, 3];
+	assert_eq(type(vv), "vec", "vec[...] produces vec");
+	assert_eq(vv[0], 1, "vec[...] elem 0");
+	assert_eq(vv[2], 3, "vec[...] elem 2");
+	var ll; ll = lst[10, 20];
+	assert_eq(type(ll), "lst", "lst[...] produces lst");
+	assert_eq(ll[0], 10, "lst[...] front");
+	assert_eq(ll[-1], 20, "lst[...] back");
+	var vf; vf = vec[7:3];
+	assert_eq(vf[null], 3, "vec fill: 3 copies of 7");
+	assert_eq(vf[0], 7, "vec fill: all 7");
+	assert_eq(vf[2], 7, "vec fill: all 7");
+	var lf; lf = lst[9:2];
+	assert_eq(lf[null], 2, "lst fill: 2 copies of 9");
+	var vb; vb = [42, 43];
+	assert_eq(type(vb), "vec", "bare [...] = vec");
+	assert_eq(vb[0], 42, "bare [...] elem 0");
+	var vc; vc = vec(42);
+	assert_eq(vc[0], 42, "vec(42) conversion");
+	var lc; lc = lst(vb);
+	assert_eq(lc[0], 42, "lst(vec) conversion");
+	// --- slice ---
+	{
+	    var v = [0, 1, 2, 3, 4, 5];
+	    var s;
+	    s = v[1, 4];
+	    assert_eq(s[null], 3, "vec slice [1,4) size");
+	    assert_eq(s[0], 1, "vec slice [1,4) elem0");
+	    s = v[0, 6, 2];
+	    assert_eq(s[null], 3, "vec slice step");
+	    s = v[5, 1, -2];
+	    assert_eq(s[null], 2, "vec slice reverse");
+	    s = v[-3, -1];
+	    assert_eq(s[null], 2, "vec slice neg");
+	    s = v[2, null];
+	    assert_eq(s[null], 4, "vec slice null end");
+	    s = v[3, 3];
+	    assert_eq(s[null], 0, "vec slice empty");
+
+	    var l = lst[10, 20, 30, 40, 50];
+	    s = l[1, 4];
+	    assert_eq(s[null], 3, "lst slice");
+	    s = l[0, 5, 2];
+	    assert_eq(s[null], 3, "lst slice step");
+
+	    var t = "hello world";
+	    s = t[0, 5];
+	    assert_eq(s, "hello", "str slice");
+	    s = t[10, 5, -1];
+	    assert_eq(s, "dlrow", "str slice reverse");
+
+	    // single index still works
+	    assert_eq(v[2], 2, "single index");
+	    assert_eq(v[-1], 5, "single index -1");
+	    assert_eq(v[null], 6, "single index null");
+
+	    // errors
+	    var err = "";
+	    try { var _ = v[0, 5, 0]; } catch (e) { err = e.what; }
+	    assert_true(err == "ArgError", "step=0 error");
+
+	    err = "";
+	    try { var _ = v[10, 20]; } catch (e) { err = e.what; }
+	    assert_true(err == "IndexError", "slice OOB error");
+
+	    err = "";
+	    try { v[1, 3] = 99; } catch (e) { err = e.what; }
+	    assert_true(err == "TypeError", "slice assign error");
+
+	    err = "";
+	    try { var _ = (42)[0, 2]; } catch (e) { err = e.what; }
+	    assert_true(err == "TypeError", "non-container slice error");
+	}
+
+
+if (failed > 0) {
+    $print("\n=== FAIL: batch2_containers ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+}

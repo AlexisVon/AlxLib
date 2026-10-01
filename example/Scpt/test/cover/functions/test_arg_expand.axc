@@ -1,0 +1,57 @@
+// arg expansion: vec[] expands to individual args
+def sum3(a, b, c) { return a + b + c; }
+
+var v = [10, 20, 30];
+var r1 = sum3(v[]);
+if (r1 != 60) { throw "sum3(v[]) = " + string(r1) + ", expected 60"; }
+
+// mixed: normal arg + expanded vec
+def add_prefix(prefix, a, b) { return prefix + a + b; }
+var r2 = add_prefix(100, [20, 30][]);
+if (r2 != 150) { throw "add_prefix(100,[20,30][]) = " + string(r2) + ", expected 150"; }
+
+// extra spread elements silently ignored (was ArgError, now OK)
+def sum2(a, b) { return a + b; }
+var r3 = sum2([1, 2, 3][]);
+if (r3 != 3) { throw "sum2([1,2,3][]) = " + string(r3) + ", expected 3 (extra ignored)"; }
+
+// non-vec/lst/map spread -> TypeError
+try {
+    var r4 = add_prefix(1, 2[]);
+    throw "add_prefix(1,2[]) should throw TypeError";
+} catch (e) {
+    if (e.what != "TypeError") {
+        throw "non-container spread: expected TypeError, got " + e.what;
+    }
+}
+
+// --- map[] named spread ---
+def greet(name, age) { return name + " is " + string(age); }
+
+// basic map[] by name
+var r5 = greet(map{"age": 30, "name": "Alice"}[]);
+if (r5 != "Alice is 30") { throw "greet(map{...}[]) = " + r5; }
+
+// map[] partial + default — x from pos, y from default
+def with_def(a, b=100) { return a + b; }
+var r6 = with_def(10, map{"b": 20}[]);
+if (r6 != 30) { throw "pos+map[]+default: " + string(r6) + ", expected 30"; }
+
+// map[] extra keys ignored
+var r7 = with_def(map{"b": 5, "a": 3, "z": 99}[]);
+if (r7 != 8) { throw "map[] extra keys: " + string(r7) + ", expected 8"; }
+
+// map[] zero match -> ArgError
+def req_all(a) { return a; }
+try {
+    req_all(map{"b": 1}[]);
+    throw "req_all(map{b:1}[]) should throw ArgError";
+} catch (e) {
+    if (e.what != "ArgError") {
+        throw "map[] zero match: expected ArgError, got " + e.what;
+    }
+}
+
+// positional + map[] mixed: pos fills a, map fills b
+var r8 = with_def(5, map{"b": 25}[]);
+if (r8 != 30) { throw "pos+map[]: " + string(r8) + ", expected 30"; }

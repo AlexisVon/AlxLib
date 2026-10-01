@@ -1,0 +1,59 @@
+// §7.4 Bitwise — &, |, ^, ~ — int only
+
+var tmp; tmp = null; // probes below assign through it
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) { if (v == null) { return "null"; } return string(v); }
+def assert_eq(a,e,n) { if (a == e) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected " + to_str(e) + " got " + to_str(a) + "\n"; }
+def assert_true(c,n) { if (c) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected true\n"; }
+
+// --- basic bitwise ---
+assert_eq(1 | 2, 3, "1 | 2");
+assert_eq(1 ^ 3, 2, "1 ^ 3");
+assert_eq(3 & 1, 1, "3 & 1");
+assert_eq(~0, -1, "~0");
+assert_eq(~1, -2, "~1");
+assert_eq(0xFF & 0x0F, 0x0F, "0xFF & 0x0F");
+assert_eq(0xF0 | 0x0F, 0xFF, "0xF0 | 0x0F");
+assert_eq(0xFF ^ 0xFF, 0, "0xFF ^ 0xFF");
+
+// --- boundary values ---
+assert_eq(0 | 0, 0, "0 | 0");
+assert_eq(~(-1), 0, "~(-1)");
+var max_int; max_int = 9223372036854775807; // INT64_MAX
+assert_eq(~max_int, 0 - max_int - 1, "~INT64_MAX");
+
+assert_eq(0 & 0, 0, "0 & 0");
+assert_eq(-1 & -1, -1, "-1 & -1");
+assert_eq(-1 | 0, -1, "-1 | 0");
+assert_eq(0 ^ 0, 0, "0 ^ 0");
+assert_eq(-1 ^ -1, 0, "-1 ^ -1");
+
+// --- non-int -> TypeError ---
+var bt1; bt1 = false; try { tmp = 1.0 | 2; } catch (e) { bt1 = true; }
+assert_true(bt1, "float | int -> TypeError");
+
+var bt2; bt2 = false; try { tmp = 1 & 2.0; } catch (e) { bt2 = true; }
+assert_true(bt2, "int & float -> TypeError");
+
+var bt3; bt3 = false; try { tmp = 1 ^ 2.5; } catch (e) { bt3 = true; }
+assert_true(bt3, "int ^ float -> TypeError");
+
+var bt4; bt4 = false; try { tmp = ~"x"; } catch (e) { bt4 = true; }
+assert_true(bt4, "~string -> TypeError");
+
+var bt5; bt5 = false; try { tmp = "a" | "b"; } catch (e) { bt5 = true; }
+assert_true(bt5, "string | string -> TypeError");
+
+var bt6; bt6 = false; try { tmp = ~1.5; } catch (e) { bt6 = true; }
+assert_true(bt6, "~float -> TypeError");
+
+if (failed > 0) {
+    $print("\n=== FAIL: 74_bitwise ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+} else {
+    $print("74_bitwise: All %1 tests passed\n", passed);
+}

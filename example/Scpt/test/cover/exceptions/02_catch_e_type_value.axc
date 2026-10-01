@@ -1,0 +1,14 @@
+// Test: catch (e) gets e.what and e.info (varmap format)
+try {
+    throw 42;
+} catch (e) {
+    $print("what: %1\n", e.what);
+    $print("info: %1\n", e.info);
+}
+
+try {
+    throw null;
+} catch (e) {
+    $print("what: %1\n", e.what);
+    $print("info: %1\n", e.info);
+}

@@ -1,0 +1,10 @@
+// Test: uncaught exception terminates script and prints call stack
+def f1() {
+    f2();
+}
+
+def f2() {
+    throw "uncaught!";
+}
+
+f1();

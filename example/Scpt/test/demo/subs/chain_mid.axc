@@ -1,0 +1,36 @@
+// Test import module: chain_mid — import chain test
+// Import namespace accessible from module body, results stored in vars
+import "math_util.axc" as math;
+import "nav_child.axc" as nc;
+
+var mid_var; mid_var = 42;
+var chain_add_result; chain_add_result = math.add(10, 20); // 30
+var chain_square_result; chain_square_result = math.square(5); // 25
+
+// Vars for nav_child .. tests
+var parent_test_var; parent_test_var = 100;
+var parent_to_delete; parent_to_delete = 200;
+
+def get_chain_add_result() {
+    return chain_add_result;
+}
+
+def get_chain_square_result() {
+    return chain_square_result;
+}
+
+def get_mid_var() {
+    return mid_var;
+}
+
+// Pass-through to nav_child for sub-module .. navigation tests
+def read_parent_var()       { return nc.read_parent_var(); }
+def write_parent_var(val)   { nc.write_parent_var(val); }
+def try_create_in_parent()  { return nc.try_create_in_parent(); }
+def try_delete_parent_var() { return nc.try_delete_parent_var(); }
+
+def get_parent_test_var()   { return parent_test_var; }
+
+// Grandparent nav tests (.... from nav_child → root)
+def read_grandparent_var()       { return nc.read_grandparent_var(); }
+def try_create_in_grandparent()  { return nc.try_create_in_grandparent(); }

@@ -1,0 +1,12 @@
+// Test: inner try/catch doesn't catch, propagates to outer
+try {
+    try {
+        throw "deep error";
+    } catch (e) {
+        $print("inner caught: what=%1, info=%2\n", e.what, e.info);
+        // rethrow
+        throw e.info;
+    }
+} catch (e) {
+    $print("outer caught: what=%1, info=%2\n", e.what, e.info);
+}

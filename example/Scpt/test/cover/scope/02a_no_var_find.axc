@@ -1,0 +1,5 @@
+// Test 2a: x = 1 walks the scope chain -> assigns when found
+var x; x = 1;
+{ x = 99; }
+if (x == 99) { $print("PASS: 2a no-var assign modifies outer var\n"); }
+else { $print("FAIL\n"); }

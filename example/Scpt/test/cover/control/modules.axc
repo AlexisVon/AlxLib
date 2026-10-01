@@ -1,0 +1,106 @@
+// Cover test: Modules (import/link)
+// Tests: import, link, dot chain, scope, delete
+
+// === Import ===
+import "test_module.axc" as mod;
+
+// Access module variable
+if (mod.x != 10) { $print("FAIL: import var\n"); }
+
+// Call module function
+if (mod.add(3, 4) != 7) { $print("FAIL: import func\n"); }
+
+// Module isolation
+import "test_module.axc" as mod2;
+mod2.set_x(99);
+if (mod2.x != 99) { $print("FAIL: mod2 set\n"); }
+if (mod.x != 10) { $print("FAIL: mod isolation\n"); }
+
+// === Link ===
+// Note: test_store.so must be built first
+// link "test_store.so" as ts;
+
+// Test link functions (requires test_store.so)
+// ts.set("key1", "value1");
+// if (ts.get("key1") != "value1") { $print("FAIL: link set/get\n"); }
+
+// ts.set("num", 42);
+// if (ts.get("num") != 42) { $print("FAIL: link num\n"); }
+
+// Link has
+// if (!ts.has("key1")) { $print("FAIL: link has true\n"); }
+// if (ts.has("nonexistent")) { $print("FAIL: link has false\n"); }
+
+// Link del
+// ts.set("to_del", "temp");
+// ts.del("to_del");
+// if (ts.has("to_del")) { $print("FAIL: link del\n"); }
+
+// === Dot chain ===
+var obj = map{"a": map{"b": map{"c": 42}}};
+if (obj.a.b.c != 42) { $print("FAIL: dot chain\n"); }
+
+// Dot chain write
+obj.a.b.d = 99;
+if (obj.a.b.d != 99) { $print("FAIL: dot write\n"); }
+
+// Dot chain with index
+var arr = map{"data": [10, 20, 30]};
+if (arr.data[1] != 20) { $print("FAIL: dot index\n"); }
+
+// === Scope rules ===
+var outer = 1;
+{
+    var inner = 2;
+    if (outer != 1) { $print("FAIL: scope read outer\n"); }
+}
+// Can't test inner is out of scope directly
+
+// === Delete ===
+var to_delete = 42;
+delete to_delete;
+// After delete, should be NameError
+var del_ok = false;
+try {
+    var tmp = to_delete;
+} catch (e) {
+    del_ok = true;
+}
+if (!del_ok) { $print("FAIL: delete var\n"); }
+
+// Delete function
+def temp_func() { return 1; }
+delete temp_func;
+var del_func_ok = false;
+try {
+    temp_func();
+} catch (e) {
+    del_func_ok = true;
+}
+if (!del_func_ok) { $print("FAIL: delete func\n"); }
+
+// Delete import
+delete mod;
+var del_import_ok = false;
+try {
+    var tmp = mod.x;
+} catch (e) {
+    del_import_ok = true;
+}
+if (!del_import_ok) { $print("FAIL: delete import\n"); }
+
+// Delete link (requires test_store.so)
+// delete ts;
+// var del_link_ok = false;
+// try {
+//     ts.set("x", 1);
+// } catch (e) {
+//     del_link_ok = true;
+// }
+// if (!del_link_ok) { $print("FAIL: delete link\n"); }
+
+// === Defensive delete ===
+delete .nonexistent;
+// Should not throw
+
+$print("modules: OK\n");

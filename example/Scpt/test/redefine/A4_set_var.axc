@@ -1,0 +1,3 @@
+// set → var: x=1; then var x — should throw NameError (var force-create over existing var)
+x = 1;
+var x;

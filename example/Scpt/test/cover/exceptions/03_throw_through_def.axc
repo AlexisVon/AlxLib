@@ -1,0 +1,15 @@
+// Test: exception propagates through def boundary
+def inner() {
+    throw "from inner";
+}
+
+def outer() {
+    inner();
+}
+
+try {
+    outer();
+} catch (e) {
+    $print("what: %1\n", e.what);
+    $print("info: %1\n", e.info);
+}

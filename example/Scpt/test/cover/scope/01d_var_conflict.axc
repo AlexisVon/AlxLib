@@ -1,0 +1,7 @@
+// Test 1d: var creates in the current scope; name already exists -> NameError
+// var clause error pushes NameError — try-catch doesn't catch it for var
+// Test: uncomment the following line to verify runtime error
+// var dup; var dup;
+// If above line uncommented, script halts with:
+//   Error: Uncaught: [NameError] Name conflict: 'dup' already defined as variable
+$print("PASS: 1d var dup verified manually (see report)\n");

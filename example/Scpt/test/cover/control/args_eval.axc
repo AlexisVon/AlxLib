@@ -1,0 +1,67 @@
+// Cover test: fwrap collects arguments as pointers — one last-moment read for native and def, a writable view, IndexError
+//  S1: f(x, x = 5) — a later argument's expression assigns the earlier variable -> native and def see the same value
+//  S2: f(count, next_count()) — a later argument's call rewrites the earlier variable -> native and def agree
+//  S4: f(undefined, g()) — NameError is thrown before g() is evaluated, so g()'s side effect never happens
+//  writable view: a native writes through fw[0] -> the caller variable changes
+//  IndexError: reading an argument past the end throws IndexError
+
+env(["../../bin"]);
+link "base.so" as b;
+link "test_store.so" as ts;
+
+var passed; passed = 0;
+var failed; failed = 0;
+
+def assert_eq(actual, expected, name) {
+    if (actual == expected) { passed = passed + 1; return; }
+    failed = failed + 1;
+    $print("FAIL: " + name + "\n");
+}
+def assert_true(cond, name) {
+    if (cond) { passed = passed + 1; return; }
+    failed = failed + 1;
+    $print("FAIL: " + name + "\n");
+}
+
+// ===== S1: a later argument's expression assigns the earlier variable (last-moment read, native and def agree) =====
+def echo_first(a, b) { return a; }
+
+var x1; x1 = 1;
+var s1; s1 = echo_first(x1, x1 = 5);
+assert_eq(s1, 5, "S1 def last-moment read: echo_first(x, x=5) → a=5");
+
+var x2; x2 = 1;
+var n1; n1 = ts.sub.echo(x2, x2 = 5);
+assert_eq(n1, 5, "S1 native last-moment read: ts.sub.echo(x, x=5) → args[0]=5");
+
+// ===== S2: a later argument's call rewrites the earlier variable (last-moment read, native and def agree) =====
+var count; count = 1;
+def next_count() { count = count + 1; return count; }
+var s2; s2 = echo_first(count, next_count());
+assert_eq(s2, 2, "S2 def last-moment read: echo_first(count, next_count()) → a=2");
+
+var count2; count2 = 1;
+def next_count2() { count2 = count2 + 1; return count2; }
+var n2; n2 = ts.sub.echo(count2, next_count2());
+assert_eq(n2, 2, "S2 native last-moment read: ts.sub.echo(count2, next_count2()) → args[0]=2");
+
+// ===== S4: error ordering — NameError is thrown before later arguments are evaluated =====
+var g_ran; g_ran = 0;
+def g() { g_ran = 1; return 0; }
+var s4; s4 = false;
+try { var t; t = echo_first(no_such_var, g()); }
+catch (e) { s4 = true; }
+assert_true(s4, "S4 undefined variable as an argument → NameError");
+assert_eq(g_ran, 0, "S4 g() must not run (the check precedes evaluation)");
+
+// ===== writable view: a native writes through fw[0] → the caller variable changes =====
+var w; w = 1;
+var rw; rw = ts.write_arg(w);
+assert_eq(w, 999, "writable view: the native writes args[0] → the caller's variable changes");
+assert_eq(rw, 999, "writable view: freturn returns the written value");
+
+// ===== IndexError: reading an argument past the end throws (no silent empty return) =====
+var ie; ie = false;
+try { ts.write_arg(); }
+catch (e) { ie = true; }
+assert_true(ie, "IndexError: reading args[0] in a call with 0 arguments → throws");

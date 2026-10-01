@@ -1,0 +1,57 @@
+// §5.1: string() overloads — string(int,base), string(double,prec), string(fmt,args...)
+// lang-guide §5.1
+
+var passed = 0;
+var failed = 0;
+var failures = "";
+
+def to_str(v) { if (v == null) { return "null"; } return string(v); }
+def assert_eq(a, e, n) { if (a == e) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected " + to_str(e) + " got " + to_str(a) + "\n"; }
+def assert_true(c, n) { if (c) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected true\n"; }
+
+// ---- string(int, base) — base 2/8/10/16 ----
+assert_eq(string(10, 2), "0b1010", "string(10, 2) = 0b1010");
+assert_eq(string(63, 8), "0o77", "string(63, 8) = 0o77");
+assert_eq(string(42, 10), "42", "string(42, 10) = 42 (no prefix)");
+assert_eq(string(255, 16), "0xff", "string(255, 16) = 0xff");
+
+// string(int, base) — zero
+assert_eq(string(0, 2), "0b0", "string(0, 2) = 0b0");
+assert_eq(string(0, 10), "0", "string(0, 10) = 0");
+assert_eq(string(0, 16), "0x0", "string(0, 16) = 0x0");
+
+// string(int, base) — negative
+assert_eq(string(-10, 10), "-10", "string(-10, 10) = -10");
+assert_eq(string(-255, 16), "-0xff", "string(-255, 16) = -0xff");
+
+// ---- string(double, prec) — prec=0 → integer (%.0f) ----
+assert_eq(string(3.14, 0), "3", "string(3.14, 0) = 3");
+assert_eq(string(3.99, 0), "4", "string(3.99, 0) = 4 (rounded)");
+
+// ---- string(double, prec) — prec>0 → N decimal places (%.*f) ----
+assert_eq(string(3.14, 2), "3.14", "string(3.14, 2) = 3.14");
+assert_eq(string(3.14159, 3), "3.142", "string(3.14159, 3) = 3.142 (rounded)");
+assert_eq(string(1.0, 3), "1.000", "string(1.0, 3) = 1.000");
+
+// ---- string(double, prec) — prec<0 → N significant digits (%.*g) ----
+// prec=-1 → 1 sig digit
+var g1 = string(123.456, -1);
+assert_true(g1 == "100" || g1 == "1e+02" || g1 == "1e+02", "string(123.456, -1)");
+
+// ---- string(fmt, args...) — basic formatting ----
+assert_eq(string("%1 + %2 = %3", 1, 2, 3), "1 + 2 = 3", "fmt: %1 %2 %3");
+
+// ---- string(fmt, args...) — %% literal percent (requires args) ----
+assert_eq(string("100%%", 0), "100%", "fmt: %% = literal %");
+
+// ---- string(fmt, args...) — single argument ----
+assert_eq(string("%1", "hello"), "hello", "fmt: single %1");
+
+// ---- string(fmt, args...) — mixed with %%----
+assert_eq(string("CPU: %1%%", 85), "CPU: 85%", "fmt: %% with %1");
+
+if (failed > 0) {
+    $print("\n=== FAIL: test_string_overloads ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+}

@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\include\alxcore\aaes.h" />
+    <ClInclude Include="..\..\include\alxcore\acache.h" />
+    <ClInclude Include="..\..\include\alxcore\acompress.h" />
+    <ClInclude Include="..\..\include\alxcore\adatetime.h" />
+    <ClInclude Include="..\..\include\alxcore\afiber.h" />
+    <ClInclude Include="..\..\include\alxcore\afile.h" />
+    <ClInclude Include="..\..\include\alxcore\afpacker.h" />
+    <ClInclude Include="..\..\include\alxcore\aimage.h" />
+    <ClInclude Include="..\..\include\alxcore\alogger.h" />
+    <ClInclude Include="..\..\include\alxcore\aplatform.h" />
+    <ClInclude Include="..\..\include\alxcore\aregex_pcre2.h" />
+    <ClInclude Include="..\..\include\alxcore\asqlite.h" />
+    <ClInclude Include="..\..\include\alxcore\astream_ex.h" />
+    <ClInclude Include="..\..\include\alxcore\athread_safe.h" />
+    <ClInclude Include="..\..\include\alxcore\athreadpool.h" />
+    <ClInclude Include="..\..\include\alxcore\averify.h" />
+    <ClInclude Include="resource.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\source\alxcore\aaes.cpp" />
+    <ClCompile Include="..\..\source\alxcore\acache.cpp" />
+    <ClCompile Include="..\..\source\alxcore\acompress.cpp" />
+    <ClCompile Include="..\..\source\alxcore\adatetime.cpp" />
+    <ClCompile Include="..\..\source\alxcore\afiber.cpp" />
+    <ClCompile Include="..\..\source\alxcore\afile.cpp" />
+    <ClCompile Include="..\..\source\alxcore\afpacker.cpp" />
+    <ClCompile Include="..\..\source\alxcore\aimage.cpp" />
+    <ClCompile Include="..\..\source\alxcore\alogger.cpp" />
+    <ClCompile Include="..\..\source\alxcore\aplatform.cpp" />
+    <ClCompile Include="..\..\source\alxcore\aregex_pcre2.cpp" />
+    <ClCompile Include="..\..\source\alxcore\asqlite.cpp" />
+    <ClCompile Include="..\..\source\alxcore\astream_ex.cpp" />
+    <ClCompile Include="..\..\source\alxcore\athreadpool.cpp" />
+    <ClCompile Include="..\..\source\alxcore\averify.cpp" />
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{b2c8e5d1-7a3f-4b9e-a1d2-3c4f5e6a7b8c}</ProjectGuid>
+    <RootNamespace>AlxCore</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <OutDir>$(SolutionDir)..\..\bin\</OutDir>
+    <IntDir>$(SolutionDir)..\..\build\$(ProjectName)\</IntDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <OutDir>$(SolutionDir)..\..\bin\</OutDir>
+    <IntDir>$(SolutionDir)..\..\build\$(ProjectName)\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_DEBUG;ALXCORELIB_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <AdditionalIncludeDirectories>$(SolutionDir)..\..\include\alxbase;$(SolutionDir)..\..\include\alxcore;$(SolutionDir)..\..\3rdpty\lz4\include;$(SolutionDir)..\..\3rdpty\zstd\include;$(SolutionDir)..\..\3rdpty\zlib\include;$(SolutionDir)..\..\3rdpty\sqlite3\include;$(SolutionDir)..\..\3rdpty\libjpeg-turbo64\include;$(SolutionDir)..\..\3rdpty\pcre2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <DisableSpecificWarnings>4251;4819</DisableSpecificWarnings>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableUAC>false</EnableUAC>
+      <AssemblyDebug>true</AssemblyDebug>
+      <AdditionalLibraryDirectories>$(SolutionDir)..\..\3rdpty\zlib\lib;$(SolutionDir)..\..\3rdpty\lz4\lib;$(SolutionDir)..\..\3rdpty\zstd\lib;$(SolutionDir)..\..\3rdpty\sqlite3\lib;$(SolutionDir)..\..\3rdpty\libjpeg-turbo64\lib;$(SolutionDir)..\..\3rdpty\pcre2\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>zlib.lib;liblz4_static.lib;zstd_static.lib;sqlite3.lib;turbojpeg-static.lib;pcre2-8-static.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <Manifest>
+      <EnableSegmentHeap>true</EnableSegmentHeap>
+    </Manifest>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>ALXCORELIB_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <AdditionalIncludeDirectories>$(SolutionDir)..\..\include\alxbase;$(SolutionDir)..\..\include\alxcore;$(SolutionDir)..\..\3rdpty\lz4\include;$(SolutionDir)..\..\3rdpty\zstd\include;$(SolutionDir)..\..\3rdpty\zlib\include;$(SolutionDir)..\..\3rdpty\sqlite3\include;$(SolutionDir)..\..\3rdpty\libjpeg-turbo64\include;$(SolutionDir)..\..\3rdpty\pcre2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <DisableSpecificWarnings>4251;4819</DisableSpecificWarnings>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableUAC>false</EnableUAC>
+      <AssemblyDebug>true</AssemblyDebug>
+      <AdditionalLibraryDirectories>$(SolutionDir)..\..\3rdpty\zlib\lib;$(SolutionDir)..\..\3rdpty\lz4\lib;$(SolutionDir)..\..\3rdpty\zstd\lib;$(SolutionDir)..\..\3rdpty\sqlite3\lib;$(SolutionDir)..\..\3rdpty\libjpeg-turbo64\lib;$(SolutionDir)..\..\3rdpty\pcre2\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>zlib.lib;liblz4_static.lib;zstd_static.lib;sqlite3.lib;turbojpeg-static.lib;pcre2-8-static.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <Manifest>
+      <EnableSegmentHeap>true</EnableSegmentHeap>
+    </Manifest>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AlxBase\AlxBase.vcxproj">
+      <Project>{99bf938a-49de-4b59-8bc5-070f68d0719f}</Project>
+    </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="AlxCore.rc" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

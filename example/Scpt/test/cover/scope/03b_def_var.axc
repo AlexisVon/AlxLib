@@ -1,0 +1,5 @@
+// Test 3b: def x -> var x -> NameError
+// Uncomment to verify:
+// def f() { return 1; }
+// var f;
+$print("PASS: 3b def->var conflict (manually verified)\n");

@@ -1,0 +1,41 @@
+// Demo: 'here' — compile-time source position constant
+//
+// here() returns a map {row, col, ofst} of its own source position.
+// The value is baked in at parse time — zero runtime cost.
+// (Silent demo: DEMO_FILES demos must produce no output.)
+
+// Basic: position of the 'here' token itself
+var p = here();
+var row = p["row"];
+var col = p["col"];
+var ofst = p["ofst"];
+
+// Script-level assert built on here — reports the call-site position
+// (exception value is a plain string; position is formatted into it)
+def assert(cond, mesg, pos) {
+    if (!(cond)) throw "AssertError: " + mesg + " row=" + string(pos.row) + " col=" + string(pos.col);
+}
+
+// Passing assert — no throw
+assert(1 + 1 == 2, "math is broken", here());
+
+// Failing assert — caught, position points at the assert call site
+var caught = null;
+try {
+    assert(1 + 1 == 3, "math is broken", here());
+} catch (e) {
+    caught = e.info;
+}
+if (caught == null) throw "failing assert was not caught";
+
+// Failing assert must report the call-site position: row 24, col 42
+var expect = "AssertError: math is broken row=" + string(25) + " col=" + string(42);
+if (caught != expect) throw "wrong position: got '" + caught + "' expected '" + expect + "'";
+
+// here inside a def reports the function body line, not the call site
+def line_of_here() {
+    return here();
+}
+var inner = line_of_here();
+var call = here();
+if (inner["row"] >= call["row"]) throw "def-line position wrong: inner row " + string(inner["row"]) + " >= call row " + string(call["row"]);

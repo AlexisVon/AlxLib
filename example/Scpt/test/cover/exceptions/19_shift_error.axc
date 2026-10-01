@@ -1,0 +1,7 @@
+// Test: ShiftError - shift out of bounds (requires --overflow-check)
+try {
+    var x = 1 << 65;
+} catch (e) {
+    $print("what: %1\n", e.what);
+    $print("info: %1\n", e.info);
+}

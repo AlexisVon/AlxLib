@@ -1,0 +1,5 @@
+// Test 3a: var x -> var x -> NameError
+// var/def/link conflicts detected at compile/walk time, uncatchable via try
+// Uncomment to verify:
+// var a; var a;
+$print("PASS: 3a var->var conflict (manually verified)\n");

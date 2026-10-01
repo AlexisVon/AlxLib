@@ -1,0 +1,136 @@
+// Cover test: Exceptions
+// Tests: try/catch/throw, exception types, varmap{what, info} format
+
+// === Basic try/catch ===
+var caught = false;
+try {
+    throw "test error";
+} catch (e) {
+    caught = true;
+    if (e.what != "RuntimeError") { $print("FAIL: throw what\n"); }
+    if (e.info != "test error") { $print("FAIL: throw info\n"); }
+}
+if (!caught) { $print("FAIL: not caught\n"); }
+
+// === Nested try/catch ===
+var outer_caught = false;
+try {
+    try {
+        throw "inner";
+    } catch (e) {
+        if (e.info != "inner") { $print("FAIL: inner catch\n"); }
+        throw "outer";
+    }
+} catch (e) {
+    outer_caught = true;
+    if (e.info != "outer") { $print("FAIL: outer catch\n"); }
+}
+if (!outer_caught) { $print("FAIL: outer not caught\n"); }
+
+// === Exception in function ===
+def may_throw(x) {
+    if (x < 0) throw "negative";
+    return x * 2;
+}
+
+var func_caught = false;
+try {
+    may_throw(-1);
+} catch (e) {
+    func_caught = true;
+    if (e.info != "negative") { $print("FAIL: func throw\n"); }
+}
+if (!func_caught) { $print("FAIL: func not caught\n"); }
+
+if (may_throw(5) != 10) { $print("FAIL: func no throw\n"); }
+
+// === Type errors ===
+// These should be caught by try/catch
+var type_caught = false;
+try {
+    var x = 1 + "hello";
+} catch (e) {
+    type_caught = true;
+    if (e.what != "TypeError") { $print("FAIL: type error what\n"); }
+}
+if (!type_caught) { $print("FAIL: type error\n"); }
+
+// === Div zero ===
+var div_caught = false;
+try {
+    var y = 10 / 0;
+} catch (e) {
+    div_caught = true;
+    if (e.what != "DivZeroError") { $print("FAIL: div zero what\n"); }
+}
+if (!div_caught) { $print("FAIL: div zero\n"); }
+
+// === Index error ===
+var idx_caught = false;
+try {
+    var v = [1, 2, 3];
+    var z = v[10];
+} catch (e) {
+    idx_caught = true;
+    if (e.what != "IndexError") { $print("FAIL: index error what\n"); }
+}
+if (!idx_caught) { $print("FAIL: index error\n"); }
+
+// === Key error ===
+var key_caught = false;
+try {
+    var m = map{"a": 1};
+    var k = m["nonexistent"];
+} catch (e) {
+    key_caught = true;
+    if (e.what != "KeyError") { $print("FAIL: key error what\n"); }
+}
+if (!key_caught) { $print("FAIL: key error\n"); }
+
+// === Re-throw ===
+var rethrow_caught = false;
+try {
+    try {
+        throw "original";
+    } catch (e) {
+        throw e;
+    }
+} catch (e) {
+    rethrow_caught = true;
+    // e.info becomes a map when rethrown
+}
+if (!rethrow_caught) { $print("FAIL: rethrow not caught\n"); }
+
+// === Exception propagation ===
+def level3() {
+    throw "from level3";
+}
+def level2() {
+    level3();
+}
+def level1() {
+    level2();
+}
+
+var prop_caught = false;
+try {
+    level1();
+} catch (e) {
+    prop_caught = true;
+    if (e.info != "from level3") { $print("FAIL: propagation\n"); }
+}
+if (!prop_caught) { $print("FAIL: propagation not caught\n"); }
+
+// Exception info is always a string — throw converts via cov_string, so a map
+// payload is a ConvError, not an exception with map info.
+var map_caught = false;
+try {
+    var m = map{"key": "value"};
+    throw m;
+} catch (e) {
+    map_caught = true;
+    if (e.what != "ConvError") { $print("FAIL: map throw what\n"); }
+}
+if (!map_caught) { $print("FAIL: map exception not caught\n"); }
+
+$print("exceptions: OK\n");

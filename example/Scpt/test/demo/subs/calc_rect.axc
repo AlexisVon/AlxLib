@@ -1,0 +1,23 @@
+// Flyweight test module: calc_rect
+// Rectangle from two calc_line instances (width, height) → computes area & perimeter
+
+import "subs/calc_line.axc" as w;  // width edge
+import "subs/calc_line.axc" as h;  // height edge
+
+def init(x, y, ww, hh) {
+    w.init(x, y, x + ww, y);      // horizontal edge
+    h.init(x, y, x, y + hh);      // vertical edge
+}
+
+def area_sq() {
+    return w.length_sq() * h.length_sq();
+}
+
+def perimeter_sq() {
+    var wl; wl = w.length_sq();
+    var hl; hl = h.length_sq();
+    return 4 * (wl + hl);
+}
+
+def width_sq()  { return w.length_sq(); }
+def height_sq() { return h.length_sq(); }

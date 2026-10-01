@@ -1,0 +1,8 @@
+// Test: IndexError - string index out of bounds
+try {
+    var s = "abc";
+    $print(s[10]);
+} catch (e) {
+    $print("what: %1\n", e.what);
+    $print("info: %1\n", e.info);
+}

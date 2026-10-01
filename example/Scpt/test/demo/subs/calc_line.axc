@@ -1,0 +1,25 @@
+// Flyweight test module: calc_line
+// Imports two calc_point instances (p1, p2), computes squared length
+
+import "subs/calc_point.axc" as p1;
+import "subs/calc_point.axc" as p2;
+
+def init(x1, y1, x2, y2) {
+    p1.init(x1, y1);
+    p2.init(x2, y2);
+}
+
+def length_sq() {
+    var dx; dx = p2.get_x() - p1.get_x();
+    var dy; dy = p2.get_y() - p1.get_y();
+    return dx * dx + dy * dy;
+}
+
+def length_sq_alt() {
+    return p1.dist_sq() + p2.dist_sq();
+}
+
+def get_p1_x() { return p1.get_x(); }
+def get_p1_y() { return p1.get_y(); }
+def get_p2_x() { return p2.get_x(); }
+def get_p2_y() { return p2.get_y(); }

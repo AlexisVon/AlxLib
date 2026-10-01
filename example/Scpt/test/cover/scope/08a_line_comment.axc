@@ -1,0 +1,2 @@
+// Test 8a: // line comment
+$print("PASS: 8a line comment\n");

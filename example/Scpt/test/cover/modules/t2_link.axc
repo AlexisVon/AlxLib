@@ -1,0 +1,108 @@
+// ====== t2_link.axc — Link Tests ======
+// Note: avoid keywords like `v` (T_VEC), `lst` (T_LST), `map` (T_MAP)
+// Mutation functions (push/pop/insert/remove/sort/reverse) use pload (parent entity)
+// and are designed for use within imported modules.
+// Read-only functions (slice/join/split/find) work with direct values.
+
+var passed = 0;
+var failed = 0;
+
+def assert_eq(a, b, name) {
+    if (a == b) { passed = passed + 1; }
+    else { failed = failed + 1; $print("FAIL " + name + ": expected " + string(b) + " got " + string(a)); }
+}
+def assert_true(c, name) {
+    if (c) { passed = passed + 1; }
+    else { failed = failed + 1; $print("FAIL " + name + ": expected true"); }
+}
+
+env(["../../bin"]);
+
+link "base.so" as b;
+link "base.so" as b2;
+link "base.so" as b3;
+
+// ── math module (stateless, pure) ──
+assert_eq(b2.mt.abs(-25), 25, "2.1 link math.abs");
+assert_eq(b2.mt.ceil(2.1), 3, "2.2 link math.ceil");
+assert_eq(b2.mt.floor(2.9), 2, "2.3 link math.floor");
+assert_eq(b2.mt.max(3, 7), 7, "2.4 link math.max");
+assert_eq(b2.mt.min(3, 7), 3, "2.5 link math.min");
+assert_eq(b2.mt.sqrt(9), 3, "2.6 link math.sqrt");
+assert_eq(b2.mt.round(2.5), 3, "2.7 link math.round");
+assert_eq(b2.mt.pow(2, 3), 8, "2.8 link math.pow");
+
+// ── list.so read-only functions ──
+var myvec = vec[1, 2, 3, 4, 5];
+
+// slice (engine built-in)
+var sl = myvec[1, 4];
+assert_eq(sl[null], 3, "2.9 link slice size");
+assert_eq(sl[0], 2, "2.10 link slice [0]");
+
+// join
+assert_eq(b.st.join(vec["a", "b", "c"], ","), "a,b,c", "2.11 link list.join");
+
+// find
+assert_eq(b.ex.find(myvec, 3), 2, "2.12 link list.find");
+
+// split
+var parts = b.st.split("x,y,z", ",");
+assert_eq(parts[0], "x", "2.13 link list.split [0]");
+assert_eq(parts[1], "y", "2.14 link list.split [1]");
+
+// ── link namespace as variable -> TypeError ──
+var caught_link_val = false;
+try { var x = b; } catch (e) { caught_link_val = true; }
+assert_true(caught_link_val, "2.15 link ns as value -> TypeError");
+
+// ── multiple link same .so -> independent ──
+link "base.so" as b4;
+assert_eq(b4.mt.abs(-10), 10, "2.16 link multi-alias: math2.abs");
+assert_eq(b2.mt.abs(-10), 10, "2.17 link multi-alias: math1.abs (same)");
+
+// ── delete alias -> relink ──
+delete b4;
+link "base.so" as b5;
+assert_eq(b5.mt.abs(-5), 5, "2.18 delete link -> relink");
+
+// ── dict.so read-only functions ──
+var d2 = map{"a": 1, "b": 2};
+assert_eq(b3.ex.keys(d2)[null], 2, "2.19 link dict.keys count");
+assert_eq(d2["a"], 1, "2.20 dict key access");
+var d2zmiss = false; try { var tmp = d2["z"]; } catch (e) { d2zmiss = true; }; assert_true(d2zmiss, "2.21 dict key access missing");
+assert_true(b3.ex.has(d2, "a"), "2.22 link dict.has");
+assert_true(!b3.ex.has(d2, "z"), "2.23 link dict.has missing");
+
+// ── index access (engine built-in, replaces at) ──
+var avec = vec[10, 20, 30];
+assert_eq(avec[0], 10, "2.24 index vec[0]");
+assert_eq(avec[2], 30, "2.25 index vec[2]");
+assert_eq("hello"[0], "h", "2.26 index string[0]");
+assert_eq("hello"[4], "o", "2.26b index string[4]");
+
+// index errors
+var at_err = false;
+try { (42)[0]; } catch (e) { at_err = true; }
+assert_true(at_err, "2.27 index non-container → TypeError");
+
+at_err = false;
+try { avec[5]; } catch (e) { at_err = true; }
+assert_true(at_err, "2.27c index vec oob → IndexError");
+
+// slice errors
+var sl_err = false;
+try { (42)[0, 1]; } catch (e) { sl_err = true; }
+assert_true(sl_err, "2.28 slice(non-container) → TypeError");
+
+// slice string
+var sls = "abcdef"[2, 4];
+assert_eq(sls, "cd", "2.28b slice(string, 2, 4)");
+
+// join() errors
+var join_err = false;
+try { b.st.join(42, ","); } catch (e) { join_err = true; }
+assert_true(join_err, "2.29 link join(non-container) → TypeError");
+
+// ── Summary ──
+$print("--- t2_link: " + string(passed) + " passed, " + string(failed) + " failed ---");

@@ -1,0 +1,70 @@
+// T06: path strings
+// @("arr[0]") a path with an index; complex paths with . and []
+
+// 1. @("arr[0]") = 99; a path with an index — write
+var arr = [10, 20, 30];
+var p = "arr[0]";
+@p = 99;
+$print("T06.1 @arr[0]=99:", arr[0]);
+if (arr[0] != 99) { $print("FAIL T06.1"); throw("assert"); }
+$print("OK");
+
+// 2. @arr[0] read
+arr = [10, 20, 30];
+p = "arr[0]";
+var val = @p;
+$print("T06.2 @arr[0] read:", val);
+if (val != 10) { $print("FAIL T06.2"); throw("assert"); }
+$print("OK");
+
+// 3. a complex path with . and []
+var ns = map();
+ns.items = [1, 2, 3];
+var cp = "ns.items[1]";
+var v = @cp;
+$print("T06.3 ns.items[1]:", v);
+if (v != 2) { $print("FAIL T06.3"); throw("assert"); }
+$print("OK");
+
+// 4. write a complex path
+cp = "ns.items[2]";
+@cp = 99;
+$print("T06.4 write ns.items[2]:", ns.items[2]);
+if (ns.items[2] != 99) { $print("FAIL T06.4"); throw("assert"); }
+$print("OK");
+
+// 5. a deeply nested path
+ns = map();
+ns.a = map();
+ns.a.b = [0, 1, 2];
+var deep = "ns.a.b[1]";
+v = @deep;
+$print("T06.5 ns.a.b[1]:", v);
+if (v != 1) { $print("FAIL T06.5"); throw("assert"); }
+$print("OK");
+
+// 6. write a deeply nested path
+@deep = 77;
+$print("T06.6 write ns.a.b[1]:", ns.a.b[1]);
+if (ns.a.b[1] != 77) { $print("FAIL T06.6"); throw("assert"); }
+$print("OK");
+
+// 7. @(expr) with a path string
+var arr2 = [100, 200];
+var indexStr = "arr2[1]";
+var viaExpr = @(indexStr);
+$print("T06.7 @(expr) path:", viaExpr);
+if (viaExpr != 200) { $print("FAIL T06.7"); throw("assert"); }
+$print("OK");
+
+// 8. composite path: a dotted key reaching into a map
+ns = map();
+ns.data = map();
+ns.data.name = "test";
+var nm = "ns.data.name";
+var nameVal = @nm;
+$print("T06.8 dotted path:", nameVal);
+if (nameVal != "test") { $print("FAIL T06.8"); throw("assert"); }
+$print("OK");
+
+$print("T06 all passed");

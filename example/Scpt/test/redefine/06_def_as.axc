@@ -1,0 +1,4 @@
+// 6: def redefines namespace (link) — should throw NameError
+env(["../../../../bin/link"]);
+link "base.so" as b;
+def b() {}

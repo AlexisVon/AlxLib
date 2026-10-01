@@ -1,0 +1,33 @@
+// print / string format string: top-level and function body
+// First arg is Qt-style format string with %1 %2 ... placeholders.
+
+// --- string() format ---
+def test_format() {
+    var x = 42;
+    var y = 99;
+    var s = string("%1 %2", x, y);
+    if (s != "42 99") {
+        throw "string(fmt,...) in func = '" + s + "', expected '42 99'";
+    }
+}
+test_format();
+
+var top = string("%1 %2", 42, 99);
+if (top != "42 99") {
+    throw "string(fmt,...) at top = '" + top + "', expected '42 99'";
+}
+
+// --- single arg (no formatting) ---
+var s_single = string("hello");
+if (s_single != "hello") {
+    throw "string(single) = '" + s_single + "'";
+}
+
+// --- $print() smoke: manual verification in test output ---
+// Run: Scpt print_multi_arg_in_func.axc
+// Expected output: "top: x=42, y=99" "func: x=42, y=99"
+$print("top: x=%1, y=%2", 42, 99);
+def test_print() {
+    $print("func: x=%1, y=%2", 42, 99);
+}
+test_print();

@@ -1,0 +1,7 @@
+// Test: ConvError - float("abc")
+try {
+    var x = float("abc");
+} catch (e) {
+    $print("what: %1\n", e.what);
+    $print("info: %1\n", e.info);
+}

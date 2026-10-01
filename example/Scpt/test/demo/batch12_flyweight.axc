@@ -1,0 +1,66 @@
+// Batch 12: Flyweight — nested import + data isolation
+// Tests: deep import chain (rect→line→point), two instances share flyweights,
+//        instance data isolation, no native link needed
+
+import "subs/calc_rect.axc" as r1;
+import "subs/calc_rect.axc" as r2;
+
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) {
+    if (v == null) { return "null"; }
+    return string(v);
+}
+
+def assert_eq(actual, expected, name) {
+    if (actual == expected) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected " + to_str(expected) + " got " + to_str(actual) + "\n";
+}
+
+// ========== Init two rects — same flyweights, different data ==========
+// rect: init(x, y, w, h)
+
+// r1: 3x4 rect at origin → area_sq = (3²)*(4²) = 9*16 = 144
+//     perimeter_sq = 4*(3²+4²) = 4*(9+16) = 100
+r1.init(0, 0, 3, 4);
+
+// r2: 5x6 rect at (1,1) → area_sq = (5²)*(6²) = 25*36 = 900
+//     perimeter_sq = 4*(5²+6²) = 4*(25+36) = 244
+r2.init(1, 1, 5, 6);
+
+// ========== r1 tests (3x4) ==========
+assert_eq(r1.width_sq(), 9, "r1 width_sq");
+assert_eq(r1.height_sq(), 16, "r1 height_sq");
+assert_eq(r1.area_sq(), 144, "r1 area_sq");
+assert_eq(r1.perimeter_sq(), 100, "r1 perimeter_sq");
+
+// ========== r2 tests (5x6) ==========
+assert_eq(r2.width_sq(), 25, "r2 width_sq");
+assert_eq(r2.height_sq(), 36, "r2 height_sq");
+assert_eq(r2.area_sq(), 900, "r2 area_sq");
+assert_eq(r2.perimeter_sq(), 244, "r2 perimeter_sq");
+
+// ========== Cross-verify instance isolation ==========
+// r1.width_sq should still be 9, not 25
+assert_eq(r1.width_sq(), 9, "r1 width_sq after r2.init");
+assert_eq(r1.area_sq(), 144, "r1 area after r2.init");
+
+// ========== Re-init r1 with different dimensions ==========
+// 6x8 → area_sq = 36*64 = 2304, perimeter_sq = 4*(36+64) = 400
+r1.init(0, 0, 6, 8);
+assert_eq(r1.width_sq(), 36, "r1 new width_sq");
+assert_eq(r1.area_sq(), 2304, "r1 new area_sq");
+
+// r2 unchanged
+assert_eq(r2.area_sq(), 900, "r2 area unchanged");
+
+// ========== Report ==========
+var total; total = passed + failed;
+if (failed > 0) {
+    $print("=== Batch16: Flyweight ===");
+    $print("FAILURES (" + string(failed) + "/" + string(total) + ")");
+    $print(failures);
+}

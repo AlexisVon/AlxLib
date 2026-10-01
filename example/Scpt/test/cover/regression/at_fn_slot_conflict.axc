@@ -1,0 +1,23 @@
+// def names are not first-class values — use string to reference a function
+def math_abs(x) {
+    if (x < 0) { return -x; }
+    return x;
+}
+
+// Direct call
+var direct = math_abs(-5);
+if (direct != 5) { throw "direct call: " + string(direct); }
+
+// Store function name as string in map
+var math = map{};
+math.abs = "math_abs";
+
+// Indirect call via @ with string variable
+var fn = "math_abs";
+var result = @fn(-5);
+if (result != 5) { throw "@fn(-5) = " + string(result) + ", expected 5"; }
+
+// Indirect call via map key
+var key = math.abs;
+var r2 = @key(-5);
+if (r2 != 5) { throw "@key(-5) = " + string(r2) + ", expected 5"; }

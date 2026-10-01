@@ -1,0 +1,69 @@
+# Build directories
+build*/
+bin/
+bin-*/
+.vs/
+
+# IDE
+.vscode/c_cpp_properties.json
+
+# Compiled objects
+*.o
+*.d
+*.so
+*.so.*
+*.a
+*.vcxproj.user
+AlxLib*.tar.gz
+
+# Debug files
+*.debug
+
+# CMake generated
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+/Makefile
+compile_commands.json
+
+# 3rd party local builds
+3rdpty/*/local/
+
+# Bindings build artifacts
+bindings/nodejs/build/
+bindings/nodejs/bin/
+bindings/nodejs/Release/
+bindings/python/build/
+bindings/python/bin/
+bindings/cross_test/cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Lza
+msvc/Lza/x64/
+# Internal ledgers: local only, not version-controlled, not shipped with the repo
+doc/issue.md
+doc/feature.md
+doc/todo.md
+doc/verify.md
+
+# Claude Code project instructions: local only, not part of the library
+CLAUDE.md
+
+# Third-party dependencies: only docs, build recipes and the MSVC ABI config stay here; libraries, headers and upstream source packages come from the caller (see 3rdpty/README.md)
+3rdpty/*/*.tar.gz
+3rdpty/*/include/
+3rdpty/*/lib/
+3rdpty/*/*.tar.gz.sha256
+
+# Visual Studio resource editor cache (regenerable, and it embeds local paths)
+*.aps
+*.suo
+*.user
+*.ncb
+*.sdf
+
+# Private material (probes, audit drafts, scratch scripts): local only, not version-controlled
+local/

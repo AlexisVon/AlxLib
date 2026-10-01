@@ -1,0 +1,53 @@
+// Test 4.2: lst (linked list)
+
+$print("= 4.2 lst tests =\n");
+
+// --- Literal creation ---
+var l; l = lst[1, 2, 3];
+$print("lst[1,2,3] type: %1\n", type(l));
+
+// --- Conversion vec -> lst ---
+var v; v = [10, 20, 30];
+var l2; l2 = lst(v);
+$print("lst(vec) type: %1, l2[0]=%2\n", type(l2), l2[0]);
+
+// --- Index read ---
+$print("l[0]=%1, l[-1]=%2, l[null]=%3\n", l[0], l[-1], l[null]);
+
+// --- Index write ---
+l[0] = 10;
+l[-1] = 30;
+$print("after write: l[0]=%1, l[-1]=%2\n", l[0], l[-1]);
+
+// --- null push_back ---
+l[null] = 99;
+$print("after push: l[-1]=%1, l[null]=%2\n", l[-1], l[null]);
+
+// --- arbitrary index [i] should error ---
+try {
+    tmp = l[1];
+    $print("ERROR: lst[1] should have thrown\n");
+} catch (e) {
+    $print("lst[1] correctly throws: %1\n", e);
+}
+
+try {
+    l[1] = 42;
+    $print("ERROR: lst[1] write should have thrown\n");
+} catch (e) {
+    $print("lst[1]= write correctly throws: %1\n", e);
+}
+
+// --- Compound assign ---
+l[0] += 5;
+l[-1] *= 2;
+$print("after compound: l[0]=%1, l[-1]=%2\n", l[0], l[-1]);
+
+// --- for-each iteration ---
+var sum, x; sum = 0;
+for (x : l) {
+    sum = sum + x;
+}
+$print("for-each sum of l = %1\n", sum);
+
+$print("=== lst tests done ===\n");

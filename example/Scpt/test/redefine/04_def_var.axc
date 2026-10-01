@@ -1,0 +1,3 @@
+// 4: def redefines var — should throw NameError
+var x;
+def x() {}

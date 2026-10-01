@@ -1,0 +1,2 @@
+// invalid escape \xZZ → compile error (was: stoi uncaught → terminate)
+var x = "\xZZ";

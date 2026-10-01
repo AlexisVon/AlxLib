@@ -1,0 +1,3 @@
+// 5: def redefines def — should throw NameError
+def f() {}
+def f() {}

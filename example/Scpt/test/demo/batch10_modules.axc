@@ -1,0 +1,100 @@
+// Batch 10: Link module comprehensive (§11.2)
+// Tests list/dict mutation functions + file/file_info object-wrapper
+
+env(["../bin"]);
+link "base.so" as b;
+link "base.so" as b2;
+
+var passed, failed, failures; passed = 0; failed = 0; failures = "";
+
+def to_str(v) { if (v == null) { return "null"; } return string(v); }
+
+def assert_eq(actual, expected, name) {
+    if (actual == expected) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected " + to_str(expected) + " got " + to_str(actual) + "\n";
+}
+
+def assert_true(cond, name) {
+    if (cond) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected true\n";
+}
+
+// ========== list.so mutation functions (via b alias) ==========
+var v; v = [3, 1, 2];
+b.ex.sort(v);
+assert_eq(v[0], 1, "list.sort → [0]=1");
+assert_eq(v[1], 2, "list.sort → [1]=2");
+assert_eq(v[2], 3, "list.sort → [2]=3");
+
+b.ex.reverse(v);
+assert_eq(v[0], 3, "list.reverse → [0]=3");
+assert_eq(v[2], 1, "list.reverse → [2]=1");
+
+v[null] = 99;
+assert_eq(v[-1], 99, "builtin push → back=99");
+
+delete v[-1];
+assert_eq(v[-1], 1, "builtin pop → back=1 (99 removed)");
+
+var ins; ins = [1, 2, 3];
+b.ex.insert(ins, 1, 99);
+assert_eq(ins[1], 99, "list.insert at 1 = 99");
+b.ex.remove(ins, 0);
+assert_eq(ins[0], 99, "list.remove at 0 → [99,2,3]");
+
+// ========== dict.so mutation functions (via b2 alias) ==========
+var d; d = map{"a": 1, "b": 2};
+d["c"] = 3;
+assert_eq(d["c"], 3, "builtin set: c=3");
+
+delete d["a"];
+var has_a; has_a = false;
+try { var tmp; tmp = d["a"]; }
+catch (e) { has_a = true; }
+assert_true(has_a, "builtin delete: key a deleted");
+
+b2.ex.merge(d, map{"x": 10, "y": 20});
+assert_eq(d["x"], 10, "dict.merge: x=10 (literal dict)");
+assert_eq(d["y"], 20, "dict.merge: y=20");
+
+// ========== file + file_info object-wrapper ==========
+// static file info
+assert_true(b.fs.info("fi", "subs"), "fi.init subs");
+assert_true(b.fi.is_dir(), "fi.is_dir: subs");
+assert_true(b.fi.is_exist(), "fi.is_exist: subs");
+assert_true(b.fs.info("fi", "nonexistent_path_xyz"), "fi.init non-existent (object created)");
+assert_true(!b.fi.is_exist(), "fi.is_exist: non-existent is false");
+
+// mkdir + check + rmdir
+b.fs.mkdir("$test_dir_tmp");
+assert_true(b.fs.info("fi", "$test_dir_tmp"), "fi.init after mkdir");
+assert_true(b.fi.is_dir(), "fi.is_dir: created dir");
+
+// write + read + rm
+assert_true(b.fs.open("fo", "$test_dir_tmp/test.txt", "w"), "fo.init w");
+assert_true(b.fo.write("hello"), "fo.write");
+b.fo.close();
+
+assert_true(b.fs.info("fi", "$test_dir_tmp/test.txt"), "fi.init test file");
+assert_eq(b.fi.name(), "test.txt", "fi.name = test.txt");
+
+assert_true(b.fs.open("fo", "$test_dir_tmp/test.txt", "r"), "fo.init r");
+var content; content = b.fo.read();
+assert_eq(content, "hello", "fo.read: content = hello");
+b.fo.close();
+
+assert_true(b.fs.mvfile("$test_dir_tmp/test.txt", "$test_dir_tmp/test2.txt"), "fi.mvfile: ok");
+assert_true(b.fs.info("fi", "$test_dir_tmp/test2.txt"), "fi.mvfile: renamed exists");
+assert_true(b.fi.is_exist(), "fi.mvfile: target is_exist");
+assert_true(b.fs.rmfile("$test_dir_tmp/test2.txt"), "fi.rmfile: ok");
+assert_true(b.fs.info("fi", "$test_dir_tmp/test2.txt"), "fi.rmfile: init (obj ok)");
+assert_true(!b.fi.is_exist(), "fi.rmfile: is_exist false");
+b.fs.rmdir("$test_dir_tmp");
+
+if (failed > 0) {
+    $print("\n=== FAIL: batch13_modules ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+}

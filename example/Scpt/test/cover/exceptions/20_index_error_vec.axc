@@ -1,0 +1,8 @@
+// Test: IndexError - vec index out of bounds
+try {
+    var v = [1, 2, 3];
+    $print(v[10]);
+} catch (e) {
+    $print("what: %1\n", e.what);
+    $print("info: %1\n", e.info);
+}

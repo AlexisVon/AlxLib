@@ -1,0 +1,8 @@
+// Test 2b: creates it in the current frame when not found
+var caught; caught = false;
+try {
+    { auto_new = 42; }
+    tmp = auto_new;
+} catch (e) { caught = true; }
+if (caught) { $print("PASS: 2b auto-new var not visible outside block\n"); }
+else { $print("FAIL: 2b auto-new var leaked or no error\n"); }

@@ -1,0 +1,37 @@
+// Type bounds — int boundary values, float special values
+// Note: an integer literal cannot be written past INT64_MAX, so the value has to be built
+$print("--- test_bounds ---");
+
+// INT64_MAX = 9223372036854775807
+var max_val = 9223372036854775800 + 7;
+$print("INT64_MAX = %1", max_val);
+
+// INT64_MIN = -9223372036854775808
+var min1 = -9223372036854775807;
+var min_val = min1 - 1;
+$print("INT64_MIN = %1", min_val);
+
+$print("INT64_MAX - 1 = %1", max_val - 1);
+$print("INT64_MIN + 1 = %1", min_val + 1);
+
+// float division by zero — the engine detects the division-by-zero error
+try {
+    $print("1.0/0.0 = %1", 1.0/0.0);
+} catch (e) {
+    var tp = e.what;
+    $print("1.0/0.0 throws: %1", tp);
+}
+
+try {
+    $print("-1.0/0.0 = %1", -1.0/0.0);
+} catch (e) {
+    var tp = e.what;
+    $print("-1.0/0.0 throws: %1", tp);
+}
+
+try {
+    $print("0.0/0.0 = %1", 0.0/0.0);
+} catch (e) {
+    var tp = e.what;
+    $print("0.0/0.0 throws: %1", tp);
+}

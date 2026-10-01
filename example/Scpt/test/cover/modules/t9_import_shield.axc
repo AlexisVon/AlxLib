@@ -1,0 +1,67 @@
+// ====== t9_import_shield.axc — Namespace Shielding ======
+// import/link alias is opaque namespace — only dot navigation allowed,
+// never readable/writable as bare value.
+
+var passed = 0;
+var failed = 0;
+
+def assert_eq(a, b, name) {
+    if (a == b) { passed = passed + 1; }
+    else { failed = failed + 1; $print("FAIL " + name + ": expected " + string(b) + " got " + string(a)); }
+}
+def assert_true(c, name) {
+    if (c) { passed = passed + 1; }
+    else { failed = failed + 1; $print("FAIL " + name + ": expected true"); }
+}
+
+// ── import shielding ──
+import "modules/modules/mod_a.axc" as ma;
+
+// dot navigation still works
+assert_eq(ma.greet("World"), "Hello, World", "9.1 dot call through import");
+assert_eq(ma.x, 42, "9.2 dot read through import");
+ma.x = 5;
+assert_eq(ma.x, 5, "9.3 dot write through import");
+
+// bare read → TypeError
+var caught = false;
+try { var x = ma; } catch (e) { caught = true; }
+assert_true(caught, "9.4 var x = ma → TypeError");
+
+// bare read in expression → TypeError
+caught = false;
+try { var y = ma + 1; } catch (e) { caught = true; }
+assert_true(caught, "9.5 ma + 1 → TypeError");
+
+// compound assignment → TypeError
+caught = false;
+try { ma += 1; } catch (e) { caught = true; }
+assert_true(caught, "9.6 ma += 1 → TypeError");
+
+// delete alias → OK
+import "modules/modules/mod_a.axc" as ma2;
+assert_eq(ma2.x, 42, "9.7a pre-delete: ma2.x == 42");
+delete ma2;
+var caught_del = false;
+try { var z = ma2; } catch (e) { caught_del = true; }
+assert_true(caught_del, "9.7b delete ma2 → alias removed");
+
+// ── link namespace shielding ──
+env(["../../bin"]);
+link "base.so" as b;
+
+// b itself blocked
+caught = false;
+try { var x = b; } catch (e) { caught = true; }
+assert_true(caught, "9.8 var x = b → TypeError");
+
+// b.area blocked (shield triggers at b)
+caught = false;
+try { var y = b.mt; } catch (e) { caught = true; }
+assert_true(caught, "9.9 var y = b.mt → TypeError (blocked at b)");
+
+// dot call through area still works
+assert_eq(b.mt.abs(-5), 5, "9.10 b.mt.abs(-5) → 5");
+
+// ── Summary ──
+$print("--- t9_import_shield: " + string(passed) + " passed, " + string(failed) + " failed ---");

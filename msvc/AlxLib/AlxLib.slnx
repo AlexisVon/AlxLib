@@ -1,0 +1,30 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+  </Configurations>
+  <Folder Name="/AlxLib/">
+    <Project Path="../AlxBase/AlxBase.vcxproj" Id="99bf938a-49de-4b59-8bc5-070f68d0719f" />
+    <Project Path="../AlxComm/AlxComm.vcxproj" Id="d4e5f6a7-8b9c-4d0e-a1f2-b3c4d5e6f7a8" />
+    <Project Path="../AlxCore/AlxCore.vcxproj" Id="b2c8e5d1-7a3f-4b9e-a1d2-3c4f5e6a7b8c" />
+    <Project Path="../AlxScpt/AlxScpt.vcxproj" Id="c3d4e5f6-7a8b-4c9d-a0e1-f2a3b4c5d6e7" />
+  </Folder>
+  <Folder Name="/Example/">
+    <Project Path="../Lza/Lza.vcxproj" Id="731644e9-6e49-496a-b993-19c67c4cc7cf">
+      <BuildDependency Project="../AlxBase/AlxBase.vcxproj" />
+      <BuildDependency Project="../AlxCore/AlxCore.vcxproj" />
+      <Platform Project="x64" />
+    </Project>
+  </Folder>
+  <Folder Name="/GTest/">
+    <Project Path="../AlxBase/AlxBase_GTest.vcxproj" Id="e1a2b3c4-d5e6-4f7a-8b9c-0d1e2f3a4b5c" />
+    <Project Path="../AlxComm/AlxComm_GTest.vcxproj" Id="b4d5e6f7-a8b9-4c0d-1e2f-3a4b5c6d7e8f" />
+    <Project Path="../AlxCore/AlxCore_GTest.vcxproj" Id="f2b3c4d5-e6f7-4a8b-9c0d-1e2f3a4b5c6d" />
+    <Project Path="../AlxScpt/AlxScpt_GTest.vcxproj" Id="a3c4d5e6-f7a8-4b9c-0d1e-2f3a4b5c6d7e" />
+  </Folder>
+  <Project Path="../BuildAll/BuildAll.vcxproj" Id="238330ea-90d8-4dd8-8c6b-fc340d939f29">
+    <BuildDependency Project="../AlxBase/AlxBase.vcxproj" />
+    <BuildDependency Project="../AlxComm/AlxComm.vcxproj" />
+    <BuildDependency Project="../AlxCore/AlxCore.vcxproj" />
+    <BuildDependency Project="../AlxScpt/AlxScpt.vcxproj" />
+  </Project>
+</Solution>

@@ -1,0 +1,34 @@
+// Demo: Quick operator verification
+
+// Arithmetic
+$print("10+3=%1\n", 10 + 3);
+$print("10-3=%1\n", 10 - 3);
+$print("10*3=%1\n", 10 * 3);
+$print("10/3=%1\n", 10 / 3);
+$print("10%%3=%1\n", 10 % 3);
+
+// Comparison
+$print("10>3: %1\n", 10 > 3);
+$print("10==10: %1\n", 10 == 10);
+$print("10!=3: %1\n", 10 != 3);
+
+// Logical
+$print("true&&false: %1\n", true && false);
+$print("true||false: %1\n", true || false);
+$print("!true: %1\n", !true);
+
+// Bitwise
+$print("0xFF&0x0F=0x%1\n", 0xFF & 0x0F);
+$print("1<<4=%1\n", 1 << 4);
+
+// String concat
+$print("hello + world: %1\n", "hello" + " world");
+
+// Ternary
+$print("true?1:0 = %1\n", true ? 1 : 0);
+
+// Increment
+var x = 10;
+$print("x++=%1, x=%2\n", x++, x);
+
+$print("demo_operators: OK\n");

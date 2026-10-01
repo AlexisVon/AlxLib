@@ -1,0 +1,11 @@
+// Test 4: scope lookup — current frame -> parent frames -> the entity's persistent m_map
+var g; g = "global";
+{
+    var p; p = "parent";
+    {
+        var c; c = "child";
+        if (g == "global") { $print("PASS: 4 child reads global\n"); } else { $print("FAIL\n"); }
+        if (p == "parent") { $print("PASS: 4 child reads parent\n"); } else { $print("FAIL\n"); }
+        if (c == "child") { $print("PASS: 4 child reads own\n"); } else { $print("FAIL\n"); }
+    }
+}

@@ -1,0 +1,40 @@
+// Demo: Quick function verification
+
+// Basic function
+def add(a, b) {
+    return a + b;
+}
+$print("add(3,4)=%1\n", add(3, 4));
+
+// Default args
+def greet(name, times) {
+    return name + "x" + string(times);
+}
+$print("greet: %1\n", greet("hi", 2));
+
+// Closure
+def test_closure() {
+    var count = 0;
+    def inc() {
+        count = count + 1;
+        return count;
+    }
+    $print("counter: %1, %2, %3\n", inc(), inc(), inc());
+}
+test_closure();
+
+// Tail recursion
+def countdown(n) {
+    if (n <= 0) { return 0; }
+    return countdown(n - 1);
+}
+$print("countdown(50000)=%1\n", countdown(50000));
+
+// Param spread
+def sum3(a, b, c) {
+    return a + b + c;
+}
+var v = [1, 2, 3];
+$print("sum3(v[])=%1\n", sum3(v[]));
+
+$print("demo_functions: OK\n");

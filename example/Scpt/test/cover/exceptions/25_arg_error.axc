@@ -1,0 +1,10 @@
+// Test: ArgError - function missing required argument
+def f(a, b) {
+    return a + b;
+}
+try {
+    f(1);
+} catch (e) {
+    $print("what: %1\n", e.what);
+    $print("info: %1\n", e.info);
+}

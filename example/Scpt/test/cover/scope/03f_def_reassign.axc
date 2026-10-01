@@ -1,0 +1,6 @@
+// Test 3f: def x -> then no-var x = 1 (re-assignment) -> NameError
+def f3() { return 1; }
+var caught; caught = false;
+try { f3 = 1; } catch (e) { caught = true; }
+if (caught) { $print("PASS: 3f def->reassign throws NameError\n"); }
+else { $print("FAIL: 3f no error\n"); }

@@ -1,0 +1,305 @@
+// ====== t8_link_area.axc — Link Area + Delete Guard (dot/nav/@) ======
+env(["../../bin"]);
+
+link "test_store.so" as ts;
+link "base.so" as b;
+
+var passed = 0;
+var failed = 0;
+
+def assert_eq(a, b, name) {
+    if (a == b) { passed = passed + 1; }
+    else { failed = failed + 1; $print("FAIL " + name + ": expected " + string(b) + " got " + string(a)); }
+}
+
+def assert_true(c, name) {
+    if (c) { passed = passed + 1; }
+    else { failed = failed + 1; $print("FAIL " + name + ": expected true"); }
+}
+
+// ── area via ncall ──
+assert_eq(ts.sub.echo(42), 42, "8.1 area ncall");
+
+// ── area via call() via call_script ──
+var ret; ret = ts.call_script("ts.sub.echo", 77);
+assert_eq(ret, 77, "8.2 area call() via call_script");
+
+// ── area via call() with nav prefix ──
+ret = ts.call_script(".ts.sub.echo", 55);
+assert_eq(ret, 55, "8.3 area call(.ts.sub.echo, 55)");
+
+// ── call link native (root) via call() ──
+ret = ts.call_script("b.mt.pi");
+assert_true(ret > 3.1 && ret < 3.2, "8.4 call(b.mt.pi) via call_script");
+
+// ═══════════════════════════════════════════════════════════════════════
+// §8.5 Delete guard: link data var — dot chain
+// ═══════════════════════════════════════════════════════════════════════
+ts.set("data_x", 42);
+
+// delete ts.data_x → TypeError (link data shielded)
+{
+    var hit, err_what; hit = false; err_what = "";
+    try { delete ts.data_x; }
+    catch (e) { hit = true; err_what = string(e.what); }
+    assert_eq(err_what, "TypeError", "8.5a delete link data var (dot) → TypeError");
+    assert_true(hit, "8.5a delete link data var (dot) throws");
+}
+
+// read ts.data_x → TypeError
+{
+    var hit, err_what; hit = false; err_what = "";
+    try { var tmp = ts.data_x; }
+    catch (e) { hit = true; err_what = string(e.what); }
+    assert_eq(err_what, "TypeError", "8.5b read link data var (dot) → TypeError");
+    assert_true(hit, "8.5b read link data var (dot) throws");
+}
+
+// write ts.data_x → TypeError
+{
+    var hit, err_what; hit = false; err_what = "";
+    try { ts.data_x = 100; }
+    catch (e) { hit = true; err_what = string(e.what); }
+    assert_eq(err_what, "TypeError", "8.5c write link data var (dot) → TypeError");
+    assert_true(hit, "8.5c write link data var (dot) throws");
+}
+
+// ts.set/get still work (native function access, not direct data access)
+ts.set("data_y", 77);
+assert_eq(ts.get("data_y"), 77, "8.5d ts.set/get still functional");
+
+// ═══════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════
+// §8.8 Delete area instance → OK
+// ═══════════════════════════════════════════════════════════════════════
+b.fs.open("f1", "/tmp/test_t8_f1.txt", "w");
+{
+    var hit; hit = false;
+    try { delete b.f1; hit = true; }
+    catch (e) { assert_true(false, "8.8a delete area instance should not throw: " + string(e.info)); }
+    assert_true(hit, "8.8a delete area instance succeeded");
+}
+// b.f1 gone after delete — reading it must throw
+{
+    var hit; hit = false;
+    try { var _chk; _chk = b.f1; hit = true; }
+    catch (e) { /* expected: b.f1 gone after delete */ }
+    assert_true(!hit, "8.8b area instance no longer accessible");
+}
+
+// Re-create with same name → OK
+b.fs.open("f1", "/tmp/test_t8_f1_v2.txt", "w");
+{
+    var hit; hit = false;
+    try { delete b.f1; hit = true; }
+    catch (e) { assert_true(false, "8.8c delete area instance should not throw: " + string(e.info)); }
+    assert_true(hit, "8.8c delete area instance succeeded");
+}
+
+// Multiple instances
+b.fs.open("a1", "/tmp/test_t8_a1.txt", "w");
+b.fs.open("a2", "/tmp/test_t8_a2.txt", "w");
+b.fs.info("a3", "/tmp");
+{
+    var hit; hit = false;
+    try { delete b.a1; hit = true; }
+    catch (e) { assert_true(false, "8.8d delete area instance should not throw: " + string(e.info)); }
+    assert_true(hit, "8.8d delete area instance succeeded");
+}
+{
+    var hit; hit = false;
+    try { delete b.a3; hit = true; }
+    catch (e) { assert_true(false, "8.8e delete area instance should not throw: " + string(e.info)); }
+    assert_true(hit, "8.8e delete area instance succeeded");
+}
+// a2 still works
+assert_true(b.a2.is_open(), "8.8f a2 survives sibling delete");
+
+// ═══════════════════════════════════════════════════════════════════════
+// §8.9 Delete area namespace → OK
+// ═══════════════════════════════════════════════════════════════════════
+link "base.so" as b2;
+{
+    var hit; hit = false;
+    try { delete b2.fs; hit = true; }
+    catch (e) { assert_true(false, "8.9a delete area namespace should not throw: " + string(e.info)); }
+    assert_true(hit, "8.9a delete area namespace succeeded");
+}
+// Verify fs methods are gone — calling must throw
+{
+    var hit; hit = false;
+    try { b2.fs.mkdir("x2"); hit = true; }
+    catch (e) { /* expected: fs gone after delete */ }
+    assert_true(!hit, "8.9b fs.mkdir no longer accessible");
+}
+// Other areas still work
+assert_eq(b2.mt.abs(-5), 5, "8.9c other area (mt) survives ns delete");
+
+// ═══════════════════════════════════════════════════════════════════════
+// §8.10 Nav chain: delete + read guard
+// ═══════════════════════════════════════════════════════════════════════
+ts.set("nav_x", 99);
+
+// delete .ts.nav_x → TypeError
+{
+    var hit, err_what; hit = false; err_what = "";
+    try { delete .ts.nav_x; }
+    catch (e) { hit = true; err_what = string(e.what); }
+    assert_eq(err_what, "TypeError", "8.10a delete nav link data → TypeError");
+    assert_true(hit, "8.10a delete nav link data throws");
+}
+
+// read .ts.nav_x → TypeError
+{
+    var hit, err_what; hit = false; err_what = "";
+    try { var tmp = .ts.nav_x; }
+    catch (e) { hit = true; err_what = string(e.what); }
+    assert_eq(err_what, "TypeError", "8.10b read nav link data → TypeError");
+    assert_true(hit, "8.10b read nav link data throws");
+}
+
+// read ::ts.nav_x (from root) → TypeError
+{
+    var hit, err_what; hit = false; err_what = "";
+    try { var tmp = ::ts.nav_x; }
+    catch (e) { hit = true; err_what = string(e.what); }
+    assert_eq(err_what, "TypeError", "8.10c read root nav link data → TypeError");
+    assert_true(hit, "8.10c read root nav link data throws");
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// §8.11 @ reflection paths — read
+// ═══════════════════════════════════════════════════════════════════════
+ts.set("at_x", 123);
+{
+    var hit, err_what; hit = false; err_what = "";
+    try { var tmp = @("ts.at_x"); }
+    catch (e) { hit = true; err_what = string(e.what); }
+    assert_eq(err_what, "TypeError", "8.11a @read link data var → TypeError");
+    assert_true(hit, "8.11a @read link data var throws");
+}
+// @read area namespace
+{
+    var hit, err_what; hit = false; err_what = "";
+    try { var tmp = @("b.mt"); }
+    catch (e) { hit = true; err_what = string(e.what); }
+    assert_eq(err_what, "TypeError", "8.11b @read area namespace → TypeError");
+    assert_true(hit, "8.11b @read area namespace throws");
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// §8.12 @ reflection paths — write
+// ═══════════════════════════════════════════════════════════════════════
+{
+    var hit, err_what; hit = false; err_what = "";
+    try { @("ts.at_x") = 999; }
+    catch (e) { hit = true; err_what = string(e.what); }
+    assert_eq(err_what, "TypeError", "8.12 @write link data var → TypeError");
+    assert_true(hit, "8.12 @write link data var throws");
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// §8.13 @ reflection paths — delete
+// ═══════════════════════════════════════════════════════════════════════
+// @delete with simple name: works like normal delete
+{
+    var simple_var = 42;
+    var hit, err_what; hit = false; err_what = "";
+    try { delete @("simple_var"); hit = true; }
+    catch (e) { assert_true(false, "8.13a @delete simple var: " + string(e.info)); }
+    assert_true(hit, "8.13a @delete simple var succeeded");
+}
+// @delete dot-path → link data shielded
+{
+    var hit, err_what; hit = false; err_what = "";
+    try { delete @("ts.data_x"); }
+    catch (e) { hit = true; err_what = string(e.what); }
+    assert_eq(err_what, "TypeError", "8.13b @delete link data var → TypeError");
+    assert_true(hit, "8.13b @delete link data var throws");
+}
+// @delete dot-path → area instance (should succeed)
+b.fs.open("at_f", "/tmp/test_at_f.txt", "w");
+{
+    var hit; hit = false;
+    try { delete @("b.at_f"); hit = true; }
+    catch (e) { assert_true(false, "8.13c @delete area instance should not throw: " + string(e.info)); }
+    assert_true(hit, "8.13c @delete area instance succeeded");
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// §8.14 Self-delete: delete link alias, then re-link
+// ═══════════════════════════════════════════════════════════════════════
+link "base.so" as b3;
+assert_eq(b3.mt.abs(-5), 5, "8.14a b3 before self-delete");
+delete b3;
+link "base.so" as b3;
+assert_eq(b3.mt.abs(-5), 5, "8.14b b3 after relink");
+
+// ═══════════════════════════════════════════════════════════════════════
+// §8.15 Comprehensive: area instance lifecycle
+// ═══════════════════════════════════════════════════════════════════════
+link "base.so" as b4;
+b4.fs.open("inst1", "/tmp/test_lifecycle1.txt", "w");
+b4.fs.info("inst2", "/tmp");
+
+// Both work
+assert_true(b4.inst1.is_open(), "8.15a inst1 is_open");
+assert_true(b4.inst2.is_exist(), "8.15b inst2 is_exist");
+
+// Delete inst1 → inst2 still works
+{
+    var hit, err_what; hit = false; err_what = "";
+    try { delete b4.inst1; hit = true; }
+    catch (e) { assert_true(false, "8.15c delete inst1: " + string(e.info)); }
+    assert_true(hit, "8.15c delete inst1 succeeded");
+}
+{
+    var hit; hit = false;
+    try { b4.inst1.is_open(); }
+    catch (e) { hit = true; }
+    assert_true(hit, "8.15d inst1 gone");
+}
+assert_true(b4.inst2.is_exist(), "8.15e inst2 survives");
+
+// Delete inst2 → clean
+{
+    var hit; hit = false;
+    try { delete b4.inst2; hit = true; }
+    catch (e) { assert_true(false, "8.15f delete area instance should not throw: " + string(e.info)); }
+    assert_true(hit, "8.15f delete area instance succeeded");
+}
+
+// Delete entire fs area with no instances remaining
+{
+    var hit; hit = false;
+    try { delete b4.fs; hit = true; }
+    catch (e) { assert_true(false, "8.15g delete area namespace should not throw: " + string(e.info)); }
+    assert_true(hit, "8.15g delete area namespace succeeded");
+}
+
+// ── Summary ──
+// §8.x Delete link/area function → TypeError (functions blocked)
+// ═══════════════════════════════════════════════════════════════════════
+{
+    var hit, err_what; hit = false; err_what = "";
+    try { delete ts.set; }
+    catch (e) { hit = true; err_what = string(e.what); }
+    assert_eq(err_what, "TypeError", "8.xa delete link function → TypeError");
+    assert_true(hit, "8.xa delete link function throws");
+}
+{
+    var hit, err_what; hit = false; err_what = "";
+    try { delete b.mt.abs; }
+    catch (e) { hit = true; err_what = string(e.what); }
+    assert_eq(err_what, "TypeError", "8.xb delete area sub-function → TypeError");
+    assert_true(hit, "8.xb delete area sub-function throws");
+}
+{
+    var hit, err_what; hit = false; err_what = "";
+    try { delete ts.sub.echo; }
+    catch (e) { hit = true; err_what = string(e.what); }
+    assert_eq(err_what, "TypeError", "8.xc delete area sub-function (dot) → TypeError");
+    assert_true(hit, "8.xc delete area sub-function (dot) throws");
+}
+
+$print("--- t8_link_area: " + string(passed) + " passed, " + string(failed) + " failed ---");

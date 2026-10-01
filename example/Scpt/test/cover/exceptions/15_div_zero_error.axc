@@ -1,0 +1,7 @@
+// Test: DivZeroError - division by zero
+try {
+    var x = 5 / 0;
+} catch (e) {
+    $print("what: %1\n", e.what);
+    $print("info: %1\n", e.info);
+}

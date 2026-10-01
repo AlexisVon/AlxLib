@@ -1,0 +1,90 @@
+// Cover test: Reflection (@)
+// Tests: @var read/write, @(expr), indirect call
+
+// === @var read ===
+var target = 42;
+var name = "target";
+if (@name != 42) { $print("FAIL: @read\n"); }
+
+// === @var write ===
+@name = 100;
+if (target != 100) { $print("FAIL: @write\n"); }
+
+// === @var compound ===
+@name += 50;
+if (target != 150) { $print("FAIL: @compound\n"); }
+
+// === @var inc/dec ===
+@name++;
+if (target != 151) { $print("FAIL: @inc\n"); }
+++@name;
+if (target != 152) { $print("FAIL: @preinc\n"); }
+
+// === @var delete ===
+var to_del = 99;
+var del_name = "to_del";
+delete @del_name;
+// After delete, @del_name should cause NameError
+var del_ok = false;
+try {
+    var tmp = @del_name;
+} catch (e) {
+    del_ok = true;
+}
+if (!del_ok) { $print("FAIL: @delete\n"); }
+
+// === @(expr) ===
+var expr_target = "hello";
+@("expr_target") = "world";
+if (expr_target != "world") { $print("FAIL: @(expr) write\n"); }
+
+// === Indirect call ===
+def my_add(a, b) {
+    return a + b;
+}
+var fn = "my_add";
+if (@fn(3, 4) != 7) { $print("FAIL: @call\n"); }
+
+// === Indirect call with path ===
+def my_mul(a, b) {
+    return a * b;
+}
+var ops = map{"add": "my_add", "mul": "my_mul"};
+var op = ops["add"];
+if (@op(5, 6) != 11) { $print("FAIL: @call map\n"); }
+
+op = ops["mul"];
+if (@op(5, 6) != 30) { $print("FAIL: @call map mul\n"); }
+
+// === @(expr) call ===
+@(fn)(10, 20);
+if (@(fn)(10, 20) != 30) { $print("FAIL: @(expr) call\n"); }
+
+// === @ with container path ===
+var obj = map{"arr": [10, 20, 30]};
+@("obj.arr[0]") = 99;
+if (obj.arr[0] != 99) { $print("FAIL: @container path\n"); }
+
+// === @ for reading container ===
+if (@("obj.arr[1]") != 20) { $print("FAIL: @read container\n"); }
+
+// === Error cases ===
+// Non-string @ target
+var err1 = false;
+try {
+    @(42);
+} catch (e) {
+    err1 = true;
+}
+if (!err1) { $print("FAIL: @non-string\n"); }
+
+// Non-existent target
+var err2 = false;
+try {
+    @("nonexistent_var_xyz");
+} catch (e) {
+    err2 = true;
+}
+if (!err2) { $print("FAIL: @non-existent\n"); }
+
+$print("reflection: OK\n");

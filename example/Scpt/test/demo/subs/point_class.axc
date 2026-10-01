@@ -1,0 +1,27 @@
+// Test import module: point_class
+// Demonstrates class pattern via import (§10.1)
+
+var px; px = 0;
+var py; py = 0;
+
+def init(x, y) {
+    px = x;
+    py = y;
+}
+
+def len() {
+    return px * px + py * py;
+}
+
+def get_x() {
+    return px;
+}
+
+def get_y() {
+    return py;
+}
+
+def move(dx, dy) {
+    px = px + dx;
+    py = py + dy;
+}

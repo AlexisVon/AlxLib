@@ -1,0 +1,43 @@
+// escape slicing (lex) + rule decode (parse): \n \t \r \\ \" \0 \xHH, single/double quotes
+
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) { if (v == null) { return "null"; } return string(v); }
+def assert_eq(a,e,n) { if (a == e) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected " + to_str(e) + " got " + to_str(a) + "\n"; }
+
+var s1; s1 = "a\nb";
+assert_eq(s1, "a\nb", "\\n decodes to newline");
+
+var s2; s2 = "a\tb";
+assert_eq(s2, "a\tb", "\\t decodes to tab");
+
+var s3; s3 = "a\rb";
+assert_eq(s3, "a\rb", "\\r decodes to CR");
+
+var s4; s4 = "a\\b";
+assert_eq(s4, "a\\b", "\\\\ decodes to backslash");
+
+var s5; s5 = "a\"b";
+assert_eq(s5, "a\"b", "\\\" decodes to quote");
+
+var s6; s6 = "\x41\x42";
+assert_eq(s6, "AB", "\\xHH decodes hex byte");
+
+var s7; s7 = "a\0b";
+assert_eq(string(s7), "a\0b", "\\0 decodes NUL");
+
+var s8; s8 = '\n\x43';
+assert_eq(s8, "\nC", "single-quote escapes slice+decode");
+
+var s9; s9 = "abc\ndef\x47";
+assert_eq(s9, "abc\ndefG", "adjacent escapes");
+
+if (failed > 0) {
+    $print("\n=== FAIL: conversions/test_escape ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+} else {
+    $print("conversions/test_escape: All %1 tests passed\n", passed);
+}

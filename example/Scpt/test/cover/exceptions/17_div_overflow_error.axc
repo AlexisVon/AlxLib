@@ -1,0 +1,9 @@
+// Test: DivOverflowError - INT64_MIN / -1
+// Use computation to avoid literal overflow
+var min = -9223372036854775807 - 1;
+try {
+    var x = min / -1;
+} catch (e) {
+    $print("what: %1\n", e.what);
+    $print("info: %1\n", e.info);
+}

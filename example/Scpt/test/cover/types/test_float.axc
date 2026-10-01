@@ -1,0 +1,54 @@
+// §3.2 float — normal, scientific notation, negative exponent, boundaries
+// lang-guide §3.2
+
+var passed = 0;
+var failed = 0;
+var failures = "";
+
+def to_str(v) { if (v == null) { return "null"; } return string(v); }
+def assert_eq(a, e, n) { if (a == e) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected " + to_str(e) + " got " + to_str(a) + "\n"; }
+def assert_true(c, n) { if (c) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected true\n"; }
+
+// ---- normal float ----
+var a = 3.14;
+assert_true(a > 3.13 && a < 3.15, "float 3.14");
+
+var b = -2.5;
+assert_true(b > -2.51 && b < -2.49, "float -2.5");
+
+var half = 0.5;
+assert_true(half > 0.49 && half < 0.51, "float 0.5");
+
+// ---- scientific notation ----
+var c = 1e5;
+assert_eq(c, 100000, "sci 1e5 = 100000");
+
+var d = 1.5e-3;
+assert_true(d > 0.00149 && d < 0.00151, "sci 1.5e-3 ≈ 0.0015");
+
+var e = 2e-3;
+assert_true(e > 0.00199 && e < 0.00201, "sci 2e-3 ≈ 0.002");
+
+// ---- zero ----
+assert_eq(0.0, 0.0, "float 0.0");
+assert_eq(-0.0, 0.0, "float -0.0 == 0.0");
+
+// ---- large / small ----
+var big = 1e200;
+assert_true(type(big) == "float", "large float 1e200 is float");
+
+var small = 1e-200;
+assert_true(type(small) == "float", "small float 1e-200 is float");
+
+// ---- type check ----
+assert_eq(type(3.14), "float", "type(3.14) = float");
+
+// ---- int vs float distinction ----
+assert_eq(type(1), "int", "type(1) = int (not float)");
+assert_eq(type(1.0), "float", "type(1.0) = float");
+
+if (failed > 0) {
+    $print("\n=== FAIL: test_float ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+}

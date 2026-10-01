@@ -1,0 +1,60 @@
+// T01: value reflection — read
+// @name, @(expr), existing / missing / non-string / namespace path
+
+var x = 42;
+var name = "x";
+
+// 1. @name: name is a string variable holding the target variable name
+$print("T01.1 @name: ", @name);
+if (@name != 42) { $print("FAIL T01.1"); throw("assert"); }
+$print("OK");
+
+// 2. @(expr): expr evaluates to a string
+var target = "x";
+$print("T01.2 @(expr): ", @(target));
+if (@(target) != 42) { $print("FAIL T01.2"); throw("assert"); }
+$print("OK");
+
+// 3. read an existing variable
+var msg = "hello";
+var vn = "msg";
+$print("T01.3 existing: ", @vn);
+if (@vn != "hello") { $print("FAIL T01.3"); throw("assert"); }
+$print("OK");
+
+// 4. read a missing name → NameError
+var nonexist_name = "no_such_var_xyz";
+var got_error = false;
+try {
+    var val = @nonexist_name;
+    $print("ERROR: should have thrown NameError");
+} catch (e) {
+    got_error = true;
+    $print("T01.4 nonexistent caught: ", e);
+}
+if (!got_error) { $print("FAIL T01.4"); throw("assert"); }
+$print("OK");
+
+// 5. non-string → TypeError
+var not_str = 123;
+got_error = false;
+try {
+    var val = @not_str;
+    $print("ERROR: should have thrown TypeError");
+} catch (e) {
+    got_error = true;
+    $print("T01.5 non-string caught: ", e);
+}
+if (!got_error) { $print("FAIL T01.5"); throw("assert"); }
+$print("OK");
+
+// 6. indirect read of a namespace variable (path contains .)
+var ns = map();
+ns.a = map();
+ns.a.b = 42;
+var path = "ns.a.b";
+$print("T01.6 namespace path: ", @path);
+if (@path != 42) { $print("FAIL T01.6"); throw("assert"); }
+$print("OK");
+
+$print("T01 all passed");

@@ -1,0 +1,8 @@
+// Test: IndexError - lst arbitrary index (lst only supports 0, -1, null)
+try {
+    var l = lst[1, 2, 3];
+    $print(l[5]);
+} catch (e) {
+    $print("what: %1\n", e.what);
+    $print("info: %1\n", e.info);
+}

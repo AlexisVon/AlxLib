@@ -1,0 +1,39 @@
+// regressions: module-return leak, while-continue flag, loop TCO, slice clamp
+
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) { if (v == null) { return "null"; } return string(v); }
+def assert_eq(a,e,n) { if (a == e) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected " + to_str(e) + " got " + to_str(a) + "\n"; }
+def assert_true(c,n) { if (c) { passed = passed + 1; return; } failed = failed + 1; failures = failures + "  FAIL " + n + ": expected true\n"; }
+
+// #2 module top-level return must not truncate importer statements
+import "modules/subs/ret_mod.axc" as rm;
+var after_import = 7;
+assert_eq(after_import, 7, "module return does not leak into importer");
+
+// #3 while(f()){continue;} — cont flag must not truncate condition fns
+var calls; calls = 0;
+def cond_f() { calls = calls + 1; return calls < 5; }
+var loop; loop = 0;
+while (cond_f()) { loop = loop + 1; continue; }
+assert_eq(calls, 5, "condition fn called fully each iteration");
+assert_eq(loop, 4, "while-continue loop terminates");
+
+// #4 loop-body self-call stays plain return (no TCO frame clobber)
+def tco_f(n) { while (n < 3) { return tco_f(n + 1); } return n; }
+assert_eq(tco_f(0), 3, "loop-body tail-call terminates");
+
+// #6 negative-step slice from==size clamps (no OOB read)
+var sv; sv = [1, 2, 3, 4, 5];
+var sl = sv[5, 4, -1];
+assert_eq($tojs(sl), "[]", "v[size, to, -1] clamps to empty");
+
+if (failed > 0) {
+    $print("\n=== FAIL: regression/control_flow_flags ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+} else {
+    $print("regression/control_flow_flags: All %1 tests passed\n", passed);
+}

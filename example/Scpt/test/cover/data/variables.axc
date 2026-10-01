@@ -1,0 +1,98 @@
+// Cover test: Variables and access
+// Tests: var declaration, assignment, compound assign, index operations
+
+// === var declaration ===
+var x;
+if (x != null) { $print("FAIL: var null\n"); }
+
+var y = 42;
+if (y != 42) { $print("FAIL: var init\n"); }
+
+var a = 1, b, c = 3;
+if (a != 1) { $print("FAIL: multi a\n"); }
+if (b != null) { $print("FAIL: multi b\n"); }
+if (c != 3) { $print("FAIL: multi c\n"); }
+
+// === Assignment ===
+x = 100;
+if (x != 100) { $print("FAIL: assign\n"); }
+
+// Chain assignment
+var p, q;
+p = q = 50;
+if (p != 50 || q != 50) { $print("FAIL: chain assign\n"); }
+
+// === Compound assignment ===
+var ca = 10;
+ca += 5;
+if (ca != 15) { $print("FAIL: +=\n"); }
+ca -= 3;
+if (ca != 12) { $print("FAIL: -=\n"); }
+ca *= 2;
+if (ca != 24) { $print("FAIL: *=\n"); }
+ca /= 4;
+if (ca != 6) { $print("FAIL: /=\n"); }
+ca %= 4;
+if (ca != 2) { $print("FAIL: %=\n"); }
+
+// Bitwise compound
+var bc = 0xFF;
+bc &= 0x0F;
+if (bc != 0x0F) { $print("FAIL: &=\n"); }
+bc |= 0xF0;
+if (bc != 0xFF) { $print("FAIL: |=\n"); }
+bc ^= 0x0F;
+if (bc != 0xF0) { $print("FAIL: ^=\n"); }
+bc <<= 4;
+if (bc != 0xF00) { $print("FAIL: <<=\n"); }
+bc >>= 8;
+if (bc != 0xF) { $print("FAIL: >>=\n"); }
+
+// String compound
+var sc = "hello";
+sc += " world";
+if (sc != "hello world") { $print("FAIL: +=\n"); }
+
+// === Index operations ===
+// Vec index
+var v = [10, 20, 30, 40, 50];
+if (v[0] != 10) { $print("FAIL: v[0]\n"); }
+if (v[-1] != 50) { $print("FAIL: v[-1]\n"); }
+if (v[null] != 5) { $print("FAIL: v[null]\n"); }
+
+// Vec write
+v[0] = 99;
+if (v[0] != 99) { $print("FAIL: v[0]=\n"); }
+v[-1] = 88;
+if (v[-1] != 88) { $print("FAIL: v[-1]=\n"); }
+v[null] = 77;
+if (v[-1] != 77) { $print("FAIL: v[null]= push\n"); }
+
+// Lst index
+var l = lst[100, 200, 300];
+if (l[0] != 100) { $print("FAIL: l[0]\n"); }
+if (l[-1] != 300) { $print("FAIL: l[-1]\n"); }
+
+// String index
+var s = "hello";
+if (s[0] != "h") { $print("FAIL: s[0]\n"); }
+if (s[4] != "o") { $print("FAIL: s[4]\n"); }
+
+// Map index
+var m = map{"key": "value", "num": 42};
+if (m["key"] != "value") { $print("FAIL: m[key]\n"); }
+if (m.num != 42) { $print("FAIL: m.num\n"); }
+m["new"] = 99;
+if (m["new"] != 99) { $print("FAIL: m[new]=\n"); }
+
+// === Scope ===
+var outer = 1;
+{
+    var inner = 2;
+    if (outer != 1) { $print("FAIL: scope outer\n"); }
+    if (inner != 2) { $print("FAIL: scope inner\n"); }
+}
+// inner is out of scope here, but we can't test that directly
+// because referencing it would be a NameError
+
+$print("variables: OK\n");

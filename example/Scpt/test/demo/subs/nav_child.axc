@@ -1,0 +1,53 @@
+// nav_child.axc — sub-module for testing .. navigation from within import
+// Tests: reading parent vars, writing parent vars, cross-module constraints
+
+// Read parent var via .. — returns the value
+def read_parent_var() {
+    return ..parent_test_var;
+}
+
+// Write parent var via .. — overwrites existing
+def write_parent_var(val) {
+    ..parent_test_var = val;
+}
+
+// Try to CREATE a new var in parent — should throw (cross-module new forbidden)
+def try_create_in_parent() {
+    var ok, etype; ok = false; etype = "";
+    try {
+        ..parent_new_var_should_fail = 999;
+    } catch (e) {
+        ok = true; etype = e.what;
+    }
+    if (ok) { return etype; }
+    return "no_error";
+}
+
+// Try to DELETE parent var — should throw (cross-module delete forbidden)
+def try_delete_parent_var() {
+    var ok, etype; ok = false; etype = "";
+    try {
+        delete ..parent_to_delete;
+    } catch (e) {
+        ok = true; etype = e.what;
+    }
+    if (ok) { return etype; }
+    return "no_error";
+}
+
+// Navigate up TWO levels — from nav_child to root (grandparent)
+def read_grandparent_var() {
+    return ....root_test_var;
+}
+
+// Try to CREATE in grandparent (2 levels up) — should throw
+def try_create_in_grandparent() {
+    var ok, etype; ok = false; etype = "";
+    try {
+        ....gp_new_var = 123;
+    } catch (e) {
+        ok = true; etype = e.what;
+    }
+    if (ok) { return etype; }
+    return "no_error";
+}

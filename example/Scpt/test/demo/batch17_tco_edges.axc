@@ -1,0 +1,138 @@
+// Batch 17: TCO, @indirect call edges, switch edges, .axp compile support
+env(["../bin"]);
+import "subs/math_util.axc" as mu;
+
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) {
+    if (v == null) { return "null"; }
+    return string(v);
+}
+
+def assert_eq(actual, expected, name) {
+    if (actual == expected) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected " + to_str(expected) + " got " + to_str(actual) + "\n";
+}
+
+def assert_true(cond, name) {
+    if (cond) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected true\n";
+}
+
+// ========== TCO: deep tail recursion ==========
+def countdown(n) {
+    if (n <= 0) { return 0; }
+    return countdown(n - 1);
+}
+assert_eq(countdown(5000), 0, "TCO: countdown(5000) → 0");
+
+// ========== TCO: tail-recursive fib ==========
+def fib_tail(n, a, b) {
+    if (n <= 1) { return b; }
+    return fib_tail(n - 1, b, a + b);
+}
+assert_eq(fib_tail(20, 0, 1), 6765, "TCO: fib_tail(20, 0, 1) → 6765");
+
+// ========== TCO: non-tail recursion still works ==========
+def fib(n) {
+    if (n <= 1) { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+assert_eq(fib(10), 55, "non-tail fib(10) → 55");
+
+// ========== @icall: namespaced via dotted path ==========
+var fn1; fn1 = "mu.add";
+assert_eq(@fn1(10, 20), 30, "@icall: fn1='mu.add', @fn1(10,20) → 30");
+
+// ========== @icall: namespaced with link alias ==========
+link "base.so" as b;
+var fn2; fn2 = "b.ex.sort";
+var v; v = [3, 1, 2];
+@fn2(v);
+assert_eq(v[0], 1, "@icall: fn2='b.ex.sort', @fn2(v) → v=[1,2,3]");
+
+// ========== @icall error: expr not string ==========
+var not_str; not_str = 123;
+var err1; err1 = false;
+try { @not_str(); } catch (e) { err1 = true; }
+assert_true(err1, "@icall error: var=123 not string → NameError");
+
+// ========== @icall error: undefined namespace ==========
+var bad_ns; bad_ns = "no_such_module.add";
+var err2; err2 = false;
+try { @bad_ns(1, 2); } catch (e) { err2 = true; }
+assert_true(err2, "@icall error: undefined namespace → NameError");
+
+// ========== @ syntax error: @ without () ==========
+// (This is a compile-time error, tested via the CLI exit code)
+
+// ========== switch: no matching case → no-op ==========
+var sw_val; sw_val = 0;
+switch (99) {
+    case 1: sw_val = 1;
+    case 2: sw_val = 2;
+}
+assert_eq(sw_val, 0, "switch no match: value unchanged");
+
+// ========== switch: break exits switch, not outer loop ==========
+var loop_sum; loop_sum = 0;
+var idx;
+for (idx = 0; idx < 3; ++idx) {
+    switch (idx) {
+        case 0: loop_sum = loop_sum + 1; break;
+        case 1: loop_sum = loop_sum + 10; break;
+        default: loop_sum = loop_sum + 100; break;
+    }
+    loop_sum = loop_sum + 1;
+}
+// idx=0: +1 +1=2, idx=1: 2+10+1=13, idx=2: 13+100+1=114
+assert_eq(loop_sum, 114, "switch break in loop: sum → 114");
+
+	// ========== TCO + var: body-local variable redeclaration ==========
+	def countdown_var(n) {
+	    if (n <= 0) { return 0; }
+	    var x; x = n;
+	    return countdown_var(n - 1);
+	}
+	assert_eq(countdown_var(100), 0, "TCO+var: countdown_var(100) → 0");
+
+	// ========== TCO + multiple var declarations ==========
+	def fib_tco_var(n, a, b) {
+	    if (n <= 1) { return b; }
+	    var n1; n1 = n - 1;
+	    var a1; a1 = b;
+	    var b1; b1 = a + b;
+	    return fib_tco_var(n1, a1, b1);
+	}
+	assert_eq(fib_tco_var(20, 0, 1), 6765, "TCO+var: fib_tco_var(20,0,1) → 6765");
+
+	// ========== TCO + tail call inside an if branch ==========
+	// nested block frame above the function frame — must rebind the function
+	// frame, not frames.back() (was: infinite loop, hung)
+	def r_in_if(n) {
+	    if (n > 0) {
+	        return r_in_if(n - 1);
+	    }
+	    return 0;
+	}
+	assert_eq(r_in_if(20000), 0, "TCO+if: r_in_if(20000) → 0");
+
+	// ========== TCO + tail call inside a while body ==========
+	def step_in_loop(n) {
+	    while (n > 0) {
+	        return step_in_loop(n - 1);
+	    }
+	    return n;
+	}
+	assert_eq(step_in_loop(20000), 0, "TCO+loop: step_in_loop(20000) → 0");
+
+// ========== Summary ==========
+if (failed > 0) {
+    $print("=== FAILURES (" + string(failed) + "/" + string(passed + failed) + ") ===");
+    $print(failures);
+    $print("Passed: " + string(passed) + ", Failed: " + string(failed));
+}

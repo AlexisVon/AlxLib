@@ -1,0 +1,5 @@
+// tojs with map
+var m = map{"key1": 10, "key2": "hello"};
+var j = $tojs(m, true);
+// just verify it's non-empty (format may vary)
+if (j == "") { throw "$tojs(map) returned empty"; }

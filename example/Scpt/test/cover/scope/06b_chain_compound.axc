@@ -1,0 +1,4 @@
+// Test 6b: chained compound assignment a += b += 2
+var a, b; a = 10; b = 5;
+a += b += 2;
+if (a == 17 && b == 7) { $print("PASS: 6b chain compound\n"); } else { $print("FAIL: a=" + string(a) + " b=" + string(b) + "\n"); }

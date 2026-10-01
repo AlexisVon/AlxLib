@@ -1,0 +1,36 @@
+// Demo: Quick type verification
+// Tests basic type creation and type() function
+
+// Int
+var i = 42;
+$print("int: %1\n", type(i));
+
+// Float
+var f = 3.14;
+$print("float: %1\n", type(f));
+
+// Bool
+var b = true;
+$print("bool: %1\n", type(b));
+
+// String
+var s = "hello";
+$print("string: %1\n", type(s));
+
+// Null
+var n;
+$print("null: %1\n", type(n));
+
+// Vec
+var v = [1, 2, 3];
+$print("vec: %1\n", type(v));
+
+// Lst
+var l = lst[1, 2, 3];
+$print("lst: %1\n", type(l));
+
+// Map
+var m = map{"a": 1};
+$print("map: %1\n", type(m));
+
+$print("demo_types: OK\n");

@@ -1,0 +1,7 @@
+// Test: NameError - use undefined variable
+try {
+    $print(undefined_var);
+} catch (e) {
+    $print("what: %1\n", e.what);
+    $print("info: %1\n", e.info);
+}

@@ -1,0 +1,6 @@
+// Cover test: Extension function basic call
+// Tests: $exec basic invocation and return value
+
+var r = $exec("echo hello");
+if (!r["success"]) throw "exec should succeed";
+if (r["excode"] != 0) throw "exit code should be 0";

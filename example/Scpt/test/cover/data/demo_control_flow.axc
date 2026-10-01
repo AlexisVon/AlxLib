@@ -1,0 +1,53 @@
+// Demo: Quick control flow verification
+
+// If/else
+var x = 10;
+if (x > 0) {
+    $print("positive\n");
+}
+
+// For
+var sum = 0;
+for (var i = 0; i < 5; ++i) {
+    sum += i;
+}
+$print("for sum: %1\n", sum);
+
+// While
+var w = 0;
+var wsum = 0;
+while (w < 5) {
+    wsum += w;
+    w++;
+}
+$print("while sum: %1\n", wsum);
+
+// For-in
+var arr = [10, 20, 30];
+var arr_sum = 0;
+for (var v : arr) {
+    arr_sum += v;
+}
+$print("for-each sum: %1\n", arr_sum);
+
+// Switch
+var sw = 2;
+switch (sw) {
+    case 1:
+        $print("one\n");
+        break;
+    case 2:
+        $print("two\n");
+        break;
+    default:
+        $print("other\n");
+}
+
+// Try/catch
+try {
+    throw "test";
+} catch (e) {
+    $print("caught: %1\n", e.info);
+}
+
+$print("demo_control_flow: OK\n");

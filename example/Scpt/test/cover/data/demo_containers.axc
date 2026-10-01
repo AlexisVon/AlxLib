@@ -1,0 +1,28 @@
+// Demo: Quick container operations
+
+// Vec
+var v = [10, 20, 30];
+$print("v[0]=%1, v[-1]=%2, size=%3\n", v[0], v[-1], v[null]);
+
+// Push
+v[null] = 40;
+$print("after push size=%1\n", v[null]);
+
+// Lst
+var l = lst[100, 200, 300];
+$print("l[0]=%1, l[-1]=%2\n", l[0], l[-1]);
+
+// Map
+var m = map{"key": "value", "num": 42};
+$print("m[key]=%1, m.num=%2\n", m["key"], m.num);
+
+// Fill
+var f = [0:5];
+$print("fill size=%1\n", f[null]);
+
+// Slice
+var s = [0, 1, 2, 3, 4, 5];
+var sl = s[1, 4];
+$print("slice: %1,%2,%3\n", sl[0], sl[1], sl[2]);
+
+$print("demo_containers: OK\n");

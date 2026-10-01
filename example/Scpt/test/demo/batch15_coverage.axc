@@ -1,0 +1,170 @@
+// Batch 15: Syntax coverage gaps
+// Tests: precedence, float suffix, escape sequences, var scope, compound index,
+//        nested delete, break/continue, exception across def, StackError
+
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) {
+    if (v == null) { return "null"; }
+    return string(v);
+}
+
+def assert_eq(actual, expected, name) {
+    if (actual == expected) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected " + to_str(expected) + " got " + to_str(actual) + "\n";
+}
+
+def assert_true(cond, name) {
+    if (cond) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected true\n";
+}
+
+// ========== §2.2 Operator precedence ==========
+// * > +
+assert_eq(2 + 3 * 4, 14, "precedence: * > + → 2+12=14");
+assert_eq(2 * 3 + 4, 10, "precedence: * > + → 6+4=10");
+// % like */
+assert_eq(10 + 3 % 4, 13, "precedence: % > + → 10+3=13");
+// + > comparison
+assert_true(2 + 3 < 10, "precedence: + > < → 5<10");
+// && > ||
+assert_true(true || false && false, "precedence: && > || → true||(false)=true");
+// < lv10, & lv8 → < binds tighter (higher level = higher precedence)
+// 1 & 2 < 3 = 1 & (2<3) = 1 & true → ConvError (int-only)
+var pb1; pb1 = false; var pb1t; pb1t = "";
+try { var tmp; tmp = 1 & 2 < 3; } catch (e) { pb1 = true; pb1t = e.what; }
+assert_true(pb1, "precedence: < > & → 1&(2<3) throws ConvError");
+assert_eq(pb1t, "TypeError", "precedence: 1&true → TypeError (int-only)");
+// == lv9, | lv6 → == binds tighter
+// 1 | 2 == 3 = 1 | (2==3) = 1 | false → ConvError (int-only)
+var pb2; pb2 = false; var pb2t; pb2t = "";
+try { var tmp; tmp = 1 | 2 == 3; } catch (e) { pb2 = true; pb2t = e.what; }
+assert_true(pb2, "precedence: == > | → 1|(2==3) throws ConvError");
+assert_eq(pb2t, "TypeError", "precedence: 1|false → TypeError (int-only)");
+// + lv12, + lv14 → + binds tighter
+// "x" + string(1) + string(2) = "x12"
+// + on strings throws TypeError
+assert_eq("x" + string(1) + string(2), "x12", "precedence: + left-assoc → 'x12'");
+// ! lv15, == lv9 → ! binds tighter
+assert_true(!false == true, "precedence: ! > == → (!false)==true");
+// Assignment = lv2, right-assoc — now implemented as expression-level operator
+var pa, pb; pa = 0; pb = 0;
+pa = pb = 42;
+assert_eq(pa, 42, "assignment: pa = pb = 42, pa=42");
+assert_eq(pb, 42, "assignment: pa = pb = 42, pb=42");
+// ternary
+assert_eq(true ? 1 : 0, 1, "ternary basic");
+
+// ========== §3.2 Float ==========
+var normal_float; normal_float = 2.0;
+assert_true(normal_float > 1.99 && normal_float < 2.01, "float 2.0 works");
+
+// ========== §3.4 String escape \r ==========
+assert_eq("\r", "\x0d", "escape \\r = CR (0x0d)");
+
+// ========== §3.4 String hex escape ==========
+assert_eq("\x41", "A", "hex escape \\x41 = A");
+assert_eq("\x5a", "Z", "hex escape \\x5a = Z");
+
+// ========== §6.1 No-var assignment ==========
+// No-var to existing outer var → modify outer
+var outer_var; outer_var = 10;
+{
+    outer_var = 20;
+}
+assert_eq(outer_var, 20, "no-var assign modifies outer scope var");
+
+// var in block: variable is block-scoped
+{
+    var block_only_var; block_only_var = 99;
+    assert_eq(block_only_var, 99, "var in block frame");
+}
+// After block, frame destroyed
+var leaked; leaked = false;
+try { tmp = block_only_var; leaked = true; }
+catch (e) { }
+// Note: whether block_only_var leaks is implementation-specific, doc says creates in current frame
+
+// ========== §6.4 Compound assign on vec/lst [0] and [-1] ==========
+var cv; cv = [10, 20, 30];
+cv[0] += 5;
+assert_eq(cv[0], 15, "vec[0] compound += 5");
+cv[-1] -= 5;
+assert_eq(cv[-1], 25, "vec[-1] compound -= 5");
+
+var cl; cl = lst([10, 20, 30]);
+cl[0] += 5;
+assert_eq(cl[0], 15, "lst[0] compound += 5");
+cl[-1] -= 5;
+assert_eq(cl[-1], 25, "lst[-1] compound -= 5");
+
+// ========== §6.6 Nested delete (dot chain) ==========
+var nd; nd = map{"a": map{"b": 42, "c": 99}};
+delete nd.a.b;
+assert_eq(nd.a.b, null, "nested delete a.b: b removed → null");
+assert_eq(nd.a.c, 99, "nested delete a.b: sibling c still 99");
+
+// ========== §6.6 Delete dict member by index ==========
+var dd; dd = map{"x": 1, "y": 2};
+delete dd["x"];
+var key_hit; key_hit = false;
+try { tmp = dd["x"]; }
+catch (e) { key_hit = true; assert_eq(e.what, "KeyError", "delete dict[\"x\"]: read → KeyError"); }
+assert_true(key_hit, "delete dict[\"x\"]: key removed");
+
+// ========== §8.6 Break in while ==========
+var bw_sum, bw_i; bw_sum = 0; bw_i = 0;
+while (true) {
+    bw_i = bw_i + 1;
+    bw_sum = bw_sum + bw_i;
+    if (bw_i >= 5) { break; }
+}
+assert_eq(bw_sum, 15, "break in while: sum 1..5 = 15");
+
+// ========== §8.6 Continue in for-each ==========
+var arr, v; arr = [1, 2, 3, 4, 5];
+var odd_sum; odd_sum = 0;
+for (v : arr) {
+    if (v % 2 == 0) { continue; }
+    odd_sum = odd_sum + v;
+}
+assert_eq(odd_sum, 9, "continue in for-each: odd sum 1+3+5=9");
+
+// ========== §8.7 Exception across def boundary ==========
+def inner_thrower() { throw "from inner"; }
+def outer_caller() { inner_thrower(); return "not reached"; }
+var across_hit, across_val; across_hit = false; across_val = "";
+try { outer_caller(); }
+catch (e) { across_hit = true; across_val = e.info; }
+assert_true(across_hit, "exception across def boundary caught");
+assert_eq(across_val, "from inner", "exception value preserved across def");
+
+// ========== §8.8 StackError (max_stack default = 4096) ==========
+def deep(n) {
+    if (n <= 0) { return 0; }
+    return 1 + deep(n - 1);
+}
+// Shallow recursion works
+assert_eq(deep(100), 100, "shallow recursion 100 works");
+
+// Deep recursion → StackError
+var stack_hit, stack_type; stack_hit = false; stack_type = "";
+try { deep(5000); }
+catch (e) { stack_hit = true; stack_type = e.what; }
+assert_true(stack_hit, "deep recursion 5000 → throws");
+assert_eq(stack_type, "StackError", "deep recursion → StackError");
+
+// ========== §5.4 tojs compact round-trip ==========
+var js_arr; js_arr = [1, 2, map{"a": 3}];
+assert_eq($fmjs($tojs(js_arr))[0], 1, "tojs pretty round-trip");
+assert_eq($fmjs($tojs(js_arr, true))[0], 1, "tojs compact round-trip");
+
+if (failed > 0) {
+    $print("\n=== FAIL: batch10_coverage ===\n");
+    $print("Passed: %1 / %2\n", passed, passed + failed);
+    $print("FAILURES:\n%1", failures);
+}

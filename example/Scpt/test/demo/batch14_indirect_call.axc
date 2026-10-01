@@ -1,0 +1,99 @@
+// Batch 14: Reflection @ system (§10)
+// Tests: indirect read/write, call, var/def decl, delete, indexed path, string format
+
+env(["../bin"]);
+import "subs/math_util.axc" as mu;
+
+var passed; passed = 0;
+var failed; failed = 0;
+var failures; failures = "";
+
+def to_str(v) {
+    if (v == null) { return "null"; }
+    return string(v);
+}
+
+def assert_eq(actual, expected, name) {
+    if (actual == expected) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected " + to_str(expected) + " got " + to_str(actual) + "\n";
+}
+
+def assert_true(cond, name) {
+    if (cond) { passed = passed + 1; return; }
+    failed = failed + 1;
+    failures = failures + "  FAIL " + name + ": expected true\n";
+}
+
+// ========== §10.1 Read & Write ==========
+var a; a = "y";
+var y; y = 42;
+assert_eq(@a, 42, "indirect read: a='y', @a → 42");
+@a = 99;
+assert_eq(y, 99, "indirect write: @a=99 → y=99");
+@a += 1;
+assert_eq(y, 100, "indirect compound: @a+=1 → y=100");
+
+// ========== §10.2 Call ==========
+def f() { return 42; }
+var b; b = "f";
+assert_eq(@b(), 42, "indirect call: b='f', @b() → 42");
+
+def add(x, y) { return x + y; }
+var fn; fn = "add";
+assert_eq(@fn(3, 4), 7, "indirect call with args: fn='add', @fn(3,4) → 7");
+
+// ========== §10.2 Namespaced call via dotted path ==========
+link "base.so" as b2;
+var fn1; fn1 = "b2.ex.sort";
+var v; v = [3, 1, 2];
+@fn1(v);
+assert_eq(v[0], 1, "namespaced indirect: fn1='b2.ex.sort', @fn1(v) → v=[1,2,3]");
+
+var fn2; fn2 = "mu.add";
+assert_eq(@fn2(10, 20), 30, "namespaced indirect: fn2='mu.add', @fn2(10,20) → 30");
+
+// ========== §10.3 Decl & Def (indirect @ banned) ==========
+var w; w = 77;
+assert_eq(w, 77, "static var decl: w=77");
+
+def myfunc() { return 88; }
+assert_eq(myfunc(), 88, "static def: myfunc() → 88");
+
+// ========== §10.4 Parenthesized expression ==========
+var p; p = "z";
+var z; z = 33;
+assert_eq(@(p), 33, "@(expr) read: @(p) → 33");
+@(p) = 44;
+assert_eq(z, 44, "@(expr) write: @(p)=44 → z=44");
+
+// ========== §10.4 Indexed path string ==========
+var idx; idx = "arr[1]";
+var arr; arr = [10, 20, 30];
+assert_eq(@idx, 20, "@ path with [N]: @idx='arr[1]' → 20");
+@idx = 99;
+assert_eq(arr[1], 99, "@ path write: @('arr[1]')=99 → arr[1]=99");
+
+// ========== §10.5 Error cases ==========
+var nope; nope = "no_such";
+var err; err = false;
+try { @nope; } catch (e) { err = true; }
+assert_true(err, "error: @undefined_var → NameError");
+
+// ========== §10.6 link (static alias) ==========
+link "base.so" as b3;
+var v2; v2 = [3, 1, 2];
+b3.ex.sort(v2);
+assert_eq(v2[0], 1, "link as b3: b3.ex.sort → v2 sorted");
+
+// ========== string() format mode ==========
+assert_eq(string(42), "42", "string single arg: string(42) → '42'");
+assert_eq(string("x=%1", 5), "x=5", "string format: string('x=%1', 5) → 'x=5'");
+assert_eq(string("%1+%2=%3", 1, 2, 3), "1+2=3", "string format multi: '1+2=3'");
+
+// ========== Summary ==========
+if (failed > 0) {
+    $print("=== FAILURES (" + string(failed) + "/" + string(passed + failed) + ") ===");
+    $print(failures);
+    $print("Passed: " + string(passed) + ", Failed: " + string(failed));
+}

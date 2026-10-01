@@ -1,0 +1,5 @@
+/* Test 8b: block comment
+   multi-line
+   works fine */
+var x; x = 1;
+if (x == 1) { $print("PASS: 8b block comment\n"); } else { $print("FAIL\n"); }

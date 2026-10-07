@@ -1673,6 +1673,14 @@ Version ALXLIB 1.0.0 (the starting point of the new scheme; the old four-part nu
 - **Allocation failure split out of `ResourceError`**: `std::bad_alloc` / `std::length_error` are now `MemoryError` (the name a script `catch` sees changes with it), while a guard refusing is still `ResourceError` — the two face different things: a guard reports its own ceiling, whereas an allocation failure means the host has to supply the deployment's ceiling.
 - **Migration notes**: these ids differ from `1.0.0`'s (which simply followed declaration order) — **a host branching on the exit code must re-check**. A patch bump leaves the SONAME alone, so 1.0.0 and 1.0.1 **can be mixed**: without re-checking, the wrong code is read silently.
 
+**Migration log (2026-10-07, version 1.0.2: `type()` names handles — the `"?"` sentinel is gone)**:
+
+- **`type()` is total now**: it used to answer null for every value outside the nine script types. An `anyptr` splits by the engine's own registration ids — `"func"` (a callable: a module function, a link namespace/area function), `"import"` / `"link"` (the two entity kinds), `"area"` (a link sub-scope) — and every other handle (an object a host handed over) keeps the bare `"anyptr"`. A variant type the script layer does not model — only a host can hand one over: a 32-bit float, an unsigned integer, a `std::vector<T>` — reports `"unknown"`; only a real null value answers `"null"`.
+- **The strict readers follow the same naming**: `type_name_script`'s old `"?"` default became `"unknown"` (the "Expected int, got ?" family of messages now names the value), and `op_icall`'s "expected function name string" message stopped leaking mangled C++ names — `@5()` said `got x`, it says `got int` now, and a handle says `got func`.
+- **Migration notes**: no opcode or AST change, so **vtype is untouched** and `.axp` products need no recompilation. A script that branched on `type(x) == null` for a handle must branch on the new name. Patch, not minor: the SONAME stays `.so.1.0`.
+
+Version ALXLIB 1.0.1 → 1.0.2.
+
 ### 10.2 Syntax
 
 `$foo(args)` → `T_DOLLAR` + `T_NAME` (the value is the bare name `foo`) + the `O_EXCALL` opcode.

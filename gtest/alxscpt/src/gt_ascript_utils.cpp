@@ -32,7 +32,14 @@ TEST(gt_ascript_utils, type_name_handles) {
     EXPECT_STREQ("link", type_name_script(variant(anyptr_ex<impl_link>::make(new impl_link()))));
     EXPECT_STREQ("area", type_name_script(variant(anyptr_ex<link_area>::make(new link_area()))));
     EXPECT_STREQ("anyptr", type_name_script(variant(anyptr_ex<int_64>::make(new int_64(7)))));
-    EXPECT_STREQ("anyptr", type_name_script(variant(anyptr())));
+
+    anyptr held = anyptr_ex<call_able>::make(new call_able());
+    anyptr taken = std::move(held);
+    variant moved_from(std::move(held));
+    EXPECT_STREQ("null", type_name_script(moved_from));
+    EXPECT_STREQ("func", type_name_script(variant(std::move(taken))));
+
+    EXPECT_STREQ("null", type_name_script(variant(anyptr())));
     EXPECT_STREQ("unknown", type_name_script(variant(1.5f)));
     EXPECT_STREQ("unknown", type_name_script(variant(uint_64(3))));
 }

@@ -30,7 +30,7 @@ namespace alx {
         // Containing directory of _path (itself when it is a directory); the result is file_info's absolute form
         std::string dirname_of(const std::string& _path);
 
-        // handles split into the engine's own kinds; an unmodeled host type answers "unknown"
+        // an empty handle reads as null; otherwise engine handles split into kinds and an unmodeled host type answers "unknown"
         inline const char* type_name_script(const variant& _v) {
             switch (_v.type()) {
             case variant::id<int_64>(): return "int";
@@ -43,6 +43,7 @@ namespace alx {
             case variant::id<varlst>(): return "lst";
             case variant::id<anyptr>(): {
                 const anyptr& ap = _v.to<anyptr>();
+                if (ap.null()) return "null";
                 if (anyptr_ex<call_able>::as(ap)) return "func";
                 if (anyptr_ex<impl_import>::as(ap)) return "import";
                 if (anyptr_ex<impl_link>::as(ap)) return "link";

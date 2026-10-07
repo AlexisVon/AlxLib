@@ -358,8 +358,9 @@ A value can also be an opaque **handle**, which only the engine and the host pro
 | a callable handle (a module / link / area function) | `"func"` |
 | an import / link / area entity handle (a shielded namespace, §11.3) | `"import"` / `"link"` / `"area"` |
 | any other handle (an object a host handed over) | `"anyptr"` |
+| an empty handle (one that holds no object) | `"null"` |
 
-A value of a variant type the script layer does not model — only a host can pass one in: a 32-bit float, an unsigned integer, a `std::vector<T>` — reports `"unknown"`; `null` keeps its own name. `type()` therefore never answers `null`.
+A value of a variant type the script layer does not model — only a host can pass one in: a 32-bit float, an unsigned integer, a `std::vector<T>` — reports `"unknown"`. A `null` value and an empty handle both answer `"null"`, so **empty reads as null, not as "unknown"**; `type()` never answers a null value itself.
 
 > `type`, `int`, `float`, `string`, `bool`, `bytes`, `vec`, `map`, `lst`, `env`, `here`, `eval`, `trap` are all reserved words and cannot be used as a variable name, function name, parameter name or `as` alias. `$xxx` extension function names are registered by the host and are not reserved words.
 

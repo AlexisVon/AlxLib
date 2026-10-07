@@ -806,7 +806,7 @@ bool init_fly_gate(FlyT* fly, mod_mng* mng, walker* _w, script_exception& _err, 
 | `int(v)` / `float(v)` / `string(v)` / `bool(v)` | type conversion through the `cov_*` matrix; a failure raises `ConvError` (`cov_bool` raises it for a value it has no answer for, such as a script object). null → the type's default value (0/0.0/""/false). `cov_int(string)` accepts the 0x/0o/0b prefixes; `cov_float(string)` accepts the JSON-like float format plus `inf` / `+inf` / `-inf` / `nan`, and an overflow (such as `1e999`) raises `ConvError` |
 | `bytes(v)` / `bytes(v, enc)` | byte-sequence conversion. One argument makes a raw copy (string), two arguments go through encoding conversion (hex/base64/GBK/UTF-8/UTF-16 and so on). null → empty bytes |
 | `vec(v)` / `map(v)` / `lst(v)` | container conversion + literal construction. null → an empty container |
-| `type(v)` | returns one of the 8 meta-type name strings |
+| `type(v)` | the value's type name: the 8 script types and null; a handle splits into func / import / link / area, with anyptr for a host object; a variant type the script layer does not model reports `"unknown"` (never null) |
 | `env(paths)` | runtime search paths |
 
 JSON encode/decode and I/O (`tojs`/`fmjs`/`print`/`input`) were migrated out to host-registered `$xxx` extension functions (2026-08-04) and are not engine built-ins.

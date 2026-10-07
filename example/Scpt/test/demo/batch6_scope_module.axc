@@ -220,6 +220,10 @@ try {
         failures = failures + "  FAIL file_info.is_exist: " + e.what + "\n";
     }
 
+// type() on an engine-side handle: a callable reports its kind, as a plain string
+assert_eq(type(b.mt.abs), "func", "type of a link callable = func");
+assert_eq(type(b.mt.abs) + "!", "func!", "type() result concatenates");
+
 // Add link test results to global tally
 passed = passed + link_tests_pass;
 

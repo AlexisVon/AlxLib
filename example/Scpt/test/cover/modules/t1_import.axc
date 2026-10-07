@@ -24,6 +24,7 @@ assert_true(true, "1.0 import syntax");
 // 2. cross-module function call
 var r = ma.greet("World");
 assert_eq(r, "Hello, World", "1.1 cross-module fn call");
+assert_eq(type(ma.greet), "func", "1.1b type(module fn) = func");
 
 // 3. cross-module variable read
 assert_eq(ma.x, 42, "1.2 cross-module var read");

@@ -10,6 +10,7 @@
 #ifndef _ALEXIS_SCRIPT_UTILS_H_
 #define _ALEXIS_SCRIPT_UTILS_H_
 
+#include "ascript_base.h"
 #include "ascript.h"
 #include "astring.h"
 #include "afile.h"
@@ -29,6 +30,7 @@ namespace alx {
         // Containing directory of _path (itself when it is a directory); the result is file_info's absolute form
         std::string dirname_of(const std::string& _path);
 
+        // handles split into the engine's own kinds; an unmodeled host type answers "unknown"
         inline const char* type_name_script(const variant& _v) {
             switch (_v.type()) {
             case variant::id<int_64>(): return "int";
@@ -39,8 +41,16 @@ namespace alx {
             case variant::id<varvec>(): return "vec";
             case variant::id<varmap>(): return "map";
             case variant::id<varlst>(): return "lst";
+            case variant::id<anyptr>(): {
+                const anyptr& ap = _v.to<anyptr>();
+                if (anyptr_ex<call_able>::as(ap)) return "func";
+                if (anyptr_ex<impl_import>::as(ap)) return "import";
+                if (anyptr_ex<impl_link>::as(ap)) return "link";
+                if (anyptr_ex<link_area>::as(ap)) return "area";
+                return "anyptr";
+            }
             case -1: return "null";
-            default: return "?";
+            default: return "unknown";
             }
         }
 

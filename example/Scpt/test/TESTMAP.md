@@ -20,7 +20,7 @@ Unit tests: `cd gtest && ./test.sh`
 
 | Dimension | Test files | Added / changed |
 |------|---------|----------|
-| 1. Type system | `cover/types/` 12 files | 5 files reworked from print to assert |
+| 1. Type system | `cover/types/` 13 files | 5 files reworked from print to assert |
 | 2. Containers | `cover/containers/` 7 files | — |
 | 3. Type conversion | `cover/conversions/` 2 files | **new directory** |
 | 4. Operators | `cover/operators/` 11 files | — |
@@ -51,6 +51,7 @@ Unit tests: `cd gtest && ./test.sh`
 | Truthiness: if/while/for/&&/\|\|/!/?: | `cover/types/test_truthy_basic.axc`, `test_truthy_string.axc` |
 | explicit bool() conversion: every path | `cover/types/test_bool_conv.axc` |
 | type(): all 8 types | `cover/types/test_typefunc.axc` |
+| type() on handles: a callable → "func", string concat/compare | `cover/types/test_handletype.axc` |
 | Literal syntax | `cover/types/test_literals.axc` |
 | Ternary operator | `cover/types/test_ternary.axc` |
 | Boundary values | `cover/types/test_bounds.axc` |

@@ -716,7 +716,6 @@ TEST(gt_ascript_engine, FlyweightClosure) {
         EXPECT_EQ(env_cnt, 1) << "env() should emit csys event";
 
         delete eng;
-
     }
 
     int load2 = 0, unload2 = 0;
@@ -833,6 +832,36 @@ TEST(gt_ascript_engine, Ext_ExecE2E) {
     auto res = eng->exec(alx::bytes_view(src), "");
     EXPECT_EQ(res.error, error_type::NoError);
     EXPECT_EQ(res.value.to<std::string>(), "hello");
+    delete eng;
+}
+
+struct type_probe_host {};
+
+static void ext_host_handle(fwrap& fw) {
+    fw.freturn(variant(anyptr_ex<type_probe_host>::make(new type_probe_host())));
+}
+
+static void ext_unmodeled_type(fwrap& fw) {
+    fw.freturn(variant(1.5f));
+}
+
+TEST(gt_ascript_engine, Ext_TypeOfHostHandle) {
+    engine* eng = engine::create();
+    eng->set_extend("host_handle", ext_host_handle);
+    alx::bytes src("var h; h = $host_handle(); type(h) + \"!\";");
+    auto res = eng->exec(alx::bytes_view(src), "");
+    EXPECT_EQ(res.error, error_type::NoError);
+    EXPECT_EQ(res.value.to<std::string>(), "anyptr!");
+    delete eng;
+}
+
+TEST(gt_ascript_engine, Ext_TypeOfUnmodeledValue) {
+    engine* eng = engine::create();
+    eng->set_extend("odd_value", ext_unmodeled_type);
+    alx::bytes src("var v; v = $odd_value(); type(v);");
+    auto res = eng->exec(alx::bytes_view(src), "");
+    EXPECT_EQ(res.error, error_type::NoError);
+    EXPECT_EQ(res.value.to<std::string>(), "unknown");
     delete eng;
 }
 

@@ -1,0 +1,18 @@
+// ====== test_handletype.axc — type() on engine-side handles ======
+// A callable handle reports "func" (not null), and the name is a plain
+// string that concatenates like any other type name.
+
+env(["../../bin"]);
+link "base.so" as b;
+
+var passed = 0;
+var failed = 0;
+
+def assert_eq(a, e, name) {
+    if (a == e) { passed = passed + 1; }
+    else { failed = failed + 1; $print("FAIL " + name + ": expected " + string(e) + " got " + string(a)); }
+}
+
+assert_eq(type(b.mt.abs), "func", "type of a link area callable");
+assert_eq(type(b.mt.abs) + "!", "func!", "type() result concatenates");
+assert_eq(type(b.mt.abs) == "func", true, "type() result compares");

@@ -465,7 +465,7 @@ namespace alx {
                 path = name_val.to<std::string>();
             if (path.empty()) {
                 std::string msg = "Indirect call: expected function name string, got ";
-                msg += name_val.type_name();
+                msg += type_name_script(name_val);
                 throw script_exception{error_type::NameError, msg};
             }
 
@@ -840,7 +840,7 @@ namespace alx {
                 variant result = _w.walk_tree(catch_node[2].to<varvec>());
                 cleanup_catch_frame();
                 return result;
-            // Native throws become catchable script errors: allocation is MemoryError, anything else NativeError
+                // Native throws become catchable script errors: allocation is MemoryError, anything else NativeError
             } catch (const std::bad_alloc&) {
 
                 unwind_and_bind(error_type_name(error_type::MemoryError), std::string("out of memory"));
@@ -1149,9 +1149,7 @@ namespace alx {
 
         variant walker::op_type(const varvec& _tree, walker& _w) {
             variant v = _tree.size() > 1 ? walker::eval_arg(_tree[1], _w) : variant();
-            const char* tn = type_name_script(v);
-            if (tn[0] == '?') return variant();
-            return std::string(tn);
+            return std::string(type_name_script(v));
         }
 
         variant walker::op_env(const varvec& _tree, walker& _w) {

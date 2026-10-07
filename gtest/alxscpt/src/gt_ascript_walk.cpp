@@ -1249,8 +1249,7 @@ TEST(gt_ascript_walk, FrameFreeIsolation) {
         "delete x;"
         "var z; z = 2;"
         "{ var y; y = 99; }"
-        "z;"
-    );
+        "z;");
     EXPECT_EQ(v.to<int_64>(), 2);
 }
 
@@ -1540,6 +1539,11 @@ TEST(gt_ascript_walk, Typeof_Null) {
 TEST(gt_ascript_walk, Typeof_Vec) {
     auto v = exec_src("type([1, 2]);");
     EXPECT_EQ(v.to<std::string>(), "vec");
+}
+
+TEST(gt_ascript_walk, Typeof_Bytes) {
+    auto v = exec_src("type(bytes(\"ab\"));");
+    EXPECT_EQ(v.to<std::string>(), "bytes");
 }
 
 TEST(gt_ascript_walk, Typeof_Map) {
@@ -2179,6 +2183,12 @@ TEST(gt_ascript_walk, IndirectCallNonStringVar) {
     auto [etype, eval] = exec_src_catch(
         "var not_str; not_str = 123; not_str();");
     EXPECT_EQ(etype, error_type::NameError);
+}
+
+TEST(gt_ascript_walk, IndirectCallMessageNamesScriptType) {
+    auto [etype, eval] = exec_src_catch("@5();");
+    EXPECT_EQ(etype, error_type::NameError);
+    EXPECT_EQ(eval.to<std::string>(), "Indirect call: expected function name string, got int");
 }
 
 TEST(gt_ascript_walk, IndirectCallOneHopOnly) {
@@ -2926,6 +2936,11 @@ TEST(gt_ascript_walk, Area_ValidCall) {
     auto v = exec_src_with_mock_link("testlink.area1.fn_a(); 1;");
     EXPECT_TRUE(v.is<int_64>());
     EXPECT_EQ(v.to<int_64>(), 1);
+}
+
+TEST(gt_ascript_walk, Area_TypeofFuncHandle) {
+    auto v = exec_src_with_mock_link("type(testlink.area1.fn_a);");
+    EXPECT_EQ(v.to<std::string>(), "func");
 }
 
 TEST(gt_ascript_walk, Area_UndefinedArea) {

@@ -1703,6 +1703,14 @@ Version ALXLIB 1.0.0 (the starting point of the new scheme; the old four-part nu
 
 Version ALXLIB 1.0.1 → 1.0.2.
 
+**Migration log (2026-10-08, version 1.1.0: `type()` asks the host before `"unknown"` — `set_type_ex`)**:
+
+- **The two dead ends got an owner**: `type()` used to answer `"anyptr"` for an object a host handed over and `"unknown"` for a variant type the script layer does not model; both now `break` out of the dispatch into one tail that asks the host's callback — `engine::set_type_ex(type_ex fn, void* ud = nullptr)` with `type_ex = const char* (*)(const variant&, void*)` — and a null or empty answer, or no callback at all, leaves `"unknown"`. A modelled type, null and the four engine handle kinds return before the callback, and an empty handle still answers `"null"` (the 1.0.2 rule stands).
+- **`"anyptr"` is gone as an answer**: with no callback a host object reads `"unknown"` like an unmodeled value. The five diagnostic call sites (`to_int_strict` and friends, `op_icall`, `op_bytes`) never ask the callback, so their "got X" wording says `"unknown"` for both arms.
+- **Migration notes**: an added virtual — its slot sits after `set_pipe`, not at the vtable tail — and two appended `engine_config` fields make this a **minor**: the SONAME goes `.so.1.0` → `.so.1.1` and **the host must relink**. No opcode or AST change, so vtype is untouched and `.axp` products need no recompilation. A script branching on `type(x) == "anyptr"` must switch to the host's callback or to `"unknown"`.
+
+Version ALXLIB 1.0.2 → 1.1.0.
+
 ### 10.2 Syntax
 
 `$foo(args)` → `T_DOLLAR` + `T_NAME` (the value is the bare name `foo`) + the `O_EXCALL` opcode.

@@ -1074,14 +1074,14 @@ virtual void set_pipe(pipe_in _in, pipe_out _out, void* _in_ud = nullptr, void* 
 
 **Motivation**: an uncaught error carries row/col (host diagnostics), and row-level stepping (the host advances by `wkdt_pos()`).
 
-**API** (appended at the tail):
+**API**:
 
 ```cpp
 struct engine_config {
     bool debug_enable = false; // eats the existing padding, sizeof unchanged
     ...
 };
-virtual void set_debug_enable(bool _on) = 0;  // the vtable tail
+virtual void set_debug_enable(bool _on) = 0;  // added after set_interrupt
 enum class hook_event { exec, import, link, trap, debug };  // appended at the tail
 varmap wkdt_pos() const;             // the current statement {row, col, ofst, file}
 std::list<varmap> wkdt_fpos() const; // per level {row, col, ofst, file, func}
@@ -1151,7 +1151,7 @@ virtual void set_type_ex(type_ex _fn, void* _ud = nullptr) = 0;
 - a modelled type, null and the four handle kinds return before the callback; an empty handle still answers `"null"` (the 1.0.2 rule stands) and never reaches the tail
 - `"anyptr"` stops being an answer: with no callback, or an empty one, a host object reads `"unknown"` — the same word an unmodeled value gives
 - the five diagnostic call sites (`to_int_strict` and friends, `op_icall`, `op_bytes`) keep the default `_ex = nullptr` and never ask; their "got X" wording says `"unknown"` for both arms
-- the callback runs on whichever thread executes the script, and the engine is not reentrant; the pointer it returns is read once, right after the call
+- the callback runs on whichever thread executes the script, and the engine is not reentrant; the pointer it returns is read once, right after the call (its storage must stay valid past the return), and a C++ exception it throws is reported like a native's — a script try catches it as NativeError, otherwise the run comes back as NativeError
 - no opcode or AST change, so vtype is untouched; with no callback installed the only answer that changes is `"anyptr"` → `"unknown"`
 
 ---
@@ -1245,7 +1245,7 @@ public:
     virtual bool running() const = 0;
     virtual void set_interrupt() = 0;
 
-    // ── Row-level position tracking (vtable tail) ─────────────
+    // ── Row-level position tracking ───────────────────────────
     virtual void set_debug_enable(bool _on) = 0;
 
     // ── Result type ───────────────────────────────────────────

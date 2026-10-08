@@ -614,7 +614,10 @@ namespace alx {
              * object a host handed over, or a variant type the script layer does not model --
              * and uses the name it returns as-is; null or an empty answer means the host does
              * not know it either, and "unknown" stands. The callback runs on whichever thread
-             * executes the script; the pointer it returns is read right after the call.
+             * executes the script; the pointer it returns is read once, right after the call,
+             * never kept -- its storage must stay valid past the return. A C++ exception it
+             * throws is reported like a native's: a script try can catch it as NativeError,
+             * and without one the run comes back as NativeError.
              *
              * \param _fn Callback; null removes it
              * \param _ud Cookie handed back to _fn

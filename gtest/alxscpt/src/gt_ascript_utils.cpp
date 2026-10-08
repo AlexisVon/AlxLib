@@ -52,8 +52,11 @@ static const char* utils_type_ex(const variant& _v, void* _ud) {
 TEST(gt_ascript_utils, type_name_ex) {
     char named[] = "named";
     EXPECT_STREQ("float32", type_name_script(variant(1.5f), utils_type_ex, nullptr));
+    EXPECT_STREQ("unknown", type_name_script(variant(uint_64(3)), utils_type_ex, nullptr));
     EXPECT_STREQ("named", type_name_script(variant(anyptr_ex<int_64>::make(new int_64(7))), utils_type_ex, named));
     EXPECT_STREQ("int", type_name_script(variant(int_64(1)), utils_type_ex, named));
+    EXPECT_STREQ("func", type_name_script(variant(anyptr_ex<call_able>::make(new call_able())), utils_type_ex, named));
+    EXPECT_STREQ("null", type_name_script(variant(anyptr()), utils_type_ex, named));
 }
 
 TEST(gt_ascript_utils, to_int_strict) {

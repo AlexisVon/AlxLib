@@ -851,7 +851,7 @@ TEST(gt_ascript_engine, Ext_TypeOfHostHandle) {
     alx::bytes src("var h; h = $host_handle(); type(h) + \"!\";");
     auto res = eng->exec(alx::bytes_view(src), "");
     EXPECT_EQ(res.error, error_type::NoError);
-    EXPECT_EQ(res.value.to<std::string>(), "anyptr!");
+    EXPECT_EQ(res.value.to<std::string>(), "unknown!");
     delete eng;
 }
 
@@ -862,6 +862,68 @@ TEST(gt_ascript_engine, Ext_TypeOfUnmodeledValue) {
     auto res = eng->exec(alx::bytes_view(src), "");
     EXPECT_EQ(res.error, error_type::NoError);
     EXPECT_EQ(res.value.to<std::string>(), "unknown");
+    delete eng;
+}
+
+static const char* type_ex_namer(const variant& _v, void* _ud) {
+    int* asked = static_cast<int*>(_ud);
+    if (asked) (*asked)++;
+    if (_v.is<float>()) return "float32";
+    if (_v.is<anyptr>()) return "probe";
+    return "";
+}
+
+static const char* type_ex_empty(const variant&, void*) {
+    return "";
+}
+
+TEST(gt_ascript_engine, Ext_TypeExNamesUnmodeled) {
+    engine* eng = engine::create();
+    eng->set_extend("odd_value", ext_unmodeled_type);
+    int asked = 0;
+    eng->set_type_ex(type_ex_namer, &asked);
+    alx::bytes src("var v; v = $odd_value(); type(v);");
+    auto res = eng->exec(alx::bytes_view(src), "");
+    EXPECT_EQ(res.error, error_type::NoError);
+    EXPECT_EQ(res.value.to<std::string>(), "float32");
+    EXPECT_EQ(asked, 1);
+    delete eng;
+}
+
+TEST(gt_ascript_engine, Ext_TypeExNamesHostObject) {
+    engine* eng = engine::create();
+    eng->set_extend("host_handle", ext_host_handle);
+    int asked = 0;
+    eng->set_type_ex(type_ex_namer, &asked);
+    alx::bytes src("var h; h = $host_handle(); type(h);");
+    auto res = eng->exec(alx::bytes_view(src), "");
+    EXPECT_EQ(res.error, error_type::NoError);
+    EXPECT_EQ(res.value.to<std::string>(), "probe");
+    EXPECT_EQ(asked, 1);
+    delete eng;
+}
+
+TEST(gt_ascript_engine, Ext_TypeExEmptyAnswerKeepsUnknown) {
+    engine* eng = engine::create();
+    eng->set_extend("odd_value", ext_unmodeled_type);
+    eng->set_extend("host_handle", ext_host_handle);
+    eng->set_type_ex(type_ex_empty);
+    alx::bytes src("var v; v = $odd_value(); var h; h = $host_handle(); type(v) + type(h);");
+    auto res = eng->exec(alx::bytes_view(src), "");
+    EXPECT_EQ(res.error, error_type::NoError);
+    EXPECT_EQ(res.value.to<std::string>(), "unknownunknown");
+    delete eng;
+}
+
+TEST(gt_ascript_engine, Ext_TypeExNotAskedForModeled) {
+    engine* eng = engine::create();
+    int asked = 0;
+    eng->set_type_ex(type_ex_namer, &asked);
+    alx::bytes src("type(42) + type(null) + type(\"s\") + type([1]);");
+    auto res = eng->exec(alx::bytes_view(src), "");
+    EXPECT_EQ(res.error, error_type::NoError);
+    EXPECT_EQ(res.value.to<std::string>(), "intnullstringvec");
+    EXPECT_EQ(asked, 0);
     delete eng;
 }
 

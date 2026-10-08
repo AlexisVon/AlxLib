@@ -1149,7 +1149,7 @@ namespace alx {
 
         variant walker::op_type(const varvec& _tree, walker& _w) {
             variant v = _tree.size() > 1 ? walker::eval_arg(_tree[1], _w) : variant();
-            return std::string(type_name_script(v));
+            return std::string(type_name_script(v, _w.m_cfg.type_ex_ptr, _w.m_cfg.type_ex_ud));
         }
 
         variant walker::op_env(const varvec& _tree, walker& _w) {

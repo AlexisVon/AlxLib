@@ -130,6 +130,16 @@ alx::variant* load(const std::string& _name, bool _auto_create = false);   // re
 - On the script side integers are all `long long` semantics and floating point is `double`; a host reads one back under `to<T>()`'s **lossless conversion** rule, and a type that does not fit gives the default value.
 - An object handed in from C++ travels in an `anyptr` (see `wrap<T>` in §11).
 
+### 4.1 Types the script layer has no name for `set_type_ex`
+
+```cpp
+using type_ex = const char* (*)(const alx::variant& _v, void* _ud);
+
+void set_type_ex(type_ex _fn, void* _ud = nullptr);
+```
+
+`type()` has two dead-end answers: an object a host handed over, and a variant type the script layer does not model (a 32-bit float, an unsigned integer, a `std::vector<T>`). Both go to this callback when one is installed — null or an empty answer means the host does not know it either, and `"unknown"` stands, which is also the answer with no callback at all. The callback runs on the thread that executes the script and the engine is not reentrant; the pointer it returns is read once, right after the call.
+
 ---
 
 ## 5. Extension functions `$name`

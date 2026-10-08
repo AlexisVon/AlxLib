@@ -35,7 +35,6 @@ namespace alx {
 
                 // walker first: reset() drops the impls while m_mod and the shared layer are alive
                 m_w.reset();
-
             }
 
             void reset() override {
@@ -328,6 +327,11 @@ namespace alx {
                 m_cfg.pipe_out_ud = _out_ud;
             }
 
+            void set_type_ex(type_ex _fn, void* _ud) override {
+                m_cfg.type_ex_ptr = _fn;
+                m_cfg.type_ex_ud = _ud;
+            }
+
             bool running() const override { return m_running.load(std::memory_order_relaxed); }
             void set_interrupt() override { m_w.m_interrupted.store(true, std::memory_order_relaxed); }
 
@@ -346,7 +350,6 @@ namespace alx {
             }
 
         private:
-
             result interrupt_result(const std::chrono::steady_clock::time_point& _t0) {
                 // the hook's reject reason, written through hook_info::desc; reset() clears it
                 std::string desc = m_w.m_interrupt_desc;
@@ -398,7 +401,6 @@ namespace alx {
             std::atomic<bool> m_running{false};
 
         public:
-
             void set_src_file(const std::string& _f) const { m_src_file = _f; }
             void clr_src_file() const { m_src_file.clear(); }
             // bound by the file wrappers for their scope: diagnostics, here() and the product's file

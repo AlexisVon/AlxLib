@@ -31,7 +31,7 @@ TEST(gt_ascript_utils, type_name_handles) {
     EXPECT_STREQ("import", type_name_script(variant(anyptr_ex<impl_import>::make(new impl_import()))));
     EXPECT_STREQ("link", type_name_script(variant(anyptr_ex<impl_link>::make(new impl_link()))));
     EXPECT_STREQ("area", type_name_script(variant(anyptr_ex<link_area>::make(new link_area()))));
-    EXPECT_STREQ("anyptr", type_name_script(variant(anyptr_ex<int_64>::make(new int_64(7)))));
+    EXPECT_STREQ("unknown", type_name_script(variant(anyptr_ex<int_64>::make(new int_64(7)))));
 
     anyptr held = anyptr_ex<call_able>::make(new call_able());
     anyptr taken = std::move(held);
@@ -42,6 +42,18 @@ TEST(gt_ascript_utils, type_name_handles) {
     EXPECT_STREQ("null", type_name_script(variant(anyptr())));
     EXPECT_STREQ("unknown", type_name_script(variant(1.5f)));
     EXPECT_STREQ("unknown", type_name_script(variant(uint_64(3))));
+}
+
+static const char* utils_type_ex(const variant& _v, void* _ud) {
+    if (_v.is<float>()) return "float32";
+    return _ud ? static_cast<const char*>(_ud) : nullptr;
+}
+
+TEST(gt_ascript_utils, type_name_ex) {
+    char named[] = "named";
+    EXPECT_STREQ("float32", type_name_script(variant(1.5f), utils_type_ex, nullptr));
+    EXPECT_STREQ("named", type_name_script(variant(anyptr_ex<int_64>::make(new int_64(7))), utils_type_ex, named));
+    EXPECT_STREQ("int", type_name_script(variant(int_64(1)), utils_type_ex, named));
 }
 
 TEST(gt_ascript_utils, to_int_strict) {

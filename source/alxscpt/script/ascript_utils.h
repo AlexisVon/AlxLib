@@ -30,8 +30,8 @@ namespace alx {
         // Containing directory of _path (itself when it is a directory); the result is file_info's absolute form
         std::string dirname_of(const std::string& _path);
 
-        // an empty handle reads as null; otherwise engine handles split into kinds and an unmodeled host type answers "unknown"
-        inline const char* type_name_script(const variant& _v) {
+        // an empty handle reads as null, engine handles split into kinds, and everything else asks the host before "unknown"
+        inline const char* type_name_script(const variant& _v, type_ex _ex = nullptr, void* _ud = nullptr) {
             switch (_v.type()) {
             case variant::id<int_64>(): return "int";
             case variant::id<double>(): return "float";
@@ -48,11 +48,16 @@ namespace alx {
                 if (anyptr_ex<impl_import>::as(ap)) return "import";
                 if (anyptr_ex<impl_link>::as(ap)) return "link";
                 if (anyptr_ex<link_area>::as(ap)) return "area";
-                return "anyptr";
+                break;
             }
             case -1: return "null";
-            default: return "unknown";
+            default: break;
             }
+            if (_ex) {
+                const char* name = _ex(_v, _ud);
+                if (name && name[0]) return name;
+            }
+            return "unknown";
         }
 
         // Strict readers: exact type only (an int is not a float here), except bool which also takes a number

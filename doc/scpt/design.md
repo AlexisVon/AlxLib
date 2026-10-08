@@ -806,7 +806,7 @@ bool init_fly_gate(FlyT* fly, mod_mng* mng, walker* _w, script_exception& _err, 
 | `int(v)` / `float(v)` / `string(v)` / `bool(v)` | type conversion through the `cov_*` matrix; a failure raises `ConvError` (`cov_bool` raises it for a value it has no answer for, such as a script object). null → the type's default value (0/0.0/""/false). `cov_int(string)` accepts the 0x/0o/0b prefixes; `cov_float(string)` accepts the JSON-like float format plus `inf` / `+inf` / `-inf` / `nan`, and an overflow (such as `1e999`) raises `ConvError` |
 | `bytes(v)` / `bytes(v, enc)` | byte-sequence conversion. One argument makes a raw copy (string), two arguments go through encoding conversion (hex/base64/GBK/UTF-8/UTF-16 and so on). null → empty bytes |
 | `vec(v)` / `map(v)` / `lst(v)` | container conversion + literal construction. null → an empty container |
-| `type(v)` | the value's type name: the 8 script types and null; a handle splits into func / import / link / area, with anyptr for a host object and null for an empty one; a variant type the script layer does not model reports `"unknown"` (never a null answer) |
+| `type(v)` | the value's type name: the 8 script types and null; a handle splits into func / import / link / area and null for an empty one; anything else — a host object handle, or a variant type the script layer does not model — asks the host's `set_type_ex` callback (§4.9e), `"unknown"` without an answer (never a null answer) |
 | `env(paths)` | runtime search paths |
 
 JSON encode/decode and I/O (`tojs`/`fmjs`/`print`/`input`) were migrated out to host-registered `$xxx` extension functions (2026-08-04) and are not engine built-ins.
@@ -1133,6 +1133,27 @@ std::list<varmap> wkdt_fpos() const; // per level {row, col, ofst, file, func}
 
 **Recursive compression (`compress_trace`)**: entries are first interned into dense ids before scanning, so **a longer entry or a changed format never affects folding** — only whether the string contents are equal decides folding, and a hash collision is absorbed by the map's equality test and never enters the algorithm. Behaviour: for recursion with several call sites the period goes from 1 to "the number of call sites" — `(1024x) [::] f` → `(512x) [::] f:2:1 / [::] f:3:5`, which shows which two call sites it is spinning between; **with a base case the innermost few levels differ in shape from the loop levels and still fold** (a repeated segment need not touch the head or the tail).
 
+### 4.9e Host type naming — set_type_ex (2026-10-08)
+
+**Motivation**: `type()` had two dead-end answers — `"anyptr"` for an object a host handed over, `"unknown"` for a variant type the script layer does not model (a 32-bit float, an unsigned integer, a `std::vector<T>`). Only the host knows what those are, so the host gets to name them.
+
+**API** (config fields appended at the tail; the setter sits after `set_pipe` in the vtable):
+
+```cpp
+using type_ex = const char* (*)(const variant& _v, void* _ud);
+
+virtual void set_type_ex(type_ex _fn, void* _ud = nullptr) = 0;
+```
+
+**Semantics**:
+
+- both dead-end arms `break` out of the dispatch — the anyptr case when the handle is none of the engine's four kinds, the outer `default` for an unmodeled type — and the shared tail asks `_ex`; null or an empty answer leaves `"unknown"`
+- a modelled type, null and the four handle kinds return before the callback; an empty handle still answers `"null"` (the 1.0.2 rule stands) and never reaches the tail
+- `"anyptr"` stops being an answer: with no callback, or an empty one, a host object reads `"unknown"` — the same word an unmodeled value gives
+- the five diagnostic call sites (`to_int_strict` and friends, `op_icall`, `op_bytes`) keep the default `_ex = nullptr` and never ask; their "got X" wording says `"unknown"` for both arms
+- the callback runs on whichever thread executes the script, and the engine is not reentrant; the pointer it returns is read once, right after the call
+- no opcode or AST change, so vtype is untouched; with no callback installed the only answer that changes is `"anyptr"` → `"unknown"`
+
 ---
 
 ## 5. API
@@ -1218,6 +1239,7 @@ public:
     virtual void set_hook(hook_fn fn, void* ud, uint_64 interval) = 0;
     virtual void set_pipe(pipe_in in, pipe_out out,
                           void* in_ud = nullptr, void* out_ud = nullptr) = 0;
+    virtual void set_type_ex(type_ex fn, void* ud = nullptr) = 0;
 
     // ── Cross-thread control ──────────────────────────────────
     virtual bool running() const = 0;

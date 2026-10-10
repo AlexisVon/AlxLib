@@ -496,19 +496,15 @@ TEST(gt_ascript_lex, UnterminatedBlockComment) {
     EXPECT_TOK(t, 0, T_ERROR);
 }
 
-TEST(gt_ascript_lex, UnterminatedSingleQuote) {
-    auto t = lex_err("'x");
-    EXPECT_EQ(t.count(), 2u);
-    EXPECT_TOK(t, 0, T_ERROR);
-}
-
-TEST(gt_ascript_lex, ErrorCallback_UnterminatedChar) {
+TEST(gt_ascript_lex, UnterminatedCharLiteral) {
     token_list tl;
     alx::bytes b("'x");
     std::vector<compile_error> errors;
     alx::signal<const compile_error&> err_sig;
     err_sig.connect([&](const compile_error& e) { errors.push_back(e); });
     tl.tokenize(alx::bytes_view(b), &err_sig);
+    EXPECT_EQ(tl.count(), 2u);
+    EXPECT_TOK(tl, 0, T_ERROR);
     ASSERT_EQ(errors.size(), 1u);
     EXPECT_EQ(errors[0].msg, "unterminated character literal");
 }

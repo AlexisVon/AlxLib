@@ -34,12 +34,11 @@ var caught_del = false;
 try { delete constmod.x; } catch (e) { caught_del = true; }
 assert_true(caught_del, "8.2d cross-module delete -> TypeError");
 
-// ── §8.3 link ns read as variable -> TypeError ──
+// ── §8.3 link ns read as variable -> a usable copy ──
 env(["../../bin"]);
 link "base.so" as b;
-var caught_ns = false;
-try { var x = b; } catch (e) { caught_ns = true; }
-assert_true(caught_ns, "8.3 link ns read -> TypeError");
+var bl = b;
+assert_eq(bl.mt.abs(-7), 7, "8.3 link ns read -> usable copy");
 
 // ── §8.4 .. from imported module targets root ──
 // mod_b has no parent_x, so we import and use ..root_data

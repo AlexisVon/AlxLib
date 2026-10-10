@@ -1,6 +1,6 @@
 # alxbase — API Manual
 
-`alxbase` is the **zero-dependency base layer** of AlxLib: byte buffers, type-erased values, JSON/XML, string utilities, binary serialization, the factory and a few general facilities. The layers above -- `alxcore` / `alxcomm` / `alxscpt` -- all depend on it.
+`alxbase` is the **zero-dependency base layer** of AlxLib: byte buffers, type-erased values, JSON/XML, string utilities, binary serialization, crypto/digest, date/time, the factory and a few general facilities. The layers above -- `alxcore` / `alxcomm` / `alxscpt` -- all depend on it.
 
 - Header directory: `include/alxbase/`
 - Library: `libalxbase.so` (or the merged static library `alxlib.a`)

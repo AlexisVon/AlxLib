@@ -51,10 +51,9 @@ var parts = b.st.split("x,y,z", ",");
 assert_eq(parts[0], "x", "2.13 link list.split [0]");
 assert_eq(parts[1], "y", "2.14 link list.split [1]");
 
-// ── link namespace as variable -> TypeError ──
-var caught_link_val = false;
-try { var x = b; } catch (e) { caught_link_val = true; }
-assert_true(caught_link_val, "2.15 link ns as value -> TypeError");
+// ── link namespace as a value -> a usable copy ──
+var bl = b;
+assert_eq(bl.mt.abs(-3), 3, "2.15 link ns as value -> usable copy");
 
 // ── multiple link same .so -> independent ──
 link "base.so" as b4;

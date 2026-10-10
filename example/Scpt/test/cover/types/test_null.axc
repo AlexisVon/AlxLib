@@ -55,15 +55,16 @@ assert_eq(_o.v[null], 3, "dot chain vec[null] = size");
 assert_eq(_o.s[null], 5, "dot chain string[null] = size");
 assert_eq(_o.p[null], 1, "dot chain map[null] = size");
 
-// ---- [null] write: append on vec/lst only ----
+// ---- [null] write: append on vec/lst/string/bytes ----
 _hit = false;
 try { _m[null] = 1; } catch (_e) { _hit = true; }
 assert_true(_hit, "map[null] write throws TypeError");
 assert_eq(_m[null], 2, "map unchanged after failed [null] write");
 
-_hit = false;
-try { _s[null] = "x"; } catch (_e) { _hit = true; }
-assert_true(_hit, "string[null] write throws TypeError");
+var _sz = _s[null];
+_s[null] = 33;
+assert_eq(_s[null], _sz + 1, "string[null] write appends one byte");
+assert_eq(_s[-1], 33, "the appended byte is 33");
 
 // ---- map key must be a string (null/int no longer collapse to "") ----
 _hit = false;

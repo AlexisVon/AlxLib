@@ -8,7 +8,7 @@ This document records the **design decisions, implementation points and tuning n
 2. **No exceptions for control flow**: the library barely throws. Failure is expressed as "returns `nullptr` / returns `false` / returns `_def` / `null()` is true". The reason is that the data on the other side (network, file, script) produces malformed input at a high rate, and an exception path costs more than it is worth, with no control over when it fires.
 3. **Value semantics outside, pointer semantics inside**: `bytes` / `varmap` / `json_object` behave like values to the caller (a copy is a deep copy), while the implementation uses a reference count or a pointer container, so memory management is never pushed onto the caller.
 4. **Zero-copy first**: a read-only path always hands out a window type such as `bytes_view` / `content_meta`, materializing an owning object only when the data has to outlive the window.
-5. **Demotion into base (2026-10-09)**: a facility from a higher layer may move here when it (a) depends on nothing but the standard library and the layers below, (b) holds no shared mutable state and no concurrency machinery, and (c) has a converged interface — shape and contract frozen, with exposure tightening already done. The last point is why the move follows the freeze instead of triggering it: a lower layer pays more for an interface change, not less.
+5. **Demotion into base (2026-10-09)**: a facility from a higher layer may move here when it (a) is self-contained — no alx module and no third-party library is needed (the standard library, libc and compiler built-ins are fair game), (b) holds no shared mutable state and no concurrency machinery, and (c) has a converged interface — shape and contract frozen, with exposure tightening already done. The last point is why the move follows the freeze instead of triggering it: a lower layer pays more for an interface change, not less.
 6. **C++11 floor**: `BUILD_TESTS=ON` asks for C++17 (gtest), while library code stays usable from C++11 (`autility.h` fills in the `_v` trait family for the older standards).
 
 ---
@@ -319,7 +319,7 @@ Serialized data may come from outside (a disk, a network), so the decoding side 
 
 ## 10. Encryption (AES)
 
-### 3.1 The three-layer structure
+### 10.1 The three-layer structure
 
 ```
 aes_base          the algorithm core: key expansion, the round functions, GHASH, padding (stateless, pure functions)
@@ -332,7 +332,7 @@ aes_base          the algorithm core: key expansion, the round functions, GHASH,
 
 A work mode is **a template plus virtual functions**: the bit size is fixed at compile time (`key_exp_size` is a constant, `round_key` an on-stack array, with no heap allocation) and the mode lives in the polymorphic layer.
 
-### 3.2 The soft / hard dual implementation
+### 10.2 The soft / hard dual implementation
 
 `cipher` / `inv_cipher` / `ghash` each come in a `_soft` and a `_hard` version, and each probes the CPU's capabilities at run time to pick one (`aes_base::hardcal()` reports AES-NI alone; GHASH is decided by a separate PCLMULQDQ probe). `TRY_AES_HARD` controls whether the hard path and the 16-byte aligned key array are enabled at all; with it off both probes can only answer false and every `_hard` entry point is an empty body.
 
@@ -340,7 +340,7 @@ A work mode is **a template plus virtual functions**: the bit size is fixed at c
 
 > Why the reflected subkey is not cached in `aes_gcm`: each GHASH block is one serial dependency chain (XOR → multiply → reflect), and the subkey reflection is unrelated to that chain, so out-of-order execution hides it inside the multiply's latency -- measured, with GCM's present serial usage there is **no difference**, and only reshaping the interleaving into a throughput-bound form could pay it back (and that account should be settled together with the power table for `H`).
 
-### 3.3 The semantics of the padding modes
+### 10.3 The semantics of the padding modes
 
 `buf_padding` / `buf_unpadding` are **public API** (brought in with a `using` in `aes<N>`), because the caller needs to pad before encrypting and strip after decrypting.
 
@@ -353,7 +353,7 @@ A work mode is **a template plus virtual functions**: the bit size is fixed at c
 
 > Revision log: `ANSIX923` / `ISO10126` originally padded nothing when "already aligned", while unpadding still stripped by the last byte -- **one implementation contradicting itself** (an aligned buffer's last byte is data itself, so any value below 16 was mis-stripped). Both now "always append a whole block", as the standards say. There is no reliable consistency in old ciphertext worth migrating.
 
-### 3.4 The CTR and GCM counters
+### 10.4 The CTR and GCM counters
 
 `aes_ctr` is a **stream**: `iv_index` records the offset inside the current block and carries across several `xcrypt` calls; the counter is incremented as one big-endian number (the carry walks from the last byte backwards). `encrypt` / `decrypt` share `xcrypt`.
 

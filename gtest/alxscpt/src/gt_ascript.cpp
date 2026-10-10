@@ -992,9 +992,9 @@ TEST(gt_ascript_engine, Ext_ReflectCallFastPath) {
     EXPECT_EQ(res.error, error_type::NoError);
     EXPECT_EQ(res.value.to<int_64>(), 25);
 
+    // a call inside the string is an expression, not a path — refused (call it as @("$sq")(4))
     res = eng->exec(alx::bytes_view(alx::bytes("@(\"$sq(4)\");")), "");
-    EXPECT_EQ(res.error, error_type::NoError);
-    EXPECT_EQ(res.value.to<int_64>(), 16);
+    EXPECT_EQ(res.error, error_type::NameError);
     delete eng;
 }
 
@@ -1024,10 +1024,10 @@ TEST(gt_ascript_engine, AssignTarget_DynamicPath) {
     std::string err;
     eng->on_cerr.connect([&](const std::string& s) { err = s; });
     auto bad = eng->exec(alx::bytes_view(alx::bytes("@(\"1+2\") = 5;")), "");
-    EXPECT_EQ(bad.error, error_type::TypeError);
-    EXPECT_NE(err.find("assignment target"), std::string::npos);
+    EXPECT_EQ(bad.error, error_type::NameError);
+    EXPECT_NE(err.find("reflection is not a legal name or chain"), std::string::npos);
 
-    EXPECT_EQ(eng->exec(alx::bytes_view(alx::bytes("@(\"1\") = 5;")), "").error, error_type::TypeError);
+    EXPECT_EQ(eng->exec(alx::bytes_view(alx::bytes("@(\"1\") = 5;")), "").error, error_type::NameError);
 
     auto undef = eng->exec(alx::bytes_view(alx::bytes("var k = \"nope\"; @(k) = 1;")), "");
     EXPECT_EQ(undef.error, error_type::NameError);
@@ -2675,6 +2675,24 @@ TEST(gt_ascript_engine, Call_Interruptible) {
     delete eng;
 }
 
+TEST(gt_ascript_engine, IdleInterruptDiscardedAtEntry) {
+    // an entry clears the flag as it starts, exec and call alike: a request made while
+    // nothing was running is discarded, not turned into an immediate InterruptedError
+    auto* eng = engine::create();
+    eng->exec(alx::bytes_view(alx::bytes("def f() { return 7; }")), "");
+
+    eng->set_interrupt();
+    auto r1 = eng->call("f", {});
+    EXPECT_EQ(r1.error, error_type::NoError);
+    EXPECT_EQ(r1.value.to<int_64>(), 7);
+
+    eng->set_interrupt();
+    auto r2 = eng->exec(alx::bytes_view(alx::bytes("1 + 1;")), "");
+    EXPECT_EQ(r2.error, error_type::NoError);
+    EXPECT_EQ(r2.value.to<int_64>(), 2);
+    delete eng;
+}
+
 TEST(gt_ascript_engine, Call_FibTailRecursion) {
 
     auto* eng = engine::create();
@@ -2714,12 +2732,53 @@ TEST(gt_ascript_engine, Call_ScriptError) {
     delete eng;
 }
 
-TEST(gt_ascript_engine, Iload_expression) {
+TEST(gt_ascript_engine, Iload_expression_refused) {
+    // an @() string addresses a name or chain; an expression is refused (string evaluation is eval's job)
     auto* eng = engine::create();
     auto r = eng->exec(alx::bytes_view(alx::bytes("var v = @(\"1+2\");\nv;\n")), "");
-    EXPECT_EQ(r.error, error_type::NoError);
-    EXPECT_EQ(r.value.to<int_64>(), 3);
+    EXPECT_EQ(r.error, error_type::NameError);
+    EXPECT_EQ(r.value.to<std::string>(), "reflection is not a legal name or chain: 1+2");
     delete eng;
+}
+
+TEST(gt_ascript_engine, Exec_ResultHoldsNoHandle) {
+    std::string tmp = "/tmp/alx_exec_gate.axc";
+    {
+        std::ofstream ofs(tmp);
+        ofs << "var x = 1;" << std::endl;
+    }
+    engine* eng = engine::create();
+    std::string on_cerr;
+    eng->on_cerr.connect([&](const std::string& s) { on_cerr += s; });
+    eng->exec(alx::bytes_view(alx::bytes("def keep() { return 1; }")), "");
+
+    // a handle that is the result, and one nested in a container, are both refused
+    auto bad = eng->exec(alx::bytes_view(alx::bytes("import \"" + tmp + "\" as m; m;")), "");
+    EXPECT_EQ(bad.error, error_type::TypeError);
+    EXPECT_EQ(bad.value.to<std::string>(), "exec result: import cannot be returned");
+    EXPECT_TRUE(on_cerr.empty()) << "the gate reports through the result alone";
+
+    // the refused run resets the engine: the earlier def is gone
+    EXPECT_EQ(eng->call("keep", {}).error, error_type::NameError);
+    EXPECT_EQ(eng->exec(alx::bytes_view(alx::bytes("1 + 1;")), "").value.to<int_64>(), 2);
+
+    auto nested = eng->exec(
+        alx::bytes_view(alx::bytes("import \"" + tmp + "\" as m2; var ps; ps = [m2]; ps;")), "");
+    EXPECT_EQ(nested.error, error_type::TypeError);
+    EXPECT_EQ(nested.value.to<std::string>(), "exec result: import cannot be returned");
+
+    // call() is the unrestricted channel: the same object comes back whole — and the host drops it
+    // before the engine dies (the standing contract for call/load values)
+    {
+        auto prep = eng->exec(
+            alx::bytes_view(alx::bytes("import \"" + tmp + "\" as gm; def grab() { return gm; }")), "");
+        EXPECT_EQ(prep.error, error_type::NoError);
+        auto via_call = eng->call("grab", {});
+        EXPECT_EQ(via_call.error, error_type::NoError);
+        EXPECT_TRUE(via_call.value.is<anyptr>());
+    }
+    delete eng;
+    std::remove(tmp.c_str());
 }
 
 TEST(gt_ascript_engine, Parse_NestOverflowReportsOnce) {

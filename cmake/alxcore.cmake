@@ -1,4 +1,4 @@
-# alxcore - core extensions (file/compress/verify/thread + 3rdpty)
+# alxcore - core extensions (file/compress/thread + 3rdpty)
 
 set(ALXCORE_SOURCES
     ${CMAKE_SOURCE_DIR}/source/alxcore/afile.cpp

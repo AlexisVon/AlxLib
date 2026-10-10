@@ -32,7 +32,7 @@ namespace alx {
             uint_32 row;
             uint_32 col;
 
-            // String literals only: offset of each '\' from the token start; the parser, not the lexer, decodes them.
+            // String and char literals: offset of each '\' from the token start; the parser, not the lexer, decodes them.
             std::vector<uint_32> esc;
         };
 

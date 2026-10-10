@@ -51,6 +51,26 @@ namespace alx {
             anyptr m_object;
             // each value is an anyptr holding a call_able, keyed by native method name
             std::unordered_map<std::string, variant> m_natives;
+
+            link_area() = default;
+            /// A copy's natives re-point at this copy: a cloned store never reaches the original's host object
+            link_area(const link_area& _o) : m_object(_o.m_object), m_natives(_o.m_natives) { rebind(); }
+            link_area& operator=(const link_area& _o) {
+                if (this == &_o) return *this;
+                m_object = _o.m_object;
+                m_natives = _o.m_natives;
+                rebind();
+                return *this;
+            }
+
+        private:
+            void rebind() {
+                for (auto& n : m_natives) {
+                    if (!n.second.is<anyptr>()) continue;
+                    if (auto* ca = anyptr_ex<call_able>::as(n.second.to<anyptr>()))
+                        ca->m_area = this;
+                }
+            }
         };
 
         struct data_store {

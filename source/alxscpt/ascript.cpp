@@ -19,6 +19,7 @@
 #include "script/ascript_lex.h"
 #include "script/ascript_parse.h"
 #include "script/ascript_modmng.h"
+#include "script/ascript_utils.h"
 #include "script/ascript_walk.h"
 #include <chrono>
 
@@ -32,6 +33,30 @@ namespace alx {
                 running_guard(std::atomic<bool>& _f) : flag(_f) { flag.store(true, std::memory_order_relaxed); }
                 ~running_guard() { flag.store(false, std::memory_order_relaxed); }
             };
+
+            // exec's result must be retainable data — basic types and containers; an anyptr anywhere is refused
+            const variant* find_anyptr(const variant& _v) {
+                if (_v.is<anyptr>()) return &_v;
+                if (_v.is<varmap>()) {
+                    for (const auto& e : _v.to<varmap>()) {
+                        if (const variant* hit = find_anyptr(*e.second)) return hit;
+                    }
+                    return nullptr;
+                }
+                if (_v.is<varvec>()) {
+                    for (const auto& e : _v.to<varvec>()) {
+                        if (const variant* hit = find_anyptr(e)) return hit;
+                    }
+                    return nullptr;
+                }
+                if (_v.is<varlst>()) {
+                    for (const auto& e : _v.to<varlst>()) {
+                        if (const variant* hit = find_anyptr(e)) return hit;
+                    }
+                    return nullptr;
+                }
+                return nullptr;
+            }
         }
 
         class engine_impl : public engine {
@@ -103,6 +128,9 @@ namespace alx {
             }
 
             result call(const std::string& _name, const varvec& _args) override {
+                m_w.m_interrupted = false;
+                m_w.m_interrupt_desc.clear();
+
                 variant* p = m_w.m_root.m_store.find(_name);
                 if (!p || !p->is<anyptr>())
                     return {variant("function not found: " + _name), 0, error_type::NameError};
@@ -192,7 +220,21 @@ namespace alx {
                 m_w.m_root_asts.push_back(std::move(ast));
                 m_w.state.root = &m_w.m_root;
                 m_w.state.current = &m_w.m_root;
-                return run_walk(t0, walk_entry_forest, nullptr);
+                res = run_walk(t0, walk_entry_forest, nullptr);
+                if (res.error == error_type::NoError) {
+                    if (const variant* bad = find_anyptr(res.value)) {
+                        std::string msg = "exec result: " +
+                                          std::string(type_name_script(*bad, m_cfg.type_ex_ptr,
+                                                                       m_cfg.type_ex_ud)) +
+                                          " cannot be returned";
+                        // release before reset: the value's refs unwind while the module world is alive
+                        res.value = variant();
+                        m_w.reset();
+                        res.value = variant(msg);
+                        res.error = error_type::TypeError;
+                    }
+                }
+                return res;
             }
 
             bytes compile(const bytes_view& _data,

@@ -40,6 +40,12 @@ copy1.ts_set("k", 1);
 cm.ts_set("k", 2);
 assert_eq(copy1.ts_get("k"), 1, "the copy's link is independent");
 
+// ── a link alias inside another module reads as a value: a usable, independent copy ──
+var ts_copy; ts_copy = cm.ts;
+ts_copy.set("direct", 7);
+assert_eq(ts_copy.get("direct"), 7, "a module's link alias reads as a usable copy");
+assert_eq(cm.ts_get("direct"), false, "…and is independent of the original");
+
 // ── the copy survives the original's deletion ──
 delete cm;
 copy1.set_tag("ALIVE");

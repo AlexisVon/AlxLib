@@ -67,7 +67,7 @@ namespace alx {
             varvec iload;
             iload.push_back(variant(OPTYPE(O_ILOAD)));
             iload.push_back(variant(_key));
-            // true = navigation: a path that resolves to nothing yields null instead of throwing
+            // the write posture: _tail_create stays true — a missing terminal key is created
             return walker::resolve_iload(iload, *m_ws);
         }
 

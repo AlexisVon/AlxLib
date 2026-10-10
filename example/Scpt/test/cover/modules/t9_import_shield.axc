@@ -1,6 +1,6 @@
 // ====== t9_import_shield.axc — Namespace Shielding ======
-// import/link alias is opaque namespace — only dot navigation allowed,
-// never readable/writable as bare value.
+// an import/link alias is an ordinary value (read = a copy, overwrite = the value
+// takes its place); a link's sub-data stays opaque at any depth.
 
 var passed = 0;
 var failed = 0;
@@ -23,13 +23,14 @@ assert_eq(ma.x, 42, "9.2 dot read through import");
 ma.x = 5;
 assert_eq(ma.x, 5, "9.3 dot write through import");
 
-// bare read → TypeError
-var caught = false;
-try { var x = ma; } catch (e) { caught = true; }
-assert_true(caught, "9.4 var x = ma → TypeError");
+// bare read → an independent copy
+var mo = ma;
+assert_eq(mo.x, 5, "9.4 var x = ma → usable copy");
+mo.x = 6;
+assert_eq(ma.x, 5, "9.4b the copy is independent");
 
 // bare read in expression → TypeError
-caught = false;
+var caught = false;
 try { var y = ma + 1; } catch (e) { caught = true; }
 assert_true(caught, "9.5 ma + 1 → TypeError");
 
@@ -50,10 +51,9 @@ assert_true(caught_del, "9.7b delete ma2 → alias removed");
 env(["../../bin"]);
 link "base.so" as b;
 
-// b itself blocked
-caught = false;
-try { var x = b; } catch (e) { caught = true; }
-assert_true(caught, "9.8 var x = b → TypeError");
+// b itself: an independent copy
+var bcopy = b;
+assert_eq(bcopy.mt.abs(-5), 5, "9.8 var x = b → usable copy");
 
 // b.area blocked (shield triggers at b)
 caught = false;
@@ -62,6 +62,15 @@ assert_true(caught, "9.9 var y = b.mt → TypeError (blocked at b)");
 
 // dot call through area still works
 assert_eq(b.mt.abs(-5), 5, "9.10 b.mt.abs(-5) → 5");
+
+// a copy's host object is its own: a close through the copy leaves the original open,
+// and the copy outlives the original
+b.fs.open("copy_f", "/tmp/test_t9_copy.txt", "w");
+var bc = b;
+bc.copy_f.close();
+assert_true(b.copy_f.is_open(), "9.11 copy.close() leaves the original open");
+delete b;
+assert_eq(bc.copy_f.is_open(), false, "9.12 the copy outlives the original");
 
 // ── Summary ──
 $print("--- t9_import_shield: " + string(passed) + " passed, " + string(failed) + " failed ---");

@@ -447,17 +447,21 @@ namespace alx {
             std::string name = _tree[1].to<std::string>();
             variant* p = _w.state.var_ptr(name);
             if (!p) throw script_exception{error_type::NameError, std::string("Undefined: " + name)};
-
-            if (p->is<anyptr>()) {
-                const anyptr& ap = p->to<anyptr>();
-                if (anyptr_ex<impl_link>::as(ap))
-                    throw script_exception{error_type::TypeError,
-                                           std::string("link namespace cannot be read as variable")};
-                if (anyptr_ex<impl_import>::as(ap))
-                    throw script_exception{error_type::TypeError,
-                                           std::string("import namespace cannot be read as variable")};
-            }
             return *p;
+        }
+
+        // @'s string addresses an lvalue — a name or a chain of them, never an operation
+        static bool reflection_is_chain(const varvec& _expr) {
+            if (_expr.empty() || !_expr[0].is<OPTYPE>()) return false;
+            op_enum head = static_cast<op_enum>(_expr[0].to<OPTYPE>());
+            return head == O_LOAD || head == O_ILOAD || head == O_DOT || head == O_INDEX;
+        }
+
+        static void check_reflection_chain(const varvec& _expr, const std::string& _path) {
+            if (reflection_is_chain(_expr)) return;
+            std::string shown = _path.size() > 80 ? _path.substr(0, 80) + "..." : _path;
+            throw script_exception{error_type::NameError,
+                                   "reflection is not a legal name or chain: " + shown};
         }
 
         variant walker::op_iload(const varvec& _tree, walker& _w) {
@@ -484,16 +488,12 @@ namespace alx {
 
             if (walker::is_simple_name(path)) {
                 variant* p = _w.state.var_ptr(path);
-                if (!p) {
-                    if (_w.state.current && _w.state.current->m_store.contain(path))
-                        throw script_exception{error_type::TypeError,
-                                               std::string("Cannot read namespace as value: " + path)};
-                    throw script_exception{error_type::NameError, std::string("Undefined: " + path)};
-                }
+                if (!p) throw script_exception{error_type::NameError, std::string("Undefined: " + path)};
                 return *p;
             }
 
             auto expr = walker::iload_parse_expr(path, _w.m_cfg.parse_depth);
+            check_reflection_chain(expr, path);
             return _w.walk_tree(expr);
         }
 
@@ -1702,15 +1702,10 @@ namespace alx {
             variant* p = r.get(true);
             if (p) {
 
-                if (r.kind == TerminalKind::T_Slot && p->is<anyptr>()) {
-                    const anyptr& ap_check = p->to<anyptr>();
-                    if (anyptr_ex<impl_link>::as(ap_check))
-                        throw script_exception{error_type::TypeError,
-                                               std::string("link namespace cannot be read as variable")};
-                    if (anyptr_ex<impl_import>::as(ap_check))
-                        throw script_exception{error_type::TypeError,
-                                               std::string("import namespace cannot be read as variable")};
-                }
+                // reached through a link: the terminal hands back the link's own slot — its sub-data stays opaque
+                if (p == r.parent && p->is<anyptr>() && anyptr_ex<impl_link>::as(p->to<anyptr>()))
+                    throw script_exception{error_type::TypeError,
+                                           std::string("link namespace cannot be read as variable")};
                 return *p;
             }
             if (r.kind == TerminalKind::T_Slot || r.kind == TerminalKind::T_Callable) {
@@ -1931,6 +1926,9 @@ namespace alx {
             return variant(std::move(result));
         }
 
+        static const char* const s_delete_target =
+            "delete target must be a variable, member access, or index expression";
+
         variant walker::op_del(const varvec& _tree, walker& _w) {
             auto& target = _tree[1];
 
@@ -1946,8 +1944,7 @@ namespace alx {
                 default: break;
                 }
             }
-            throw script_exception{error_type::TypeError,
-                                   std::string("delete target must be a variable, member access, or index expression")};
+            throw script_exception{error_type::TypeError, std::string(s_delete_target)};
         }
 
         variant walker::op_excall(const varvec& _tree, walker& _w) {
@@ -2222,13 +2219,6 @@ namespace alx {
                                            std::string("Undefined: ") + _lhs[1].to<std::string>()};
                 }
 
-                if (p->is<anyptr>()) {
-                    const anyptr& ap = p->to<anyptr>();
-                    if (anyptr_ex<impl_link>::as(ap))
-                        return fail(error_type::TypeError, "link namespace cannot be read as variable");
-                    if (anyptr_ex<impl_import>::as(ap))
-                        return fail(error_type::TypeError, "import namespace cannot be read as variable");
-                }
                 r.type = target_resolved::kind::slot;
                 r.slot = p;
                 r.owner = _w.state.current;
@@ -2247,20 +2237,14 @@ namespace alx {
                         throw script_exception{error_type::NameError,
                                                std::string("Undefined: ") + path};
                     }
-                    if (p->is<anyptr>()) {
-                        const anyptr& ap = p->to<anyptr>();
-                        if (anyptr_ex<impl_link>::as(ap))
-                            return fail(error_type::TypeError, "link namespace cannot be read as variable");
-                        if (anyptr_ex<impl_import>::as(ap))
-                            return fail(error_type::TypeError, "import namespace cannot be read as variable");
-                    }
                     r.type = target_resolved::kind::slot;
                     r.slot = p;
                     r.owner = _w.state.current;
                     return r;
                 }
-                return walker::resolve_target(walker::iload_parse_expr(path, _w.m_cfg.parse_depth), _w,
-                                              _mode, _rmw, _tail_create);
+                auto expr = walker::iload_parse_expr(path, _w.m_cfg.parse_depth);
+                if (writing) check_reflection_chain(expr, path);
+                return walker::resolve_target(expr, _w, _mode, _rmw, _tail_create);
             }
 
             case O_DOT: {
@@ -2274,8 +2258,6 @@ namespace alx {
                         const anyptr& ap_w = sv.to<anyptr>();
                         if (anyptr_ex<impl_link>::as(ap_w))
                             throw script_exception{error_type::TypeError, std::string("cannot write to link module variable")};
-                        if (anyptr_ex<impl_import>::as(ap_w))
-                            throw script_exception{error_type::TypeError, std::string("cannot write to import module variable")};
                     }
                 }
                 // a chain that entered a link's data resolves inside it at any depth: never a script target
@@ -2600,14 +2582,12 @@ namespace alx {
             }
         }
 
-        // a function binding and a link/import namespace are not assignable names
+        // a function binding is not an assignable name
         static void assign_name_guard(const variant& _p, const std::string& _name) {
             if (!_p.is<anyptr>()) return;
             const anyptr& ap = _p.to<anyptr>();
             if (anyptr_ex<call_able>::as(ap))
                 throw script_exception{error_type::NameError, std::string("Cannot assign to function: " + _name)};
-            if (anyptr_ex<impl_link>::as(ap) || anyptr_ex<impl_import>::as(ap))
-                throw script_exception{error_type::NameError, std::string("Cannot assign to namespace: " + _name)};
         }
 
         void walker::assign_raw(walker& _w, const variant& _name, const variant& _val) {
@@ -3004,14 +2984,11 @@ namespace alx {
 
                 if (!walker::is_simple_name(name)) {
                     auto expr = walker::iload_parse_expr(name, _w.m_cfg.parse_depth);
-                    if (expr.size() >= 1 && expr[0].is<OPTYPE>()) {
-                        switch (static_cast<op_enum>(expr[0].to<OPTYPE>())) {
-                        case O_ILOAD: return del_name(expr, _w);
-                        case O_DOT: return del_dot(expr, _w);
-                        case O_INDEX: return del_index(expr, _w);
-                        default: break;
-                        }
-                    }
+                    check_reflection_chain(expr, name);
+                    op_enum head = static_cast<op_enum>(expr[0].to<OPTYPE>());
+                    if (head == O_DOT) return del_dot(expr, _w);
+                    if (head == O_INDEX) return del_index(expr, _w);
+                    return del_name(expr, _w);
                 }
             }
 

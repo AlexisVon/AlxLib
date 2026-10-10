@@ -955,15 +955,16 @@ TEST(gt_ascript_walk, LinkNoCrash) {
     EXPECT_EQ(r.first, error_type::ImportError);
 }
 
-TEST(gt_ascript_walk, ImportShield_BareRead) {
+TEST(gt_ascript_walk, Import_ReadCopies) {
 
-    std::string tmp = "/tmp/alx_import_shield.axc";
+    std::string tmp = "/tmp/alx_import_copy.axc";
     std::ofstream ofs(tmp);
     ofs << "var x = 1;" << std::endl;
     ofs.close();
 
-    auto r = exec_src_catch(("import \"" + tmp + "\" as m; var x = m;").c_str());
-    EXPECT_EQ(r.first, error_type::TypeError);
+    // a bare read is a value copy — an independent instance owned by the binding
+    auto v = exec_src(("import \"" + tmp + "\" as m; var y = m; y.x = 5; m.x;").c_str());
+    EXPECT_EQ(v.to<int_64>(), 1);
     std::remove(tmp.c_str());
 }
 TEST(gt_ascript_walk, ImportShield_ExprRead) {
@@ -3258,17 +3259,18 @@ TEST(gt_ascript_walk, NullIndex_DotChainRejected) {
     EXPECT_EQ(v.to<varvec>()[1].to<int_64>(), 2);
 }
 
-TEST(gt_ascript_walk, Namespace_AssignRejected) {
+TEST(gt_ascript_walk, Namespace_AssignOverwrites) {
     std::string tmp = "/tmp/alx_ns_assign.axc";
     {
         std::ofstream ofs(tmp);
         ofs << "var z = 7;" << std::endl;
     }
     std::string pre = "import \"" + tmp + "\" as m; ";
-    auto r1 = exec_src_catch((pre + "m = 1;").c_str());
-    EXPECT_EQ(r1.first, error_type::NameError);
-    auto r2 = exec_src_catch((pre + "@(\"m\") = 1;").c_str());
-    EXPECT_EQ(r2.first, error_type::TypeError);
+    // assigning over an alias discards the instance and puts the value in its place
+    auto v1 = exec_src((pre + "m = 1; m;").c_str());
+    EXPECT_EQ(v1.to<int_64>(), 1);
+    auto v2 = exec_src((pre + "@(\"m\") = 2; m;").c_str());
+    EXPECT_EQ(v2.to<int_64>(), 2);
     auto r3 = exec_src_catch((pre + "m += 1;").c_str());
     EXPECT_EQ(r3.first, error_type::TypeError);
     std::remove(tmp.c_str());
@@ -3306,6 +3308,38 @@ TEST(gt_ascript_walk, DeleteIndirectPath) {
     EXPECT_EQ(exec_src("var v = [1,2,3]; delete @(\"v[0]\"); v[0];").to<int_64>(), 2);
     EXPECT_EQ(exec_src("var m = map{\"a\": 1}; var r = delete @(\"m.a\"); r;").to<bool>(), true);
     EXPECT_EQ(exec_src("var v = [1,2,3]; var r = delete @(\"v[9]\"); r;").to<bool>(), false);
+}
+
+TEST(gt_ascript_walk, Reflection_StringMustBeANameOrChain) {
+    // @()'s string addresses an lvalue; an expression or a slice is refused by the reflection layer
+    auto r = exec_src_catch("var x = @(\"1+2\");");
+    EXPECT_EQ(r.first, error_type::NameError);
+    EXPECT_EQ(r.second.to<std::string>(), "reflection is not a legal name or chain: 1+2");
+
+    auto r2 = exec_src_catch("var v = [1,2,3]; var x = @(\"v[1,3]\");");
+    EXPECT_EQ(r2.first, error_type::NameError);
+    EXPECT_EQ(r2.second.to<std::string>(), "reflection is not a legal name or chain: v[1,3]");
+}
+
+TEST(gt_ascript_walk, DeleteIndirect_RejectsNonTargetShapes) {
+    // the shape rules of `delete @(x)` match the direct form — no silent false for a non-target
+    auto r = exec_src_catch("def f() { return 1; } delete @(\"f()\");");
+    EXPECT_EQ(r.first, error_type::NameError);
+    EXPECT_EQ(r.second.to<std::string>(), "reflection is not a legal name or chain: f()");
+
+    auto r2 = exec_src_catch("var v = [1,2,3]; delete @(\"v[1,3]\");");
+    EXPECT_EQ(r2.first, error_type::NameError);
+    EXPECT_EQ(r2.second.to<std::string>(), "reflection is not a legal name or chain: v[1,3]");
+
+    // a missing name is still the documented silent false
+    EXPECT_EQ(exec_src("var r = delete @(\"nosuch\"); 1 + (r ? 100 : 0);").to<int_64>(), 1);
+}
+
+TEST(gt_ascript_walk, Reflection_SliceIsNotAnAddress) {
+    // a slice is an operation, not an addressable object: refused wherever reflection writes
+    auto r = exec_src_catch("var v = [1,2,3]; @(\"v[1,3]\") = [9,9];");
+    EXPECT_EQ(r.first, error_type::NameError);
+    EXPECT_EQ(r.second.to<std::string>(), "reflection is not a legal name or chain: v[1,3]");
 }
 
 TEST(gt_ascript_walk, Slot_DeleteIndex_ContainerSlot) {

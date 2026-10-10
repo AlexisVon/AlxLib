@@ -12,6 +12,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\include\alxbase\aalgo.h" />
+    <ClInclude Include="..\..\include\alxbase\aaes.h" />
     <ClInclude Include="..\..\include\alxbase\aanyptr.h" />
     <ClInclude Include="..\..\include\alxbase\abase.h" />
     <ClInclude Include="..\..\include\alxbase\abytes.h" />
@@ -28,17 +29,20 @@
     <ClInclude Include="..\..\include\alxbase\autility.h" />
     <ClInclude Include="..\..\include\alxbase\avariant.h" />
     <ClInclude Include="..\..\include\alxbase\avarsolid.h" />
+    <ClInclude Include="..\..\include\alxbase\averify.h" />
     <ClInclude Include="..\..\include\alxbase\axml.h" />
     <ClInclude Include="resource.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\source\alxbase\aalgo.cpp" />
+    <ClCompile Include="..\..\source\alxbase\aaes.cpp" />
     <ClCompile Include="..\..\source\alxbase\abytes.cpp" />
     <ClCompile Include="..\..\source\alxbase\acsv.cpp" />
     <ClCompile Include="..\..\source\alxbase\ajson.cpp" />
     <ClCompile Include="..\..\source\alxbase\aregex_ex.cpp" />
     <ClCompile Include="..\..\source\alxbase\astring.cpp" />
     <ClCompile Include="..\..\source\alxbase\avarsolid.cpp" />
+    <ClCompile Include="..\..\source\alxbase\averify.cpp" />
     <ClCompile Include="..\..\source\alxbase\axml.cpp" />
   </ItemGroup>
   <ItemGroup>

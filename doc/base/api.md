@@ -627,3 +627,63 @@ is.total();
 ### 10.4 Type list (`atypelist.h`)
 
 The compile-time `typelist::type_list<...>` and the metafunctions `index_of` / `value_at` / `length_of` / `append_on` and the rest. The type index table of `variant` is built on it; ordinary business code does not use it directly.
+
+## 11. Encryption (`aaes.h`)
+
+`aes_base` provides the algorithm core and the padding helpers, `aes<bits>` is the template base class, and the work modes derive from it:
+
+```cpp
+uint_8 key[32] = { /* ... */ };
+uint_8 iv[16]  = { /* ... */ };
+
+alx::aes_cbc<256> alg(key, iv);              // the bit size is a template parameter: 128 / 192 / 256
+alx::bytes buf = plain;
+alx::aes_base::buf_padding(buf, alx::aes_base::PKCS7);   // pad up to a whole block
+alg.encrypt(buf.data(), buf.size());                      // encrypt and decrypt in place
+
+alg.reset();                                  // put the IV / counter back (start a new session)
+```
+
+The available modes (all templates instantiated on the bit size, `aes_ctr<256>` say): `aes_ecb` (no IV), `aes_cbc` (chained), `aes_ctr` (a stream, `encrypt`/`decrypt` are the same operation), `aes_gcm` (with an authentication tag).
+
+The `PADDING` modes `NONE` / `PKCS7` / `ZEROS` / `ANSIX923` / `ISO10126` go with `buf_padding` / `buf_unpadding`; PKCS7, ANSIX923 and ISO10126 append a whole block when the buffer is already aligned (ZEROS appends nothing then).
+
+The typical use of GCM (AAD first, then the ciphertext, the tag last):
+
+```cpp
+alx::aes_gcm<256> gcm(key, iv12);
+gcm.start(aad);
+gcm.encrypt(buf.data(), buf.size());
+alx::bytes tag;
+gcm.finish(tag);          // a 16-byte authentication tag; finish resets on its way out
+```
+
+`aes_gcm` inherits `protected` -- it exposes only `encrypt` / `decrypt` / `start` / `finish` / `reset`.
+
+---
+
+## 12. Digest and checksum (`averify.h`)
+
+```cpp
+alx::verify::list();                                        // the registered algorithm names
+std::string hex = alx::verify::exec(alx::verify::SHA_256, data, len);
+std::string hex2 = alx::verify::exec("sha256", bytes_view);
+
+// streaming
+alx::verify* v = alx::verify::create(alx::verify::SHA_256);  // owned by the caller
+v->update(chunk1);  v->update(chunk2);
+std::string h = v->hexdigest();
+alx::bytes  b = v->bytedigest();
+delete v;
+```
+
+The two exits have different jobs, and each has a reason to exist:
+
+- **`hexdigest()` faces outward and answers to the standards**: its value is character-for-character equal to the published vectors of the CRC RevEng catalogue and NIST FIPS 180-4 (all 22 registered algorithms have a vector in `gtest/alxbase/src/gt_averify.cpp`).
+- **`bytedigest()` faces inward and makes no conversion at all** -- which is exactly why it exists: it hands back the raw dump of the digest words (for a CRC the one word of the storage width, so the hex form is **twice** as long as it; for SHA each 32-bit state word), usable as an integer / array of numbers right away (`acomm_ex`'s message checksum reads the first `uint_32`, `res_mng`'s path key the first `uint_64`). For the standard byte order use `hexdigest()`; folding a conversion into `bytedigest()` amounts to abolishing it.
+
+The two describe one digest, and the conversion between them is pinned by `bytedigest_matches_hexdigest_word_order` (22 algorithms checked one by one against the published vectors, both exits verified).
+
+Built-in types: `NO_CHECK`, `CRC_32`, `CRC_32C`, `SHA_1`, `SHA_256` (created by enum or by name).
+
+---

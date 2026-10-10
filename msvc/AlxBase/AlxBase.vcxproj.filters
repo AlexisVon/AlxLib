@@ -12,6 +12,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\include\alxbase\aalgo.h">
+    <ClInclude Include="..\..\include\alxbase\aaes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\include\alxbase\aanyptr.h">
@@ -57,6 +60,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\include\alxbase\avarsolid.h">
+    <ClInclude Include="..\..\include\alxbase\averify.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\include\alxbase\axml.h">
@@ -68,6 +74,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\source\alxbase\aalgo.cpp">
+    <ClCompile Include="..\..\source\alxbase\aaes.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\source\alxbase\abytes.cpp">
@@ -83,6 +92,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\source\alxbase\avarsolid.cpp">
+    <ClCompile Include="..\..\source\alxbase\averify.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\source\alxbase\axml.cpp">

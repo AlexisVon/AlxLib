@@ -48,6 +48,10 @@ doc/issue.md
 doc/feature.md
 doc/todo.md
 doc/verify.md
+doc/future.md
+
+# Release artifacts left in the tree root by the publish recipe (the packages themselves are uploaded, not committed)
+/AlxLib-*-slim.tar.gz.sha256
 
 # Claude Code project instructions: local only, not part of the library
 CLAUDE.md

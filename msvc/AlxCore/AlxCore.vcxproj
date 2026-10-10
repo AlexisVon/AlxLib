@@ -11,7 +11,6 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\..\include\alxcore\aaes.h" />
     <ClInclude Include="..\..\include\alxcore\acache.h" />
     <ClInclude Include="..\..\include\alxcore\acompress.h" />
     <ClInclude Include="..\..\include\alxcore\adatetime.h" />
@@ -26,11 +25,9 @@
     <ClInclude Include="..\..\include\alxcore\astream_ex.h" />
     <ClInclude Include="..\..\include\alxcore\athread_safe.h" />
     <ClInclude Include="..\..\include\alxcore\athreadpool.h" />
-    <ClInclude Include="..\..\include\alxcore\averify.h" />
     <ClInclude Include="resource.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\source\alxcore\aaes.cpp" />
     <ClCompile Include="..\..\source\alxcore\acache.cpp" />
     <ClCompile Include="..\..\source\alxcore\acompress.cpp" />
     <ClCompile Include="..\..\source\alxcore\adatetime.cpp" />
@@ -44,7 +41,6 @@
     <ClCompile Include="..\..\source\alxcore\asqlite.cpp" />
     <ClCompile Include="..\..\source\alxcore\astream_ex.cpp" />
     <ClCompile Include="..\..\source\alxcore\athreadpool.cpp" />
-    <ClCompile Include="..\..\source\alxcore\averify.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>18.0</VCProjectVersion>

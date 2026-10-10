@@ -12,6 +12,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\gtest\alxbase\src\gt_aalgo.cpp" />
+    <ClCompile Include="..\..\gtest\alxbase\src\gt_aaes.cpp" />
     <ClCompile Include="..\..\gtest\alxbase\src\gt_abytes.cpp" />
     <ClCompile Include="..\..\gtest\alxbase\src\gt_acsv.cpp" />
     <ClCompile Include="..\..\gtest\alxbase\src\gt_ajson.cpp" />
@@ -24,6 +25,7 @@
     <ClCompile Include="..\..\gtest\alxbase\src\gt_avarmix.cpp" />
     <ClCompile Include="..\..\gtest\alxbase\src\gt_avarptr.cpp" />
     <ClCompile Include="..\..\gtest\alxbase\src\gt_avarsolid.cpp" />
+    <ClCompile Include="..\..\gtest\alxbase\src\gt_averify.cpp" />
     <ClCompile Include="..\..\gtest\alxbase\src\gt_avarvec.cpp" />
     <ClCompile Include="..\..\gtest\alxbase\src\gt_axml.cpp" />
   </ItemGroup>

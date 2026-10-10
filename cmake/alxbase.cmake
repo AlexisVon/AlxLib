@@ -2,12 +2,14 @@
 
 set(ALXBASE_SOURCES
     ${CMAKE_SOURCE_DIR}/source/alxbase/aalgo.cpp
+    ${CMAKE_SOURCE_DIR}/source/alxbase/aaes.cpp
     ${CMAKE_SOURCE_DIR}/source/alxbase/abytes.cpp
     ${CMAKE_SOURCE_DIR}/source/alxbase/acsv.cpp
     ${CMAKE_SOURCE_DIR}/source/alxbase/ajson.cpp
     ${CMAKE_SOURCE_DIR}/source/alxbase/aregex_ex.cpp
     ${CMAKE_SOURCE_DIR}/source/alxbase/astring.cpp
     ${CMAKE_SOURCE_DIR}/source/alxbase/avarsolid.cpp
+    ${CMAKE_SOURCE_DIR}/source/alxbase/averify.cpp
     ${CMAKE_SOURCE_DIR}/source/alxbase/axml.cpp
 )
 
@@ -22,6 +24,10 @@ if(ALXBASE_ENABLE OR ALXBASE_STATIC OR ALXLIB_STATIC)
     target_include_directories(alxbase_obj PUBLIC ${ALXBASE_INCLUDE_DIRS})
     target_compile_features(alxbase_obj PUBLIC cxx_std_17)
     set_target_properties(alxbase_obj PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+    # SIMD support for crypto
+    set_source_files_properties(${CMAKE_SOURCE_DIR}/source/alxbase/aaes.cpp PROPERTIES COMPILE_FLAGS "-maes -mpclmul -msse4.1")
+    set_source_files_properties(${CMAKE_SOURCE_DIR}/source/alxbase/averify.cpp PROPERTIES COMPILE_FLAGS "-msha -msse4.1 -mcrc32")
 endif()
 
 # Shared library

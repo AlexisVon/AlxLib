@@ -46,7 +46,7 @@ Unit tests: `cd gtest && ./test.sh`
 | int: decimal/hex/octal/binary, boundary values, INT64_MIN | `cover/types/test_int.axc` ★ |
 | float: plain notation/scientific notation/negative exponent/int vs float distinction | `cover/types/test_float.axc` ★ |
 | bool: true/false, separate from int (true==1→TypeError) | `cover/types/test_bool.axc` ★ |
-| string: double quotes/single quotes/backtick raw/escapes/\\xNN/# concatenation | `cover/types/test_string.axc` ★ |
+| string & char: double quotes/char literal (one code point, int)/backtick raw/escapes/\\xNN/# concatenation | `cover/types/test_string.axc` ★ |
 | null: default initialisation, ==/!=, ordered comparison→TypeError | `cover/types/test_null.axc` ★ |
 | Truthiness: if/while/for/&&/\|\|/!/?: | `cover/types/test_truthy_basic.axc`, `test_truthy_string.axc` |
 | explicit bool() conversion: every path | `cover/types/test_bool_conv.axc` |

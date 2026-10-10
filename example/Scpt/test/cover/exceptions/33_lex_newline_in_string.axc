@@ -1,3 +1,3 @@
-// M-L2: raw newline in double/single-quote string should produce a lexer error
+// M-L2: raw newline in a double-quote string should produce a lexer error
 var x = "hello
 world";

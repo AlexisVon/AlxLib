@@ -19,6 +19,7 @@ assert_eq('\n', 10, "char escape is a code point int");
 assert_eq('\x41', 65, "\\xNN is the code point U+00NN");
 assert_eq('é', 233, "multibyte source char");
 assert_eq('你', 20320, "multibyte source char");
+assert_eq('\q', 113, "unknown escape keeps the byte");
 assert_eq("'", "'", "a lone single quote needs double quotes");
 
 // ---- double-quote contains single-quote ----
@@ -32,6 +33,7 @@ assert_eq("\\", "\\", "backslash escape");
 assert_eq("\'", "\x27", "single quote escape");
 assert_eq("\"", "\x22", "double quote escape");
 assert_eq("\0", string([0]), "null char escape");
+assert_eq("\q", "q", "unknown escape keeps the char");
 
 // ---- \xNN hex escape ----
 assert_eq("\x41", "A", "\\x41 = A");

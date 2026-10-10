@@ -74,9 +74,15 @@ TEST(gt_ascript_parse, CharLiteral) {
 
 TEST(gt_ascript_parse, CharLiteralCodePoints) {
     EXPECT_EQ(parse_src("'\\x41';")[1].to<varvec>()[0].to<int_64>(), 65);
+    EXPECT_EQ(parse_src("'\\xE9';")[1].to<varvec>()[0].to<int_64>(), 233);
+    EXPECT_EQ(parse_src("'\\q';")[1].to<varvec>()[0].to<int_64>(), 113);
     EXPECT_EQ(parse_src("'é';")[1].to<varvec>()[0].to<int_64>(), 233);
     EXPECT_EQ(parse_src("'你';")[1].to<varvec>()[0].to<int_64>(), 20320);
     EXPECT_EQ(parse_src("'𝄞';")[1].to<varvec>()[0].to<int_64>(), 119070);
+}
+
+TEST(gt_ascript_parse, StringUnknownEscape) {
+    EXPECT_EQ(parse_src("\"\\q\";")[1].to<varvec>()[0].to<std::string>(), "q");
 }
 
 TEST(gt_ascript_parse, StringLiteral) {
@@ -1362,6 +1368,10 @@ TEST(gt_ascript_parse, CharLiteralErrors) {
     auto invalid = parse_full(bad);
     ASSERT_EQ(invalid.errors.size(), 1u);
     EXPECT_NE(invalid.errors[0].msg.find("invalid UTF-8"), std::string::npos);
+
+    auto multibyte_escape = parse_full("'\\é';");
+    ASSERT_EQ(multibyte_escape.errors.size(), 1u);
+    EXPECT_NE(multibyte_escape.errors[0].msg.find("exactly one code point"), std::string::npos);
 }
 
 TEST(gt_ascript_parse, MissingOperand_NoCrashShapes) {

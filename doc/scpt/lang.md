@@ -141,7 +141,7 @@ var raw = `raw \n "a" 'b'`;  // raw string — no escapes, may span lines
 
 **string** (`"..."`): a byte string. Escape sequences: `\t` `\r` `\n` `\\` `\'` `\"` `\0` `\xNN`, where `\xNN` is the single byte 0xNN. A string containing a `'` needs no escape.
 
-**char literal** (`'...'`): exactly one Unicode code point, evaluating to its `int` value — `'A'` = 65, `'é'` = 233, `'你'` = 20320, `'𝄞'` = 119070. The code point may be written directly as a UTF-8 character (validated) or as an escape; in a char literal `\xNN` means code point U+00NN (`'\xE9'` = 233, unlike the byte 0xE9 in a string). Empty (`''`), more than one code point, and invalid UTF-8 are compile errors. An unknown escape keeps the character itself, the same as in `"..."`.
+**char literal** (`'...'`): exactly one Unicode code point, evaluating to its `int` value — `'A'` = 65, `'é'` = 233, `'你'` = 20320, `'𝄞'` = 119070. The code point may be written directly as a UTF-8 character (validated) or as an escape; in a char literal `\xNN` means code point U+00NN (`'\xE9'` = 233, unlike the byte 0xE9 in a string). Empty (`''`), more than one code point, and invalid UTF-8 are compile errors. An unknown escape drops the backslash and keeps the byte that follows, the same byte-wise rule as in `"..."` (`'\q'` = 113); a backslash before a multi-byte character is not an escape but two characters, and a char literal is exactly one, so it is rejected.
 
 **raw string** (`` `...` ``): characters inside the backticks are kept verbatim, no escape processing, may span multiple lines. Suited to regexes, embedded JSON, and text with many backslashes.
 

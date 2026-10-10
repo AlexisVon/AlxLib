@@ -14,6 +14,7 @@
 #include "arefcount.h"
 #include "ascript.h"
 #include "ascript_enum.h"
+#include "autility.h"
 #include <atomic>
 #include <deque>
 #include <list>
@@ -36,6 +37,26 @@ namespace alx {
             call_able(const varvec* def) : m_is_def(true), m_def(def) {}
             call_able(native_func fn) : m_is_def(false), m_fn(fn) {}
 
+            // A callable is not a value — a facet of its owner, not an entity: any copy is refused here,
+            // wherever the walk attempts one
+            call_able(const call_able&) {
+                throw script_exception{error_type::TypeError,
+                                       std::string("function cannot be read as a value")};
+            }
+            call_able(call_able&&) = default;
+            call_able& operator=(call_able&&) = default;
+            call_able& operator=(const call_able&) = delete;
+
+            /// The engine's own duplication — the only route that may copy a callable
+            static call_able* clone(const call_able& _o) {
+                call_able* c = new call_able();
+                c->m_is_def = _o.m_is_def;
+                if (_o.m_is_def) c->m_def = _o.m_def;
+                else c->m_fn = _o.m_fn;
+                c->m_area = _o.m_area;
+                return c;
+            }
+
             bool is_def() const { return m_is_def; }
             bool is_native() const { return !m_is_def; }
 
@@ -53,23 +74,32 @@ namespace alx {
             std::unordered_map<std::string, variant> m_natives;
 
             link_area() = default;
-            /// A copy's natives re-point at this copy: a cloned store never reaches the original's host object
-            link_area(const link_area& _o) : m_object(_o.m_object), m_natives(_o.m_natives) { rebind(); }
-            link_area& operator=(const link_area& _o) {
-                if (this == &_o) return *this;
-                m_object = _o.m_object;
-                m_natives = _o.m_natives;
-                rebind();
-                return *this;
+            // An area belongs to its instance — like a callable it is not a value, and any copy is refused
+            link_area(const link_area&) {
+                throw script_exception{error_type::TypeError, std::string("link area cannot be copied")};
             }
+            link_area(link_area&&) = default;
+            link_area& operator=(link_area&&) = default;
+            link_area& operator=(const link_area&) = delete;
 
-        private:
-            void rebind() {
-                for (auto& n : m_natives) {
-                    if (!n.second.is<anyptr>()) continue;
-                    if (auto* ca = anyptr_ex<call_able>::as(n.second.to<anyptr>()))
-                        ca->m_area = this;
+            /// The engine's own duplication: the copy's natives are rebuilt and re-point at the copy,
+            /// so a cloned store never reaches the original's host object
+            static link_area* clone(const link_area& _o) {
+                auto_delete<link_area> guard(new link_area());
+                link_area* a = guard.get();
+                a->m_object = _o.m_object;
+                for (const auto& n : _o.m_natives) {
+                    if (n.second.is<anyptr>()) {
+                        if (auto* ca = anyptr_ex<call_able>::as(n.second.to<anyptr>())) {
+                            call_able* c = call_able::clone(*ca);
+                            c->m_area = a;
+                            a->m_natives[n.first] = variant(anyptr_ex<call_able>::make(c));
+                            continue;
+                        }
+                    }
+                    a->m_natives[n.first] = n.second;
                 }
+                return guard.take();
             }
         };
 
@@ -469,6 +499,26 @@ namespace alx {
 
         public:
         };
+
+        // The engine's own store clones: the two non-copyable handle kinds are rebuilt explicitly
+        inline variant clone_handle(const variant& _v) {
+            if (_v.is<anyptr>()) {
+                const anyptr& ap = _v.to<anyptr>();
+                if (auto* ca = anyptr_ex<call_able>::as(ap))
+                    return variant(anyptr_ex<call_able>::make(call_able::clone(*ca)));
+                if (auto* ar = anyptr_ex<link_area>::as(ap))
+                    return variant(anyptr_ex<link_area>::make(link_area::clone(*ar)));
+            }
+            return _v;
+        }
+
+        inline void copy_store(data_store& _dst, const data_store& _src) {
+            _dst.clear();
+            _dst.m_data.reserve(_src.m_data.size());
+            for (const auto& e : _src.m_data) _dst.m_data.push_back(clone_handle(e));
+            _dst.m_map = _src.m_map;
+            _dst.m_free = _src.m_free;
+        }
 
         struct walk_state {
             const varvec* code = nullptr;

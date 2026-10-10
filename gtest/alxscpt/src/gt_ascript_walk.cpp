@@ -1209,6 +1209,20 @@ TEST(gt_ascript_walk, NameError_AssignToUndefFuncName) {
     EXPECT_EQ(etype, error_type::NameError);
 }
 
+TEST(gt_ascript_walk, NameError_AssignToFunctionPorts) {
+    // a callable slot cannot be overwritten through any port: the bare name carries the name,
+    // the @ and :: ports report the run-time guard's message
+    auto r1 = exec_src_catch("def g() { return 1; } g = 5;");
+    EXPECT_EQ(r1.first, error_type::NameError);
+    EXPECT_EQ(r1.second.to<std::string>(), "Cannot assign to function: g");
+    auto r2 = exec_src_catch("def g() { return 1; } @(\"g\") = 5;");
+    EXPECT_EQ(r2.first, error_type::NameError);
+    EXPECT_EQ(r2.second.to<std::string>(), "Cannot assign to function");
+    auto r3 = exec_src_no_frame_catch("def g() { return 1; } ::g = 5;");
+    EXPECT_EQ(r3.first, error_type::NameError);
+    EXPECT_EQ(r3.second.to<std::string>(), "Cannot assign to function");
+}
+
 TEST(gt_ascript_walk, NameConflict_DefThenLink) {
     std::string tmp = "/tmp/alx_nc_deflink.axc";
     {
@@ -2668,13 +2682,11 @@ TEST(gt_ascript_walk, TcoShadowedLocalVar) {
     (void) eval;
 }
 
-TEST(gt_ascript_walk, TcoShadowedParamCallable) {
-
-    auto v = exec_src(
-        "def g(f, n) { return n; }"
-        "def f(f, n) { if (n <= 0) { return 99; } return f(f, n - 1); }"
-        "f(g, 3);");
-    EXPECT_EQ(v.to<int_64>(), 2);
+TEST(gt_ascript_walk, TcoShadowedNestedDef) {
+    // a nested def shadowing the outer name: the run-time re-check calls the local def,
+    // so the tail position does not unwind into the wrong body
+    auto v = exec_src("def f(n) { def f(x) { return x * 10; } return f(n); } f(3);");
+    EXPECT_EQ(v.to<int_64>(), 30);
 }
 
 TEST(gt_ascript_walk, NullLt) {
@@ -3372,6 +3384,11 @@ static std::pair<error_type, variant> exec_src_catch_in_child(
 
 static void a_dummy_native(fwrap&) {}
 
+static void a_byref_call_native(fwrap& fw) {
+    varvec no_args;
+    fw.freturn(fw.call(fw[0], no_args));
+}
+
 static variant exec_src_with_mock_link(const char* src) {
     alx::bytes b(src);
     token_list tl;
@@ -3404,6 +3421,7 @@ static variant exec_src_with_mock_link(const char* src) {
 
     auto* area1 = new link_area();
     area1->m_natives["fn_a"] = variant(anyptr_ex<call_able>::make(new call_able(a_dummy_native)));
+    area1->m_natives["byref_call"] = variant(anyptr_ex<call_able>::make(new call_able(a_byref_call_native)));
     link->m_store.m_data.push_back(variant(anyptr_ex<link_area>::make(area1)));
     link->m_store.m_map["area1"] = link->m_store.m_data.size() - 1;
 
@@ -3414,6 +3432,9 @@ static variant exec_src_with_mock_link(const char* src) {
 
     link->m_store.m_data.push_back(variant(42));
     link->m_store.m_map["data_var"] = link->m_store.m_data.size() - 1;
+
+    link->m_store.m_data.push_back(variant(anyptr_ex<std::string>::make(new std::string("h"))));
+    link->m_store.m_map["host_obj"] = link->m_store.m_data.size() - 1;
 
     w.m_root.m_store.m_data.push_back(variant(anyptr_ex<impl_link>::make(link)));
     w.m_root.m_store.m_map["testlink"] = w.m_root.m_store.m_data.size() - 1;
@@ -3446,9 +3467,56 @@ TEST(gt_ascript_walk, Area_ValidCall) {
     EXPECT_EQ(v.to<int_64>(), 1);
 }
 
-TEST(gt_ascript_walk, Area_TypeofFuncHandle) {
-    auto v = exec_src_with_mock_link("type(testlink.area1.fn_a);");
-    EXPECT_EQ(v.to<std::string>(), "func");
+TEST(gt_ascript_walk, Area_TypeofFuncRefused) {
+    // a callable is not a value: type() refuses one like any other read
+    auto [etype, eval] = exec_src_with_mock_link_catch("type(testlink.area1.fn_a);");
+    EXPECT_EQ(etype, error_type::TypeError);
+    EXPECT_EQ(eval.to<std::string>(), "function cannot be read as a value");
+}
+
+TEST(gt_ascript_walk, CallableValueRead_Rejected) {
+    // a callable is not a value: any copy is refused by the type itself, type() included; reflection calls stay
+    auto r = exec_src_catch("def g() { return 1; } var f = g;");
+    EXPECT_EQ(r.first, error_type::TypeError);
+    EXPECT_EQ(r.second.to<std::string>(), "function cannot be read as a value");
+    auto rt = exec_src_catch("def g() { return 1; } type(g);");
+    EXPECT_EQ(rt.first, error_type::TypeError);
+    EXPECT_EQ(rt.second.to<std::string>(), "function cannot be read as a value");
+    EXPECT_EQ(exec_src("def g() { return 1; } @(\"g\")();").to<int_64>(), 1);
+}
+
+TEST(gt_ascript_walk, CallableValue_ArgBindingRejected) {
+    // a name argument copies into the parameter: the same refusal applies there
+    auto r = exec_src_catch("def inner(cb) { return 1; } def g() { return 7; } inner(g);");
+    EXPECT_EQ(r.first, error_type::TypeError);
+    EXPECT_EQ(r.second.to<std::string>(), "function cannot be read as a value");
+}
+
+TEST(gt_ascript_walk, Call_ComputedCallee_ArgsRunFirst) {
+    // the arguments run before the callee expression, so a refused callee still shows their effects
+    auto v = exec_src("var o = 0; def ae() { o = o + 1; return 1; } var arr = [1];"
+                      "var h = 0; try { arr[0](ae()); } catch (e) { h = 1; } 1 + o * 100 + h * 10;");
+    EXPECT_EQ(v.to<int_64>(), 111);
+}
+
+TEST(gt_ascript_walk, Type_RefusalFollowsTheCopy) {
+    // the refusal lives in the copy: it fires wherever a callable would materialize — type()'s
+    // argument included — and the argument's own sub-expressions run by the same rule
+    auto r = exec_src_catch("def h2() { return 1; } def h() { var stolen = h2; return 1; } type(h());");
+    EXPECT_EQ(r.first, error_type::TypeError);
+    EXPECT_EQ(r.second.to<std::string>(), "function cannot be read as a value");
+    auto r2 = exec_src_catch("def h2() { return 1; }"
+                             "var v = [1]; type(v[eval(\"var p = h2; 0;\")]);");
+    EXPECT_EQ(r2.first, error_type::TypeError);
+    // the argument's own sub-expressions run unpeeked: an inline assignment cannot plant one
+    auto v3 = exec_src("def h2() { return 1; } var v = [1]; var p = 0;"
+                       "var h = 0; try { type(v[(p = h2)]); } catch (e) { h = 1; }"
+                       "h * 100 + (type(p) == \"int\" ? 1 : 0);");
+    EXPECT_EQ(v3.to<int_64>(), 101);
+    auto v4 = exec_src("def h2() { return 1; } var p = 0;"
+                       "var h = 0; try { type(@((p = h2) + \"\")); } catch (e) { h = 1; }"
+                       "h * 100 + (type(p) == \"int\" ? 1 : 0);");
+    EXPECT_EQ(v4.to<int_64>(), 101);
 }
 
 TEST(gt_ascript_walk, Area_UndefinedArea) {
@@ -3493,6 +3561,21 @@ TEST(gt_ascript_walk, Area_DeleteLinkDataVar) {
     auto [etype, eval] = exec_src_with_mock_link_catch(
         "delete testlink.data_var;");
     EXPECT_EQ(etype, error_type::TypeError);
+}
+
+TEST(gt_ascript_walk, Area_DeleteLinkDataHandle) {
+    // only an area instance/namespace is the script's to destroy: a host object stored as data is data
+    auto [etype, eval] = exec_src_with_mock_link_catch(
+        "delete testlink.host_obj;");
+    EXPECT_EQ(etype, error_type::TypeError);
+    EXPECT_NE(eval.to<std::string>().find("cannot delete link data variable"), std::string::npos);
+}
+
+TEST(gt_ascript_walk, CallableByRef_LinkNative) {
+    // the one channel left open: a bare-name argument arrives as its slot pointer, so the native
+    // holds a callable by reference and executes it
+    auto v = exec_src_with_mock_link("def g() { return 7; } testlink.area1.byref_call(g);");
+    EXPECT_EQ(v.to<int_64>(), 7);
 }
 
 TEST(gt_ascript_walk, Slice_VecBasic) {

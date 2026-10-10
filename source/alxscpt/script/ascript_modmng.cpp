@@ -63,10 +63,11 @@ namespace alx {
         // an anyptr copy clones the impl, so every clone takes its own fly ref for its destructor
         // a fresh copy has no home: its m_parent is stamped by the binding site it lands on
         impl_import::impl_import(const impl_import& _o)
-            : m_fly(_o.m_fly), m_mng(_o.m_mng), m_store(_o.m_store),
+            : m_fly(_o.m_fly), m_mng(_o.m_mng),
               m_env_paths(_o.m_env_paths), m_parent(nullptr),
               m_alias(_o.m_alias) {
             // re-bind first, ref last: a throw in the re-bind must not leave a reference no destructor returns
+            copy_store(m_store, _o.m_store);
             rebind_children(m_store, this);
             if (m_mng && m_fly) m_fly->m_ref.ref();
         }
@@ -79,7 +80,7 @@ namespace alx {
             if (m_mng && m_fly) m_mng->release_fly(m_fly);
             m_fly = _o.m_fly;
             m_mng = _o.m_mng;
-            m_store = _o.m_store;
+            copy_store(m_store, _o.m_store);
             m_env_paths = _o.m_env_paths;
             m_parent = nullptr;
             m_alias = _o.m_alias;
@@ -88,20 +89,34 @@ namespace alx {
         }
 
         impl_link::impl_link(const impl_link& _o)
-            : m_fly(_o.m_fly), m_mng(_o.m_mng), m_store(_o.m_store),
+            : m_fly(_o.m_fly), m_mng(_o.m_mng),
               m_parent(nullptr), m_alias(_o.m_alias) {
+            // a copy is a full new instance: the data is cloned first, then LINK_CREATE initialises it
+            copy_store(m_store, _o.m_store);
+            if (m_fly && m_fly->m_link && m_fly->m_link->m_create_fn) {
+                std::vector<variant*> empty_args;
+                fwrap_impl fw(std::move(empty_args), nullptr, &m_store, nullptr);
+                m_fly->m_link->m_create_fn(fw);
+            }
             if (m_mng && m_fly) m_fly->m_ref.ref();
         }
 
         impl_link& impl_link::operator=(const impl_link& _o) {
             if (this == &_o) return *this;
+            // ref the incoming fly before releasing the old one: it may be the same fly
+            if (_o.m_mng && _o.m_fly) _o.m_fly->m_ref.ref();
             if (m_mng && m_fly) m_mng->release_fly(m_fly);
             m_fly = _o.m_fly;
             m_mng = _o.m_mng;
-            m_store = _o.m_store;
+            copy_store(m_store, _o.m_store);
             m_parent = nullptr;
             m_alias = _o.m_alias;
-            if (m_mng && m_fly) m_fly->m_ref.ref();
+            // the same copy discipline as the copy constructor: data first, then LINK_CREATE
+            if (m_fly && m_fly->m_link && m_fly->m_link->m_create_fn) {
+                std::vector<variant*> empty_args;
+                fwrap_impl fw(std::move(empty_args), nullptr, &m_store, nullptr);
+                m_fly->m_link->m_create_fn(fw);
+            }
             return *this;
         }
 
@@ -407,8 +422,11 @@ namespace alx {
 
             try {
                 // a deep copy of the prefab, children included: every clone is re-bound to this copy
-                inst->m_store = fly->m_root.m_store;
+                copy_store(inst->m_store, fly->m_root.m_store);
                 rebind_children(inst->m_store, inst.get());
+            } catch (const script_exception& _e) {
+                _err = _e;
+                return nullptr;
             } catch (const std::bad_alloc&) {
                 _err = {error_type::MemoryError, std::string("out of memory")};
                 return nullptr;
@@ -444,12 +462,7 @@ namespace alx {
                                   &inst->m_store, nullptr);
                     fly->m_link->m_create_fn(fw);
                 } else {
-                    const auto& src_data = fly->m_store.m_data;
-                    inst->m_store.m_data.resize(src_data.size());
-                    for (size_t i = 0; i < src_data.size(); ++i)
-                        inst->m_store.m_data[i] = src_data[i];
-                    inst->m_store.m_map = fly->m_store.m_map;
-                    inst->m_store.m_free = fly->m_store.m_free;
+                    copy_store(inst->m_store, fly->m_store);
                 }
             } catch (const script_exception& _e) {
                 _err = _e;

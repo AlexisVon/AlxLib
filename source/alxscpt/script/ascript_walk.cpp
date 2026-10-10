@@ -363,6 +363,7 @@ namespace alx {
             if (_tree.size() < 2)
                 throw script_exception{error_type::ArgError,
                                        std::string("eval: missing code string")};
+
             variant code = walker::eval_arg(_tree[1], _w);
             if (!code.is<std::string>())
                 throw script_exception{error_type::TypeError,
@@ -544,6 +545,9 @@ namespace alx {
                 return val;
             }
             if (t.type == target_resolved::kind::slot) {
+                if (t.slot->is<anyptr>() && anyptr_ex<call_able>::as(t.slot->to<anyptr>()))
+                    throw script_exception{error_type::NameError,
+                                           std::string("Cannot assign to function")};
                 *t.slot = std::move(val);
                 bind_owner(*t.slot, t.owner);
                 return *t.slot;
@@ -559,30 +563,41 @@ namespace alx {
         }
 
         variant walker::op_call(const varvec& _tree, walker& _w) {
-            if (_tree.size() < 2 || !_tree[1].is<std::string>()) return variant();
+            if (_tree.size() < 2) return variant();
+
+            auto args = walker::scan_call_args(_tree, 2, _w);
+            if (!_tree[1].is<std::string>()) {
+                // the arguments have run; the callee expression runs now and names nothing callable
+                variant target = walker::eval_arg(_tree[1], _w);
+                throw script_exception{error_type::NameError,
+                                       std::string("not a function: ") + type_name_script(target)};
+            }
             const std::string& func_name = _tree[1].to<std::string>();
             if (func_name.empty())
                 throw script_exception{error_type::NameError, std::string("Undefined function: " + func_name)};
 
             const varvec* def_tree = walker::find_def(_w, func_name);
             if (def_tree)
-                return walker::invoke_def(_w.state.current, *def_tree, func_name, _tree, _w);
+                return walker::invoke_def(_w.state.current, *def_tree, func_name, _tree, _w, args);
 
             throw script_exception{error_type::NameError, std::string("Undefined function: " + func_name)};
         }
 
         variant walker::op_ncall(const varvec& _tree, walker& _w) {
             if (_tree.size() < 2) return variant();
+            auto args = walker::scan_call_args(_tree, 2, _w);
             varvec dot_ast;
             dot_ast.push_back(variant(OPTYPE(O_DOT)));
             auto& keys = _tree[1].to<varvec>();
             for (size_t i = 0; i < keys.size(); i++)
                 dot_ast.push_back(keys[i]);
-            return walker::invoke_dot(resolve_dot(dot_ast, _w.state), _tree, _w);
+            return walker::invoke_dot(resolve_dot(dot_ast, _w.state), _tree, _w, args);
         }
 
         variant walker::op_icall(const varvec& _tree, walker& _w) {
             if (_tree.size() < 2) return variant();
+
+            auto args = walker::scan_call_args(_tree, 2, _w);
 
             variant name_val = walker::eval_arg(_tree[1], _w);
             std::string path;
@@ -600,7 +615,7 @@ namespace alx {
                 if (!is_bare_ext_name(exname))
                     throw script_exception{error_type::NameError,
                                            std::string("Indirect call: extension function name after $: '" + path + "'")};
-                return invoke_extend(_w, exname, _tree, 2);
+                return invoke_extend(_w, exname, args);
             }
 
             std::string src = path + ";";
@@ -639,7 +654,7 @@ namespace alx {
                 std::string func_name = expr[1].to<std::string>();
                 const varvec* def_tree = walker::find_def(_w, func_name);
                 if (def_tree)
-                    return walker::invoke_def(_w.state.current, *def_tree, func_name, _tree, _w);
+                    return walker::invoke_def(_w.state.current, *def_tree, func_name, _tree, _w, args);
                 throw script_exception{error_type::NameError,
                                        std::string("Indirect call: undefined function '" + func_name + "'")};
             }
@@ -647,10 +662,12 @@ namespace alx {
             if (head != O_DOT)
                 throw script_exception{error_type::NameError,
                                        std::string("Indirect call: invalid path '" + path + "'")};
-            return walker::invoke_dot(resolve_dot(expr, _w.state), _tree, _w);
+            return walker::invoke_dot(resolve_dot(expr, _w.state), _tree, _w, args);
         }
 
         variant walker::op_tcall(const varvec& _tree, walker& _w) {
+            auto args = walker::scan_call_args(_tree, 2, _w);
+
             const varvec* def = nullptr;
             scope_frame* def_frame = nullptr;
             for (auto it = _w.state.frames.rbegin(); it != _w.state.frames.rend(); ++it) {
@@ -665,11 +682,18 @@ namespace alx {
                                        std::string("TCO: no enclosing function frame")};
 
             // The rewrite was by name: a local of that name makes the tail position an ordinary call
-            if (_tree.size() > 1 && _tree[1].is<std::string>() &&
-                walker::find_def(_w, _tree[1].to<std::string>()) != def)
-                return walker::op_call(_tree, _w);
+            if (_tree.size() > 1 && _tree[1].is<std::string>()) {
+                const std::string& func_name = _tree[1].to<std::string>();
+                const varvec* other = walker::find_def(_w, func_name);
+                if (other != def) {
+                    if (other)
+                        return walker::invoke_def(_w.state.current, *other, func_name, _tree, _w, args);
+                    throw script_exception{error_type::NameError,
+                                           std::string("Undefined function: " + func_name)};
+                }
+            }
 
-            walker::eval_and_bind_args(_w.state.current, *def, "", _tree, _w, true, def_frame);
+            walker::eval_and_bind_args(_w.state.current, *def, "", _tree, _w, true, def_frame, args);
 
             _w.state.tail_flag = true;
             return variant();
@@ -1761,8 +1785,10 @@ namespace alx {
                         if (have_idx) {
                             auto& vec = pv->to<varvec>();
                             if (idx == -1) idx = static_cast<int_64>(vec.size()) - 1;
-                            if (idx >= 0 && static_cast<size_t>(idx) < vec.size())
-                                return vec[static_cast<size_t>(idx)];
+                            if (idx >= 0 && static_cast<size_t>(idx) < vec.size()) {
+                                const variant& elem = vec[static_cast<size_t>(idx)];
+                                return elem;
+                            }
                             throw script_exception{error_type::IndexError,
                                                    std::string("vec index out of range")};
                         }
@@ -1771,7 +1797,10 @@ namespace alx {
                     if (pv->is<varmap>() && !_tree[2].is_vec() && _tree[2].is<std::string>()) {
                         std::string key = _tree[2].to<std::string>();
                         auto& m = pv->to<varmap>();
-                        if (m.contain(key)) return m.value(key);
+                        if (m.contain(key)) {
+                            const variant& elem = m.value(key);
+                            return elem;
+                        }
                         throw script_exception{error_type::KeyError, std::string("map key not found: " + key)};
                     }
 
@@ -1786,7 +1815,10 @@ namespace alx {
                                 throw script_exception{error_type::TypeError,
                                                        std::string("map key must be a string")};
                             std::string ks = key.to<std::string>();
-                            if (m.contain(ks)) return m.value(ks);
+                            if (m.contain(ks)) {
+                                const variant& elem = m.value(ks);
+                                return elem;
+                            }
                             throw script_exception{
                                 error_type::KeyError,
                                 std::string("map key not found: " + ks)};
@@ -1948,7 +1980,8 @@ namespace alx {
         }
 
         variant walker::op_excall(const varvec& _tree, walker& _w) {
-            return invoke_extend(_w, _tree[1].to<std::string>(), _tree, 2);
+            auto args = walker::scan_call_args(_tree, 2, _w);
+            return invoke_extend(_w, _tree[1].to<std::string>(), args);
         }
 
         // Every compound assignment writes through here, so a function binding can never be overwritten
@@ -2641,46 +2674,57 @@ namespace alx {
             return _w.walk_tree(v);
         }
 
-        std::vector<variant*> walker::collect_native_args(const varvec& _tree,
-                                                          size_t _arg_start,
-                                                          walker& _w,
-                                                          std::list<variant>& _tmp) {
-            std::vector<variant*> ptrs;
-            ptrs.reserve(_tree.size() - _arg_start);
+        std::vector<walker::call_arg> walker::scan_call_args(const varvec& _tree,
+                                                             size_t _arg_start,
+                                                             walker& _w) {
+            std::vector<call_arg> args;
+            args.reserve(_tree.size() > _arg_start ? _tree.size() - _arg_start : 0);
 
-            // Two passes: non-variable args are evaluated into _tmp (a list, so the pointers stay valid),
-            // then the variable names that were deferred get resolved once every evaluation has run
             for (size_t ai = _arg_start; ai < _tree.size(); ai++) {
                 const variant& node = _tree[ai];
+                call_arg a;
                 if (node.is_vec()) {
                     auto& v = node.to<varvec>();
                     if (v.size() == 2 && v[0].is<OPTYPE>() &&
-                        static_cast<op_enum>(v[0].to<OPTYPE>()) == O_LOAD &&
-                        v[1].is<std::string>()) {
+                        static_cast<op_enum>(v[0].to<OPTYPE>()) == O_LOAD && v[1].is<std::string>()) {
                         const std::string& name = v[1].to<std::string>();
                         if (!_w.state.var_ptr(name))
                             throw script_exception{error_type::NameError,
                                                    std::string("Undefined: " + name)};
-                        ptrs.push_back(nullptr);
+                        a.kind = call_arg::V_NAME;
+                        a.name = name;
+                        args.push_back(std::move(a));
                         continue;
                     }
+                    if (!v.empty() && v[0].is<OPTYPE>() &&
+                        static_cast<op_enum>(v[0].to<OPTYPE>()) == O_UNPACK) {
+                        a.kind = call_arg::V_UNPACK;
+                        a.val = _w.walk_tree(v[1].to<varvec>());
+                        args.push_back(std::move(a));
+                        continue;
+                    }
+                    a.val = _w.walk_tree(v);
+                } else {
+                    a.val = node;
                 }
-                if (node.is_vec())
-                    _tmp.push_back(_w.walk_tree(node.to<varvec>()));
-                else
-                    _tmp.push_back(node);
-                ptrs.push_back(&_tmp.back());
+                args.push_back(std::move(a));
             }
+            return args;
+        }
 
-            for (size_t ai = _arg_start; ai < _tree.size(); ai++) {
-                size_t pos = ai - _arg_start;
-                if (ptrs[pos]) continue;
-                const std::string& name = _tree[ai].to<varvec>()[1].to<std::string>();
-                variant* p = _w.state.var_ptr(name);
-                if (!p)
-                    throw script_exception{error_type::NameError,
-                                           std::string("Undefined: " + name)};
-                ptrs[pos] = p;
+        std::vector<variant*> walker::native_arg_ptrs(std::vector<call_arg>& _args, walker& _w) {
+            std::vector<variant*> ptrs;
+            ptrs.reserve(_args.size());
+            for (auto& a : _args) {
+                if (a.kind == call_arg::V_NAME) {
+                    variant* p = _w.state.var_ptr(a.name);
+                    if (!p)
+                        throw script_exception{error_type::NameError,
+                                               std::string("Undefined: " + a.name)};
+                    ptrs.push_back(p);
+                    continue;
+                }
+                ptrs.push_back(&a.val);
             }
             return ptrs;
         }
@@ -2693,14 +2737,13 @@ namespace alx {
         }
 
         variant walker::invoke_extend(walker& _w, const std::string& _name,
-                                      const varvec& _tree, size_t _arg_start) {
+                                      std::vector<call_arg>& _args) {
             native_func handler = _w.state.m_engine->get_extend(_name);
             if (!handler)
                 throw script_exception{error_type::NameError,
                                        std::string("extension function not found: $" + _name)};
-            std::list<variant> tmp;
             variant ret_slot;
-            fwrap_impl fw(walker::collect_native_args(_tree, _arg_start, _w, tmp),
+            fwrap_impl fw(walker::native_arg_ptrs(_args, _w),
                           &ret_slot, &_w.state.current->m_store, &_w);
             handler(fw);
             return ret_slot;
@@ -2709,11 +2752,12 @@ namespace alx {
         void walker::eval_and_bind_args(impl_import* _ent, const varvec& _def,
                                         const std::string& _func_name,
                                         const varvec& _tree, walker& _w,
-                                        bool _tco, scope_frame* _tco_frame) {
+                                        bool _tco, scope_frame* _tco_frame,
+                                        std::vector<call_arg>& _args) {
             auto& params = _def[2].to<varvec>();
 
             std::vector<variant> pos_args;
-            pos_args.reserve(_tree.size() > 2 ? _tree.size() - 2 : 0);
+            pos_args.reserve(_args.size());
 
             bool has_spread = false;
             bool is_map_spread = false;
@@ -2721,66 +2765,38 @@ namespace alx {
             varvec spread_vec;
             varmap spread_map;
 
-            for (size_t ai = 2; ai < _tree.size(); ai++) {
-                if (_tree[ai].is<varvec>()) {
-                    auto& node = _tree[ai].to<varvec>();
-                    if (!node.empty() && node[0].is<OPTYPE>() &&
-                        static_cast<op_enum>(node[0].to<OPTYPE>()) == O_UNPACK) {
-                        variant packed = _w.walk_tree(node[1].to<varvec>());
-                        switch (packed.type()) {
-                        case variant::id<varmap>():
-                            spread_map = packed.to<varmap>();
-                            is_map_spread = true;
-                            has_spread = true;
-                            break;
-                        case variant::id<varvec>():
-                            spread_vec = std::move(packed.to<varvec>());
-                            has_spread = true;
-                            break;
-                        case variant::id<varlst>():
-                            for (auto& e : packed.to<varlst>()) spread_vec.push_back(std::move(e));
-                            has_spread = true;
-                            break;
-                        default:
-                            throw script_exception{error_type::TypeError,
-                                                   std::string("spread []: expected vec, lst, or map")};
-                        }
-                    } else if (node.size() == 2 && node[0].is<OPTYPE>() &&
-                               static_cast<op_enum>(node[0].to<OPTYPE>()) == O_LOAD &&
-                               node[1].is<std::string>()) {
-
-                        const std::string& name = node[1].to<std::string>();
-                        if (!_w.state.var_ptr(name))
-                            throw script_exception{error_type::NameError,
-                                                   std::string("Undefined: " + name)};
-                        pos_args.push_back(variant());
-                    } else {
-                        pos_args.push_back(walker::eval_arg(_tree[ai], _w));
-                    }
-                } else {
-                    pos_args.push_back(walker::eval_arg(_tree[ai], _w));
-                }
-            }
-
             // Runs before the frame push: after it the entity barrier hides caller locals and a TCO resize wipes slots
-            size_t pos = 0;
-            for (size_t ai = 2; ai < _tree.size(); ai++) {
-                if (_tree[ai].is_vec()) {
-                    const varvec& node = _tree[ai].to<varvec>();
-                    if (!node.empty() && node[0].is<OPTYPE>() &&
-                        static_cast<op_enum>(node[0].to<OPTYPE>()) == O_UNPACK)
-                        continue;
-                    if (node.size() == 2 && node[0].is<OPTYPE>() &&
-                        static_cast<op_enum>(node[0].to<OPTYPE>()) == O_LOAD && node[1].is<std::string>()) {
-                        const std::string& name = node[1].to<std::string>();
-                        variant* p = _w.state.var_ptr(name);
-                        if (!p)
-                            throw script_exception{error_type::NameError,
-                                                   std::string("Undefined: " + name)};
-                        pos_args[pos] = *p;
+            for (auto& a : _args) {
+                if (a.kind == call_arg::V_UNPACK) {
+                    switch (a.val.type()) {
+                    case variant::id<varmap>():
+                        spread_map = std::move(a.val.to<varmap>());
+                        is_map_spread = true;
+                        has_spread = true;
+                        break;
+                    case variant::id<varvec>():
+                        spread_vec = std::move(a.val.to<varvec>());
+                        has_spread = true;
+                        break;
+                    case variant::id<varlst>():
+                        for (auto& e : a.val.to<varlst>()) spread_vec.push_back(std::move(e));
+                        has_spread = true;
+                        break;
+                    default:
+                        throw script_exception{error_type::TypeError,
+                                               std::string("spread []: expected vec, lst, or map")};
                     }
+                    continue;
                 }
-                ++pos;
+                if (a.kind == call_arg::V_NAME) {
+                    variant* p = _w.state.var_ptr(a.name);
+                    if (!p)
+                        throw script_exception{error_type::NameError,
+                                               std::string("Undefined: " + a.name)};
+                    pos_args.push_back(*p);
+                    continue;
+                }
+                pos_args.push_back(std::move(a.val));
             }
 
             const char* tag = _tco ? "Tail call: " : "";
@@ -2853,8 +2869,9 @@ namespace alx {
 
         variant walker::invoke_def(impl_import* _ent, const varvec& _def,
                                    const std::string& _func_name,
-                                   const varvec& _tree, walker& _w) {
-            walker::eval_and_bind_args(_ent, _def, _func_name, _tree, _w, false);
+                                   const varvec& _tree, walker& _w,
+                                   std::vector<call_arg>& _args) {
+            walker::eval_and_bind_args(_ent, _def, _func_name, _tree, _w, false, nullptr, _args);
 
             // The def frame is already the body's scope, so the body block is walked without another frame
             auto& body = _def[4].to<varvec>();
@@ -2871,7 +2888,8 @@ namespace alx {
             return result;
         }
 
-        variant walker::invoke_dot(const dot_resolved& r, const varvec& _tree, walker& _w) {
+        variant walker::invoke_dot(const dot_resolved& r, const varvec& _tree, walker& _w,
+                                   std::vector<call_arg>& _args) {
             std::string func_name = r.key.is<std::string>() ? r.key.to<std::string>() : "";
             if (func_name.empty())
                 throw script_exception{error_type::NameError, std::string("empty function name")};
@@ -2883,12 +2901,11 @@ namespace alx {
                     if (auto* ca = anyptr_ex<call_able>::as(ap)) {
                         if (ca->is_def()) {
                             impl_import* ent = r.slot_owner ? r.slot_owner : _w.state.current;
-                            return walker::invoke_def(ent, *ca->m_def, func_name, _tree, _w);
+                            return walker::invoke_def(ent, *ca->m_def, func_name, _tree, _w, _args);
                         }
                         if (ca->is_native()) {
-                            std::list<variant> tmp;
                             variant ret_slot;
-                            fwrap_impl fw(walker::collect_native_args(_tree, 2, _w, tmp),
+                            fwrap_impl fw(walker::native_arg_ptrs(_args, _w),
                                           &ret_slot, &_w.state.current->m_store, &_w);
                             ca->m_fn(fw);
                             return ret_slot;
@@ -2907,7 +2924,7 @@ namespace alx {
                         _w.state.current = r.slot_owner;
                         const varvec* def = walker::find_def(_w, func_name);
                         _w.state.current = saved;
-                        if (def) return walker::invoke_def(r.slot_owner, *def, func_name, _tree, _w);
+                        if (def) return walker::invoke_def(r.slot_owner, *def, func_name, _tree, _w, _args);
                     }
                     throw script_exception{error_type::NameError,
                                            std::string("Undefined function: " + func_name)};
@@ -2922,9 +2939,8 @@ namespace alx {
                             const anyptr& lap = lv->to<anyptr>();
                             if (auto* ca = anyptr_ex<call_able>::as(lap)) {
                                 if (ca->is_native()) {
-                                    std::list<variant> tmp;
                                     variant ret_slot;
-                                    fwrap_impl fw(walker::collect_native_args(_tree, 2, _w, tmp),
+                                    fwrap_impl fw(walker::native_arg_ptrs(_args, _w),
                                                   &ret_slot, &link->m_store, &_w);
                                     ca->m_fn(fw);
                                     return ret_slot;
@@ -2940,10 +2956,9 @@ namespace alx {
                         if (ni != area->m_natives.end() && ni->second.is<anyptr>()) {
                             auto* ca = anyptr_ex<call_able>::as(ni->second.to<anyptr>());
                             if (ca && ca->is_native()) {
-                                std::list<variant> tmp;
                                 variant ret_slot;
                                 data_store* store = r.link_owner ? &r.link_owner->m_store : &_w.state.current->m_store;
-                                fwrap_impl fw(walker::collect_native_args(_tree, 2, _w, tmp),
+                                fwrap_impl fw(walker::native_arg_ptrs(_args, _w),
                                               &ret_slot, store, &_w);
                                 fw.m_area = ca->m_area;
                                 ca->m_fn(fw);
@@ -2961,7 +2976,7 @@ namespace alx {
                     const varvec* def = walker::find_def(_w, func_name);
                     _w.state.current = saved;
                     if (def) return walker::invoke_def(r.slot_owner ? r.slot_owner : saved,
-                                                       *def, func_name, _tree, _w);
+                                                       *def, func_name, _tree, _w, _args);
                 }
             }
 
@@ -3061,10 +3076,15 @@ namespace alx {
                     variant* lv = link->m_store.find(kstr);
                     if (lv) {
                         if (lv->is<anyptr>()) {
+                            const anyptr& lap = lv->to<anyptr>();
 
-                            if (anyptr_ex<call_able>::as(lv->to<anyptr>()))
+                            if (anyptr_ex<call_able>::as(lap))
                                 throw script_exception{error_type::TypeError,
                                                        std::string("cannot delete function: " + kstr)};
+                            // only an area instance/namespace is the script's to destroy
+                            if (!anyptr_ex<link_area>::as(lap))
+                                throw script_exception{error_type::TypeError,
+                                                       std::string("cannot delete link data variable: " + kstr)};
                             link->m_store.remove(kstr);
                             ok = true;
                         } else {

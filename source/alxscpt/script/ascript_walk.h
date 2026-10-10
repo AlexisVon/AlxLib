@@ -193,23 +193,36 @@ namespace alx {
             static const varvec* find_def(walker& _w, const std::string& _name);
             static variant eval_arg(const variant& _node, walker& _w);
 
-            // O_LOAD args are resolved last: an earlier store pointer could be invalidated by a later eval
-            static std::vector<variant*> collect_native_args(const varvec& _tree,
-                                                             size_t _arg_start,
-                                                             walker& _w,
-                                                             std::list<variant>& _tmp);
+            /// An argument scanned before any address is taken: a value, or a bare name deferred until
+            /// the callee's path has run
+            struct call_arg {
+                enum kind_enum {
+                    V_VALUE,
+                    V_NAME,
+                    V_UNPACK
+                };
+                kind_enum kind = V_VALUE;
+                variant val;
+                std::string name;
+            };
+            static std::vector<call_arg> scan_call_args(const varvec& _tree, size_t _arg_start, walker& _w);
+            // deferred names resolve to their slots; the vector was reserved once, so its pointers stay valid
+            static std::vector<variant*> native_arg_ptrs(std::vector<call_arg>& _args, walker& _w);
+
             static bool is_bare_ext_name(const std::string& _s);
             static variant invoke_extend(walker& _w, const std::string& _name,
-                                         const varvec& _tree, size_t _arg_start);
+                                         std::vector<call_arg>& _args);
             // _tco reuses _tco_frame (or the top frame) instead of pushing: params are written in place
             static void eval_and_bind_args(impl_import* _ent, const varvec& _def,
                                            const std::string& _func_name,
                                            const varvec& _tree, walker& _w, bool _tco,
-                                           scope_frame* _tco_frame = nullptr);
+                                           scope_frame* _tco_frame, std::vector<call_arg>& _args);
             static variant invoke_def(impl_import* _ent, const varvec& _def,
                                       const std::string& _func_name,
-                                      const varvec& _tree, walker& _w);
-            static variant invoke_dot(const dot_resolved& _r, const varvec& _tree, walker& _w);
+                                      const varvec& _tree, walker& _w,
+                                      std::vector<call_arg>& _args);
+            static variant invoke_dot(const dot_resolved& _r, const varvec& _tree, walker& _w,
+                                      std::vector<call_arg>& _args);
             static bool del_name(const variant& _target, walker& _w);
             static bool del_dot(const varvec& _tree, walker& _w);
             static bool del_index(const varvec& _tree, walker& _w);

@@ -371,7 +371,9 @@ namespace alx {
 
             static variant walk_entry_call(engine_impl& _e, void* _ud) {
                 auto& c = *static_cast<call_walk*>(_ud);
-                return walker::invoke_def(_e.m_w.state.current, *c.ca->m_def, c.name, c.tree, _e.m_w);
+                auto args = walker::scan_call_args(c.tree, 2, _e.m_w);
+                return walker::invoke_def(_e.m_w.state.current, *c.ca->m_def, c.name, c.tree, _e.m_w,
+                                          args);
             }
 
             result interrupt_result(const std::chrono::steady_clock::time_point& _t0) {

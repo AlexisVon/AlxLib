@@ -122,7 +122,8 @@ namespace alx {
             std::string fn = ca->m_def->size() >= 2 && (*ca->m_def)[1].is<std::string>()
                                  ? (*ca->m_def)[1].to<std::string>()
                                  : std::string();
-            variant result = walker::invoke_def(m_ws->state.current, *ca->m_def, fn, tree, *m_ws);
+            auto args = walker::scan_call_args(tree, 2, *m_ws);
+            variant result = walker::invoke_def(m_ws->state.current, *ca->m_def, fn, tree, *m_ws, args);
             delete rl;
             return result;
         }
@@ -135,6 +136,8 @@ namespace alx {
                               const std::string& _area) {
 
             if (_area.empty()) {
+                // re-registration replaces: a copy re-runs LINK_CREATE over its cloned store
+                m_store->remove(_name);
                 m_store->store(_name, anyptr_ex<call_able>::make(new call_able(_func)));
             } else {
                 link_area* area = nullptr;

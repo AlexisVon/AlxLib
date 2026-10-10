@@ -380,7 +380,8 @@ namespace alx {
              *
              * With an empty _area it goes into the call's data scope, which for a link entry point
              * is the instance's own store; a non-empty _area creates the area object under that
-             * name or extends the one already there. Throws NameError when _name is taken.
+             * name or extends the one already there. An existing name is replaced either way (a link
+             * copy re-runs `create` over its cloned store, so re-registration must land).
              *
              * \param _func Handler, of the same type as an extension function
              * \param _area Area to bind into, or empty for the plain scope

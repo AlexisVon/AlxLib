@@ -1,6 +1,6 @@
 // ====== test_handletype.axc — type() on engine-side handles ======
-// A callable handle reports "func" (not null), and the name is a plain
-// string that concatenates like any other type name.
+// An entity handle names its kind, and the name is a plain string that
+// concatenates like any other; a callable is not a value — type() refuses it.
 
 env(["../../bin"]);
 link "base.so" as b;
@@ -13,6 +13,10 @@ def assert_eq(a, e, name) {
     else { failed = failed + 1; $print("FAIL " + name + ": expected " + string(e) + " got " + string(a)); }
 }
 
-assert_eq(type(b.mt.abs), "func", "type of a link area callable");
-assert_eq(type(b.mt.abs) + "!", "func!", "type() result concatenates");
-assert_eq(type(b.mt.abs) == "func", true, "type() result compares");
+assert_eq(type(b), "link", "type of a link alias");
+assert_eq(type(b) + "!", "link!", "type() result concatenates");
+assert_eq(type(b) == "link", true, "type() result compares");
+
+var caught = false;
+try { var t = type(b.mt.abs); } catch (e) { caught = true; }
+assert_eq(caught, true, "type of a callable → refused");

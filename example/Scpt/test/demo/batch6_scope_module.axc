@@ -220,9 +220,12 @@ try {
         failures = failures + "  FAIL file_info.is_exist: " + e.what + "\n";
     }
 
-// type() on an engine-side handle: a callable reports its kind, as a plain string
-assert_eq(type(b.mt.abs), "func", "type of a link callable = func");
-assert_eq(type(b.mt.abs) + "!", "func!", "type() result concatenates");
+// type() on an engine-side handle: an entity names its kind; a callable is refused like any read
+assert_eq(type(b), "link", "type of a link alias = link");
+assert_eq(type(b) + "!", "link!", "type() result concatenates");
+var caught_ft = false;
+try { var t = type(b.mt.abs); } catch (e) { caught_ft = true; }
+assert_true(caught_ft, "type of a link callable → refused");
 
 // Add link test results to global tally
 passed = passed + link_tests_pass;

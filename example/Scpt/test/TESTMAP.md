@@ -51,7 +51,7 @@ Unit tests: `cd gtest && ./test.sh`
 | Truthiness: if/while/for/&&/\|\|/!/?: | `cover/types/test_truthy_basic.axc`, `test_truthy_string.axc` |
 | explicit bool() conversion: every path | `cover/types/test_bool_conv.axc` |
 | type(): all 8 types | `cover/types/test_typefunc.axc` |
-| type() on handles: a callable → "func", string concat/compare | `cover/types/test_handletype.axc` |
+| type() on handles: an entity names its kind, a callable is refused, string concat/compare | `cover/types/test_handletype.axc` |
 | Literal syntax | `cover/types/test_literals.axc` |
 | Ternary operator | `cover/types/test_ternary.axc` |
 | Boundary values | `cover/types/test_bounds.axc` |
@@ -287,10 +287,10 @@ try {
 
 ## Regression tests
 
-`cover/regression/` — scripts regressing past bugs (5 files), unchanged.
+`cover/regression/` — scripts regressing past bugs.
 
 ## Conclusion
 
-The Alexis Script engine **passes all 188 tests** (160 cover + 28 demo), built with g++ C++17 -O2. The new combined data-type and control-flow tests fill the coverage blind spots. The thread.os exception shape is now a uniform varmap{what, info}.
+The Alexis Script engine **passes every test** (`test.sh` prints the running count), built with g++ C++17 -O2. The new combined data-type and control-flow tests fill the coverage blind spots. The thread.os exception shape is now a uniform varmap{what, info}.
 
 Every "problem" found is by design; the engine behaves as the lang-guide describes.

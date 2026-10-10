@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(AlxLib VERSION 1.2.0 LANGUAGES CXX)
+project(AlxLib VERSION 1.2.2 LANGUAGES CXX)
 
 # ---------------------------------------------------------------------------
 # Compiler / standard
@@ -51,7 +51,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${ALXLIB_BIN_PATH})
 # an older one instead of failing somewhere at run time.
 set(ALXLIB_VERSION_MAJOR 1 CACHE STRING "Library major version")
 set(ALXLIB_VERSION_MINOR 2 CACHE STRING "Library minor version")
-set(ALXLIB_VERSION_PATCH 0 CACHE STRING "Library patch version")
+set(ALXLIB_VERSION_PATCH 2 CACHE STRING "Library patch version")
 
 set(ALXLIB_VERSION "${ALXLIB_VERSION_MAJOR}.${ALXLIB_VERSION_MINOR}.${ALXLIB_VERSION_PATCH}")
 set(ALXLIB_SOVERSION "${ALXLIB_VERSION_MAJOR}.${ALXLIB_VERSION_MINOR}")

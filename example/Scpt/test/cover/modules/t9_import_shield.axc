@@ -1,4 +1,4 @@
-// ====== t9_import_shield.axc — Namespace Shielding ======
+// ====== t9_import_shield.axc — Alias Values ======
 // an import/link alias is an ordinary value (read = a copy, overwrite = the value
 // takes its place); a link's sub-data stays opaque at any depth.
 
@@ -63,8 +63,8 @@ assert_true(caught, "9.9 var y = b.mt → TypeError (blocked at b)");
 // dot call through area still works
 assert_eq(b.mt.abs(-5), 5, "9.10 b.mt.abs(-5) → 5");
 
-// a copy's host object is its own: a close through the copy leaves the original open,
-// and the copy outlives the original
+// the copy's non-copyable handle arrives empty (a null handle, no crash): a close
+// through the copy is a no-op, leaving the original open, and the copy outlives it
 b.fs.open("copy_f", "/tmp/test_t9_copy.txt", "w");
 var bc = b;
 bc.copy_f.close();

@@ -353,13 +353,14 @@ type(lst[]);     // "lst"
 type(map{});     // "map"
 ```
 
-A value can also be an opaque **handle**, which only the engine and the host produce — a script holds one when it reads a module function (`import m; m.fn`), a namespace or area function (`b.mt.abs`), or an object a host extension handed over. `type()` names the engine's own handle kinds:
+A value can also be an opaque **handle**, which only the engine and the host produce — a script holds one when it reads an `import`/`link` alias (§11.3) or an object a host extension handed over; a function is not one of them (reading one is refused just below). `type()` names the engine's own handle kinds:
 
 | Value | `type()` |
 |-------|----------|
-| a callable handle (a module / link / area function) | `"func"` |
-| an import / link / area entity handle (a value like any other — §11.3 alias values) | `"import"` / `"link"` / `"area"` |
+| an import / link entity handle (a value like any other — §11.3) | `"import"` / `"link"` |
 | an empty handle (one that holds no object) | `"null"` |
+
+A callable is not a value — reading one is refused, `type()` included (`TypeError: function cannot be read as a value`) — so no call answers for one; reach it by calling (directly, through `@`, or by the name a table holds).
 
 Everything the script layer has no name of its own for — an object a host handed over, or a value of a variant type it does not model (only a host can pass one in: a 32-bit float, an unsigned integer, a `std::vector<T>`) — asks the host's type-naming callback (`engine::set_type_ex`) first; an empty answer, or no callback installed, gives `"unknown"`. A `null` value and an empty handle both answer `"null"`, so **empty reads as null, not as "unknown"**; `type()` never answers a null value itself.
 
@@ -926,7 +927,9 @@ def outer() {
 ```
 
 - a parameter with no default that is not supplied → `ArgError`
-- **Argument evaluation semantics (values taken at the end, uniformly)**: the argument expressions are evaluated left to right (so the side-effect order is determined); the value of a variable argument is read **once every argument expression has been evaluated** — an assignment/rewrite of an earlier variable argument by a later argument expression is visible to the callee. In `f(x, x = 5)` the `x` is passed as `5`; in `f(count, next_count())` the `count` is passed as its post-call value. Script functions and link native functions behave identically
+- **Argument evaluation semantics (the call order)**: the argument expressions are evaluated left to right (so the side-effect order is determined), the callee's path expressions run after them, and the callee's address is taken last — nothing runs script code between that and the invoke, so an argument that discards the callee's owner (`m.f(delete m)`) fails cleanly while the callee path resolves. The value of a variable argument is read **once every argument expression has been evaluated** — an assignment/rewrite of an earlier variable argument by a later argument expression is visible to the callee. In `f(x, x = 5)` the `x` is passed as `5`; in `f(count, next_count())` the `count` is passed as its post-call value. Script functions and link native functions behave identically
+- **a callable is not a value**: any copy of one is refused by the type itself (`TypeError: function cannot be read as a value`) — a binding, a container, an expression handed to a call, a script def's parameter, and `type()`'s argument alike; call it instead (directly, through `@`, or by the name it is held under). The one channel open is **by reference, not by copy**: a `$`/link native receives a bare-name argument as a slot pointer and takes a callable that way
+- a call target that evaluates to something that is not a callable → `NameError: not a function: <type>` (`type()` spells the type)
 - tail call optimisation (TCO): when `return f(args)` has `f` as the current function's name, the current frame is reused automatically — no new frame, no depth limit (does not apply when the name is locally shadowed, see §9.2.1)
 - indirect calls use the `@` prefix syntax, see §10
 - `delete funcName` removes a function definition (the current module, top layer only — from a frame it returns `false`)
@@ -1043,7 +1046,7 @@ In a declaration position (`var`/`def`/`import as`/`link as`) `@` is **forbidden
 - **`@var`**: `var` must be an already defined variable whose value is a `string`. Its value is then used as the target name.
 - **`@(expr)`**: the result of evaluating `expr` must be a `string`. Any run-time expression is accepted.
 - The string must be a **legal identifier** (simple name) or a **path string** (containing `.` / `[N]`, such as `"a.b[0]"`) — the string is an **object alias**: it denotes an existing object for read / write / delete / call. Anything that is not a name or chain — an expression, a call, a slice — denotes no object and is refused (`NameError`, `reflection is not a legal name or chain: <string>`); evaluating a source string is `eval`'s job, not `@`'s.
-- non-string → `TypeError`, target does not exist → `NameError` (a non-name/chain string is refused by the same layer: `NameError: reflection is not a legal name or chain: <string>`; the call position words it `Indirect call: invalid path '<string>'`).
+- non-string → `TypeError` (`Indirect load: variable did not evaluate to a string` on read / write, `delete @: expression did not evaluate to a string` on delete), while the **call port reports `NameError`**: `Indirect call: expected function name string, got <type>` — an empty string included (`got string`; at the other three ports it goes through and fails later, at the path parse: `RuntimeError: Cannot parse path`); target does not exist → `NameError` (a non-name/chain string is refused by the same layer: `NameError: reflection is not a legal name or chain: <string>`; the call position words it `Indirect call: invalid path '<string>'`).
 
 ### 10.1 Value reflection `@`
 
@@ -1273,7 +1276,7 @@ link "mylib" as mylib;     // dlopen → dlsym("alexis_script_load"), the engine
   - `alexis_script_release` — instance destruction (releases the instance's resources)
   - `alexis_script_unload` — whole-link destruction (before dlclose)
   - the lifecycle is a determined sequence: `load → create×N → release×N → unload`
-- **objects and instances**: the template's wrapped objects reach each instance by copy — a copyable `make()` type deep-copies, a non-copyable one arrives empty (a null handle, no crash). Build per-instance objects in `alexis_script_create`, or share with `make_ref()` (single-threaded, so sharing is safe; its copies point at the same object)
+- **objects and instances**: the template's wrapped objects reach each instance by copy — a copyable `make()` type deep-copies, a non-copyable one arrives empty (a null handle, no crash). Build per-instance objects in `alexis_script_create`, or share with `make_ref()` (single-threaded, so sharing is safe; its copies point at the same object). A script-level copy of an instance (`var b2 = b`) clones the instance's store and runs `create` over it again, so `create` must accept an already-populated store and its data must be copyable (or ref-held)
 - inside a callback, register functions by calling `args.bind("name", callback)`
 - linking the same library several times (under different aliases) gives independent instances that share the module, with a refcount managing the lifetime
 - **link has its own data block**: C++ bind functions can operate on it through `args.load/store/remove`
@@ -1379,14 +1382,16 @@ str.upper("hi");  // "HI"
 | `args.load("x")` | read a link private variable → `variant*` (simple name) |
 | `args.store("y", val)` | write a link private variable (`const&` copies; `&&` moves — a non-copyable object is moved to keep it alive) |
 | `args.remove("z")` | delete a link private variable |
-| `args.iload("key")` | unified dot-chain access → `variant*` (copy-free, readable and writable; a miss returns `nullptr`) |
+| `args.iload("key")` | unified dot-chain access → `variant*` (copy-free, readable and writable; a bare-name miss returns `nullptr` — the promise covers the resolved outcome, so a `.` path whose intermediate step does not resolve still reports that step's error) |
 | `args.call(func, args_vec)` | call: `string` → iload resolution → call_able → execute; `anyptr<call_able>` → execute directly |
 | `args.bind("name", func)` | register a native function (optional third argument `_area`) |
 | `args.bind("name", func, "area")` | register into a sub-scope |
 | `args.raise(val[, type])` | throw a script exception |
-| `args.object()` | the `anyptr*` stored for the current area |
-| `args.unwrap<T>()` | `anyptr_ex<T>::as(*object())` — type-safe access to the C++ object |
+| `args.object()` | the `anyptr*` stored for the current area — area natives only |
+| `args.unwrap<T>()` | `anyptr_ex<T>::as(*object())` — type-safe access to the C++ object (area natives only, like `object()`) |
 | `args.wrap<T>(ptr, "area", {{"m1", fn1}, ...})` | store the obj + register methods into the area |
+
+> **Pointer validity (one contract)**: everything this interface hands back — the `args[i]` view, an `iload`/`load` slot, the `m_area` behind `object()`/`unwrap<T>()` — dies the moment script code runs again: a `fw.call()` back into the script (the script may `delete` the area, the instance or the module) or a failed run's reset invalidates them all, after which they must not be touched. `object()`/`unwrap<T>()` are for area natives only — outside an area dispatch (an extend handler, a load/unload callback, a `bind` with no `_area`) no area is set, and calling them there is outside the contract — nothing is set to hand back.
 
 > **The `iload` path**: a simple name → data_store (`O_ILOAD` → `resolve_dot`).
 
@@ -1634,6 +1639,7 @@ delete alias;         // delete an import / link alias (module top layer)
 - silent failure: a name that does not exist → returns `false`, no exception; the `@()` name expression itself must evaluate (a missing `x` in `delete @x` is a `NameError`)
 - after a deletion the name can be declared again — once it is out of every namespace, `var`/`def`/`link` all create it normally
 - **cross-module delete**: another module's variable cannot be deleted → throws `NameError`
+- **resource deletion is exempt from the frame and cross-module slot rules**: deleting a link's area instance or namespace destroys a host object rather than removing a slot, so it is allowed wherever the path reaches it from (a frame, another module) — the barriers above are about variables
 - defensive use: `delete .init;` is safe before a declaration
 
 ### Container deletion

@@ -15,7 +15,7 @@ The inventory runs along three axes: **link-time** (compiled into `bin/libalx*.s
 > Upstream sources are unpacked in place under `3rdpty/*/local/` on the development machine, and
 > **that directory does not enter the repo** (`.gitignore:30`).
 > The "full text source" column below names the members inside each upstream `tar.gz` — **those
-> packages stopped being version-controlled at `a8a994f`** (provide them yourself after a clone, see
+> packages are no longer version-controlled** (provide them yourself after a clone, see
 > the manifest and sha256 in `3rdpty/README.md`); the same texts that **are** obtainable inside the
 > repo live in `licenses/`.
 

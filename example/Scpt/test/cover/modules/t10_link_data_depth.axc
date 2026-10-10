@@ -98,7 +98,7 @@ ts.set("m", map{"a": "XY", "inner": vec[7, 8, 9]});
     assert_eq(k, "TypeError", "10.15 string element read → TypeError");
 }
 var plain = "ABCD";
-assert_eq(plain[0], "A", "10.16 plain string element read unaffected");
+assert_eq(plain[0], 65, "10.16 plain string element read follows the byte semantics");
 
 // ── must not break: functions and areas ──
 assert_eq(ts.get("s"), "ABCD", "10.17 ts.get still works");

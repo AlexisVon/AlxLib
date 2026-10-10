@@ -1,9 +1,10 @@
-// Test 7c: string index reads (-1 is the last char, null is the length); writes unsupported
+// Test 7c: string elements are byte values (int 0-255); [-1] is the last byte, [null] the length,
+// and an element writes from an int like a bytes element does
 var s; s = "hello";
-if (s[0] == "h") { $print("PASS: 7c string[0] read -> 'h'\n"); } else { $print("FAIL\n"); }
-if (s[1] == "e") { $print("PASS: 7c string[1] read -> 'e'\n"); } else { $print("FAIL\n"); }
-if (s[4] == "o") { $print("PASS: 7c string[4] read -> 'o'\n"); } else { $print("FAIL\n"); }
-if (s[-1] == "o") { $print("PASS: 7c string[-1] read -> 'o'\n"); } else { $print("FAIL: string[-1] != 'o'\n"); }
+if (s[0] == 104) { $print("PASS: 7c string[0] read -> byte 104\n"); } else { $print("FAIL\n"); }
+if (s[1] == 101) { $print("PASS: 7c string[1] read -> byte 101\n"); } else { $print("FAIL\n"); }
+if (s[4] == 111) { $print("PASS: 7c string[4] read -> byte 111\n"); } else { $print("FAIL\n"); }
+if (s[-1] == 111) { $print("PASS: 7c string[-1] read -> byte 111\n"); } else { $print("FAIL: string[-1] != 111\n"); }
 if (s[null] == 5) { $print("PASS: 7c string[null] -> size 5\n"); } else { $print("FAIL: string[null] != 5\n"); }
 
 var caught; caught = false;
@@ -16,17 +17,19 @@ if (caught) { $print("PASS: 7c string[5] out of range throws\n"); } else { $prin
 
 // dot chain must agree with the standalone form
 var so; so = map{"s": "hello"};
-if (so.s[0] == "h") { $print("PASS: 7c dot chain string[0] -> 'h'\n"); } else { $print("FAIL: dot chain string[0]\n"); }
-if (so.s[-1] == "o") { $print("PASS: 7c dot chain string[-1] -> 'o'\n"); } else { $print("FAIL: dot chain string[-1]\n"); }
+if (so.s[0] == 104) { $print("PASS: 7c dot chain string[0] -> byte 104\n"); } else { $print("FAIL: dot chain string[0]\n"); }
+if (so.s[-1] == 111) { $print("PASS: 7c dot chain string[-1] -> byte 111\n"); } else { $print("FAIL: dot chain string[-1]\n"); }
 if (so.s[null] == 5) { $print("PASS: 7c dot chain string[null] -> size 5\n"); } else { $print("FAIL: dot chain string[null]\n"); }
 
+// writes take an int; a non-numeric value is a conversion error
+s[0] = 72;
+if (s[0] == 72) { $print("PASS: 7c string[0] = 72 writes the byte\n"); } else { $print("FAIL: string[0] write\n"); }
 caught = false;
 try { s[0] = "x"; } catch (e) { caught = true; }
-if (caught) { $print("PASS: 7c string index write throws\n"); } else { $print("FAIL: no error\n"); }
+if (caught) { $print("PASS: 7c string[0] = \"x\" throws\n"); } else { $print("FAIL: no error\n"); }
 
-caught = false;
-try { so.s[0] = "x"; } catch (e) { caught = true; }
-if (caught) { $print("PASS: 7c dot chain string index write throws\n"); } else { $print("FAIL: no error\n"); }
+so.s[0] = 74;
+if (so.s[0] == 74) { $print("PASS: 7c dot chain string[0] write\n"); } else { $print("FAIL: dot chain string[0] write\n"); }
 
 caught = false;
 try { delete so.s[0]; } catch (e) { caught = true; }

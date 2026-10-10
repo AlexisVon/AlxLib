@@ -259,14 +259,16 @@ iw[-1] = 88;    assert_eq(iw[-1], 88, "7b: vec[-1] write");
 iw[null] = 77;  assert_eq(iw[3], 77, "7b: vec[null] write = push_back");
 assert_eq(iw[null], 4, "7b: vec[null] size after push");
 
-// 7c. string read — returns a single-char string, NOT an int code point
+// 7c. string element read — the byte value (int 0-255), not a single-char string
 var istr; istr = "hello";
-assert_eq(istr[0], "h", "7c: string[0] read = 'h'");
-assert_eq(istr[1], "e", "7c: string[1] read = 'e'");
-// string does not support index write
+assert_eq(istr[0], 104, "7c: string[0] read = byte 104");
+assert_eq(istr[1], 101, "7c: string[1] read = byte 101");
+// an element writes from an int; a char is not one
 var isw_caught; isw_caught = false;
 try { istr[0] = "x"; } catch (e) { isw_caught = true; }
-assert_true(isw_caught, "7c: string[0] write throws");
+assert_true(isw_caught, "7c: string[0] = \"x\" throws");
+istr[0] = 72;
+assert_eq(istr[0], 72, "7c: string[0] = 72 writes the byte");
 
 // 7d. map key index
 var im; im = map{"k1": "v1", "k2": 42};

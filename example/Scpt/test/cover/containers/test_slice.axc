@@ -79,12 +79,22 @@ try {
     $print("OOB neg error: %1\n", e.what);
 }
 
-// --- assign to slice → error ---
+// --- slice assignment: the same container type, count-matched; a fill is constructed ---
+v[1, 3] = [99, 100];
+$print("slice scatter: v[1]=%1 v[2]=%2\n", v[1], v[2]);
+v[3, 5] = [7:2];
+$print("slice fill: v[3]=%1 v[4]=%2\n", v[3], v[4]);
 try {
-    v[1, 3] = [99, 100];
-    $print("FAIL: should have thrown for slice assign\n");
+    v[1, 3] = 9;
+    $print("FAIL: should have thrown for a scalar operand\n");
 } catch (e) {
-    $print("assign error: %1\n", e.what);
+    $print("scalar operand: %1\n", e.what);
+}
+try {
+    v[1, 3] = [1, 2, 3];
+    $print("FAIL: should have thrown for a count mismatch\n");
+} catch (e) {
+    $print("count mismatch: %1\n", e.what);
 }
 
 // --- non-container slice → error ---

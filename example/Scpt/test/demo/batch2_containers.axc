@@ -181,11 +181,11 @@ assert_eq(vi[-1], 400, "vec write [null] push_back");
 vi[1] = 200;
 assert_eq(vi[1], 200, "vec write arbitrary [1]");
 
-// string read: 0, arbitrary, [-1] back, [null] size
+// string read: a string element is its byte value (int 0-255), not a one-char string
 var st; st = "hello";
-assert_eq(st[0], "h", "string read [0]");
-assert_eq(st[4], "o", "string read [4]");
-assert_eq(st[-1], "o", "string[-1] → back");
+assert_eq(st[0], 104, "string read [0] = byte value");
+assert_eq(st[4], 111, "string read [4] = byte value");
+assert_eq(st[-1], 111, "string[-1] → back, byte value");
 assert_eq(st[null], 5, "string[null] → size");
 
 var str_neg2_fail; str_neg2_fail = false;
@@ -194,12 +194,23 @@ assert_true(str_neg2_fail, "string[-2] throws (only -1 is back)");
 
 // string read via dot chain — same semantics as the standalone form
 var so; so = map{"s": "hello"};
-assert_eq(so.s[0], "h", "dot chain string[0]");
-assert_eq(so.s[-1], "o", "dot chain string[-1]");
+assert_eq(so.s[0], 104, "dot chain string[0] = byte value");
+assert_eq(so.s[-1], 111, "dot chain string[-1] = byte value");
 
-var str_write_fail; str_write_fail = false;
-try { st[null] = "x"; } catch (e) { str_write_fail = true; }
-assert_true(str_write_fail, "string[null] write throws");
+// a string element writes like a byte container: an int 0-255, null appends one byte
+st[0] = 72;
+assert_eq(st[0], 72, "string[0] write takes the int");
+st[null] = 33;
+assert_eq(st[null], 6, "string[null] write appends one byte");
+assert_eq(st[-1], 33, "the appended byte sits at the back");
+
+// the write-back policy is the integer one: wrap by default, a byte range overflow under --overflow-check
+st[0] = 300;
+assert_eq(st[0], 44, "string[0] = 300 wraps to 0x2C by default");
+
+var str_type_fail; str_type_fail = false;
+try { st[0] = "H"; } catch (e) { str_type_fail = true; }
+assert_true(str_type_fail, "string[0] = \"H\" throws (a byte is an int, not a char)");
 
 // ========== §6.5 mixed chain ==========
 var mix; mix = map{"arr": [map{"key": 99}]};
@@ -325,9 +336,21 @@ assert_true(del_nonexist, "delete non-existing var silent no-op");
 	    try { var _ = v[10, 20]; } catch (e) { err = e.what; }
 	    assert_true(err == "IndexError", "slice OOB error");
 
+	    // slice assignment: the same container type, count-matched; a fill is constructed, [v: N]
+	    v[1, 3] = [70, 80];
+	    assert_eq(v[1], 70, "slice scatter [1]");
+	    assert_eq(v[2], 80, "slice scatter [2]");
+	    v[1, 3] = [99:2];
+	    assert_eq(v[1], 99, "slice fill [1]");
+	    assert_eq(v[2], 99, "slice fill [2]");
+
 	    err = "";
 	    try { v[1, 3] = 99; } catch (e) { err = e.what; }
-	    assert_true(err == "TypeError", "slice assign error");
+	    assert_true(err == "TypeError", "slice scalar operand rejected");
+
+	    err = "";
+	    try { v[1, 3] = [1, 2, 3]; } catch (e) { err = e.what; }
+	    assert_true(err == "ArgError", "slice count mismatch error");
 
 	    err = "";
 	    try { var _ = (42)[0, 2]; } catch (e) { err = e.what; }

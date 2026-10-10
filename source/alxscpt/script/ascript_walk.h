@@ -145,11 +145,45 @@ namespace alx {
             static variant op_econst(const varvec&, walker&);
 
         public:
-            // _isnav (navigation, for indirect loads): an unresolved path yields nullptr instead of throwing
-            // _owner receives the entity that owns the resolved slot, for the binding sites to stamp on a handle value
-            // _rmw: the caller reads and writes back the same slot, so an append index ([null]) is not a usable target
-            static variant* resolve_ptr(const varvec& _lhs, walker& _w, bool _isnav = false,
-                                        impl_import** _owner = nullptr, bool _rmw = false);
+            // What an assignment target resolved to: a variant slot, one byte of a string/bytes, or a
+            // slice range. One pass decides all three, so the evaluation order -- index/bounds before
+            // the container, nothing after the address is taken -- lives in a single place
+            struct target_resolved {
+                enum class kind : uint_8 { none,
+                                           slot,
+                                           byte,
+                                           slice };
+
+                kind type = kind::none;
+                // slot: the writable variant; byte/slice: the container holding the positions
+                variant* slot = nullptr;
+                variant* parent = nullptr;
+                // byte: the evaluated index (null = append); slice: the position sequence
+                variant key;
+                int_64 from = 0;
+                int_64 to = 0;
+                int_64 step = 1;
+                // the entity the target lives in, for the binding sites to stamp on a handle value
+                impl_import* owner = nullptr;
+            };
+
+            // write runs the write-side guards; nav is the host probe (guards off, a miss is none) --
+            // a script write must never resolve in nav mode
+            enum class resolve_mode : uint_8 { write,
+                                               nav };
+
+            // _rmw: the caller reads and writes back the same slot, so an append index ([null]) is not a
+            // usable target; _create: a terminal map key or append may be created -- false for the base of
+            // an element or slice write, where a miss is an error and nothing may be left behind
+            static target_resolved resolve_target(const varvec& _lhs, walker& _w, resolve_mode _mode,
+                                                  bool _rmw, bool _create = true);
+            // Slot-only view: a byte element or a slice has no variant slot to hand back
+            static variant* resolve_slot(const varvec& _lhs, walker& _w, bool _rmw);
+            // Host-probe view (fwrap): the slot, or nullptr for a path that resolves to nothing
+            static variant* resolve_nav(const varvec& _lhs, walker& _w);
+            // Slice assignment: the operand is the same container type, scattered in the read's own
+            // position order, and its length must equal the position count
+            static void store_slice(const target_resolved& _t, const variant& _val);
             static void store_raw(walker& _w, const variant& _name, variant&& _init_val);
             static void assign_raw(walker& _w, const variant& _name, const variant& _val);
             static void assign_raw(walker& _w, const variant& _name, variant&& _val);
@@ -179,9 +213,15 @@ namespace alx {
             static bool del_vec(variant& _container, const variant& _key);
             static bool del_lst(variant& _container, const variant& _key);
             static bool del_map(variant& _container, const variant& _key);
+            // Bounds evaluate first (they can run script code), then fold against the container's size
+            static void slice_eval_bounds(const varvec& _tree, walker& _w,
+                                          variant& _fv, variant& _tv, int_64& _step);
+            static void slice_apply_bounds(const variant& _obj, const variant& _fv, const variant& _tv,
+                                           int_64& _step, int_64& _from, int_64& _to);
             static variant slice_vec(const varvec& _vec, int_64 _start, int_64 _end, int_64 _step);
             static variant slice_lst(const varlst& _lst, int_64 _start, int_64 _end, int_64 _step);
             static variant slice_str(const std::string& _str, int_64 _start, int_64 _end, int_64 _step);
+            static variant slice_bytes(const bytes& _buf, int_64 _start, int_64 _end, int_64 _step);
             static std::string find_func_name(impl_import* _ent, const varvec* _def);
 
             // _f = nullptr = top level: the root script's file, or walk_state::top_pos in pos_map

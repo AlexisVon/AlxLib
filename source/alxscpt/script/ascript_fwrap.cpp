@@ -68,7 +68,7 @@ namespace alx {
             iload.push_back(variant(OPTYPE(O_ILOAD)));
             iload.push_back(variant(_key));
             // true = navigation: a path that resolves to nothing yields null instead of throwing
-            return walker::resolve_ptr(iload, *m_ws, true);
+            return walker::resolve_nav(iload, *m_ws);
         }
 
         variant fwrap_impl::call(const variant& _func, const varvec& _args) {
@@ -86,7 +86,7 @@ namespace alx {
                 varvec iload;
                 iload.push_back(variant(OPTYPE(O_ILOAD)));
                 iload.push_back(variant(path));
-                variant* v = walker::resolve_ptr(iload, *m_ws, true);
+                variant* v = walker::resolve_nav(iload, *m_ws);
                 if (v && v->is<anyptr>())
                     ca = anyptr_ex<call_able>::as(v->to<anyptr>());
             }

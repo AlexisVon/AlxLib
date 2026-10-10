@@ -107,20 +107,22 @@ assert_true(ae_hit, "missing arg throws");
 assert_eq(ae_type, "ArgError", "missing arg = ArgError");
 
 // ========== String index edge cases ==========
-// string read by index (only [i] where 0 <= i < size)
+// a string element reads as its byte value (int 0-255), indexed 0 <= i < size
 var s; s = "hello";
-assert_eq(s[0], "h", "string[0]");
-assert_eq(s[4], "o", "string[4]");
+assert_eq(s[0], 104, "string[0] = byte value");
+assert_eq(s[4], 111, "string[4] = byte value");
 
 // string out of bounds
 var s_oob_fail; s_oob_fail = false;
 try { tmp = s[5]; } catch (e) { s_oob_fail = true; }
 assert_true(s_oob_fail, "string[5] OOB throws");
 
-// string cannot write
+// a byte element writes only from a value the integer conversion takes: a char is not one
 var s_write_fail; s_write_fail = false;
 try { s[0] = "H"; } catch (e) { s_write_fail = true; }
-assert_true(s_write_fail, "string[0] write throws");
+assert_true(s_write_fail, "string[0] = \"H\" throws");
+s[0] = 72;
+assert_eq(s[0], 72, "string[0] = 72 writes the byte");
 
 // ========== null index edge cases ==========
 // null as non-terminal index should throw IndexError

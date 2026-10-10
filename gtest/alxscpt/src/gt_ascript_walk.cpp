@@ -1018,7 +1018,7 @@ TEST(gt_ascript_walk, MemberAccess) {
 
 TEST(gt_ascript_walk, StringIndex) {
     auto v = exec_src("\"hello\"[1];");
-    EXPECT_EQ(v.to<std::string>(), "e");
+    EXPECT_EQ(v.to<int_64>(), 101);
 }
 
 TEST(gt_ascript_walk, ForInString) {
@@ -2345,18 +2345,13 @@ TEST(gt_ascript_walk, NullIndex_MapWriteThrows) {
     EXPECT_EQ(etype, error_type::TypeError);
 }
 
-TEST(gt_ascript_walk, NullIndex_StringWriteThrows) {
-    auto [etype, eval] = exec_src_catch(
-        "var s; s = \"hello\";"
-        "s[null] = \"x\";");
-    EXPECT_EQ(etype, error_type::TypeError);
+TEST(gt_ascript_walk, NullIndex_StringWriteAppends) {
+    EXPECT_EQ(exec_src("var s; s = \"hello\"; s[null] = 33; s;").to<std::string>(), "hello!");
 }
 
-TEST(gt_ascript_walk, NullIndex_DotChainStringWriteThrows) {
-    auto [etype, eval] = exec_src_catch(
-        "var o; o = map{\"s\": \"hello\"};"
-        "o.s[null] = \"x\";");
-    EXPECT_EQ(etype, error_type::TypeError);
+TEST(gt_ascript_walk, NullIndex_DotChainStringWriteAppends) {
+    EXPECT_EQ(exec_src("var o; o = map{\"s\": \"hello\"}; o.s[null] = 33; o.s;").to<std::string>(),
+              "hello!");
 }
 
 TEST(gt_ascript_walk, NullIndex_VecWritePushes) {
@@ -2417,15 +2412,16 @@ TEST(gt_ascript_walk, NullIndex_ScalarParentThrows) {
 }
 
 TEST(gt_ascript_walk, StringIndex_Read) {
-    EXPECT_EQ(exec_src("var s; s = \"hello\"; s[0];").to<std::string>(), "h");
-    EXPECT_EQ(exec_src("var s; s = \"hello\"; s[4];").to<std::string>(), "o");
-    EXPECT_EQ(exec_src("var s; s = \"hello\"; s[-1];").to<std::string>(), "o");
+    // an element is the byte value, not a one-char string
+    EXPECT_EQ(exec_src("var s; s = \"hello\"; s[0];").to<int_64>(), 104);
+    EXPECT_EQ(exec_src("var s; s = \"hello\"; s[4];").to<int_64>(), 111);
+    EXPECT_EQ(exec_src("var s; s = \"hello\"; s[-1];").to<int_64>(), 111);
     EXPECT_EQ(exec_src("var s; s = \"hello\"; s[null];").to<int_64>(), 5);
 }
 
 TEST(gt_ascript_walk, StringIndex_ReadDotChain) {
-    EXPECT_EQ(exec_src("var o; o = map{\"s\": \"hello\"}; o.s[0];").to<std::string>(), "h");
-    EXPECT_EQ(exec_src("var o; o = map{\"s\": \"hello\"}; o.s[-1];").to<std::string>(), "o");
+    EXPECT_EQ(exec_src("var o; o = map{\"s\": \"hello\"}; o.s[0];").to<int_64>(), 104);
+    EXPECT_EQ(exec_src("var o; o = map{\"s\": \"hello\"}; o.s[-1];").to<int_64>(), 111);
     EXPECT_EQ(exec_src("var o; o = map{\"s\": \"hello\"}; o.s[null];").to<int_64>(), 5);
 }
 
@@ -2439,11 +2435,20 @@ TEST(gt_ascript_walk, StringIndex_OutOfRange) {
     EXPECT_EQ(e3, error_type::IndexError);
 }
 
-TEST(gt_ascript_walk, StringIndex_WriteThrows) {
+TEST(gt_ascript_walk, StringIndex_Write) {
+    // an element writes from an int (the byte value); the read/write pair is symmetric
+    EXPECT_EQ(exec_src("var s; s = \"hello\"; s[-1] = 88; s;").to<std::string>(), "hellX");
+    EXPECT_EQ(exec_src("var o; o = map{\"s\": \"hello\"}; o.s[0] = 72; o.s;").to<std::string>(), "Hello");
+    EXPECT_EQ(exec_src("var s; s = \"hello\"; s[null] = 33; s[null];").to<int_64>(), 6);
+    EXPECT_EQ(exec_src("var o; o = map{\"s\": \"hello\"}; o.s[null] = 33; o.s[null];").to<int_64>(), 6);
+
+    // a char is not a byte value: the write converts through the integer rules
     auto [e1, v1] = exec_src_catch("var s; s = \"hello\"; s[-1] = \"x\";");
-    EXPECT_EQ(e1, error_type::TypeError);
-    auto [e2, v2] = exec_src_catch("var o; o = map{\"s\": \"hello\"}; o.s[0] = \"x\";");
-    EXPECT_EQ(e2, error_type::TypeError);
+    EXPECT_EQ(e1, error_type::ConvError);
+    // out of range wraps by default, an out-of-range index is still an IndexError
+    EXPECT_EQ(exec_src("var s; s = \"hello\"; s[0] = 300; s[0];").to<int_64>(), 44);
+    auto [e2, v2] = exec_src_catch("var s; s = \"hello\"; s[5] = 65;");
+    EXPECT_EQ(e2, error_type::IndexError);
 }
 
 TEST(gt_ascript_walk, StringIndex_DeleteThrows) {
@@ -3533,10 +3538,54 @@ TEST(gt_ascript_walk, Slice_OutOfBounds) {
     EXPECT_EQ(etype, error_type::IndexError);
 }
 
-TEST(gt_ascript_walk, Slice_AssignError) {
-    auto [etype, eval] =
-        exec_src_catch("var v=[1,2,3]; v[1,3]=99;");
-    EXPECT_EQ(etype, error_type::TypeError);
+TEST(gt_ascript_walk, Slice_AssignScatter) {
+    // a same-type container scatters in the read's own position order
+    auto v = exec_src("var v=[0,1,2,3,4]; v[1,4] = [10,20,30]; v;");
+    ASSERT_TRUE(v.is_vec());
+    EXPECT_EQ(v.to_vec()[1].to<int_64>(), 10);
+    EXPECT_EQ(v.to_vec()[3].to<int_64>(), 30);
+    auto l = exec_src("var l=lst[0,1,2,3,4]; l[1,4] = lst[9,8,7]; l;");
+    ASSERT_TRUE(l.is_lst());
+    EXPECT_EQ(l.to_lst().front().to<int_64>(), 0);
+
+    // a strided or reversing slice scatters in the order the read would produce
+    auto s = exec_src("var v=[0,1,2,3,4,5]; v[0,6,2] = [10,20,30]; v;");
+    EXPECT_EQ(s.to_vec()[4].to<int_64>(), 30);
+    auto r = exec_src("var v=[0,1,2,3,4,5]; v[5,1,-2] = [55,33]; v;");
+    EXPECT_EQ(r.to_vec()[5].to<int_64>(), 55);
+    EXPECT_EQ(r.to_vec()[3].to<int_64>(), 33);
+    auto lr = exec_src("var l=lst[0,1,2,3,4]; l[4,1,-2] = lst[41,21]; l;");
+    EXPECT_EQ(lr.to_lst().back().to<int_64>(), 41);
+
+    // string and bytes scatter by byte count
+    EXPECT_EQ(exec_src("var s=\"hello\"; s[1,3] = \"EL\"; s;").to<std::string>(), "hELlo");
+    EXPECT_EQ(exec_src("var b=bytes(\"abc\"); b[0,2] = bytes(\"XY\"); b[0];").to<int_64>(), 88);
+}
+
+TEST(gt_ascript_walk, Slice_AssignOperand) {
+    // the operand is the same container type: a scalar (a fill too) is a TypeError
+    auto [e1, v1] = exec_src_catch("var v=[0,1,2,3]; v[1,3] = 9;");
+    EXPECT_EQ(e1, error_type::TypeError);
+    auto [e2, v2] = exec_src_catch("var s=\"hello\"; s[1,3] = 76;");
+    EXPECT_EQ(e2, error_type::TypeError);
+    auto [e3, v3] = exec_src_catch("var b=bytes(\"abc\"); b[0,2] = \"XY\";");
+    EXPECT_EQ(e3, error_type::TypeError);
+    auto [e4, v4] = exec_src_catch("var v=[0,1,2,3]; v[1,3] = lst[7,8];");
+    EXPECT_EQ(e4, error_type::TypeError);
+
+    // a fill is a constructed container: [v: N] for a vec, a converted one for an lst
+    EXPECT_EQ(exec_src("var v=[0,1,2,3]; v[1,3] = [9:2]; v[1];").to<int_64>(), 9);
+    EXPECT_EQ(exec_src("var v=[0,1,2,3]; v[1,3] = [9:2]; v[2];").to<int_64>(), 9);
+    EXPECT_EQ(exec_src("var l=lst[0,1,2]; l[0,2] = lst([7:2]); l[1];").to<int_64>(), 7);
+
+    // a count mismatch is an ArgError; an empty slice takes an empty operand only
+    auto [e5, v5] = exec_src_catch("var v=[1,2,3]; v[1,3] = [1,2,3];");
+    EXPECT_EQ(e5, error_type::ArgError);
+    auto [e6, v6] = exec_src_catch("var v=[1,2,3]; v[3,3] = [7];");
+    EXPECT_EQ(e6, error_type::ArgError);
+    auto [e7, v7] = exec_src_catch("var v=[1,2,3]; v[3,3] = [];");
+    EXPECT_EQ(e7, error_type::UnknownError);
+    EXPECT_EQ(exec_src("var v=[1,2,3]; v[3,3] = []; v[null];").to<int_64>(), 3);
 }
 
 TEST(gt_ascript_walk, Slice_NonContainer) {
@@ -3594,4 +3643,162 @@ TEST(gt_ascript_walk, NestedIndexAssign_DeepNested) {
         "vv[0][\"m\"][\"y\"];");
     EXPECT_EQ(etype, error_type::UnknownError);
     EXPECT_EQ(eval.to<int_64>(), 20);
+}
+
+// ==================== bytes / string byte elements ====================
+
+TEST(gt_ascript_walk, BytesIndex_Read) {
+    EXPECT_EQ(exec_src("var b = bytes(\"AB\"); b[0];").to<int_64>(), 65);
+    EXPECT_EQ(exec_src("var b = bytes(\"AB\"); b[-1];").to<int_64>(), 66);
+    EXPECT_EQ(exec_src("var b = bytes(\"AB\"); b[null];").to<int_64>(), 2);
+    EXPECT_EQ(exec_src("var o = map{\"b\": bytes(\"AB\")}; o.b[1];").to<int_64>(), 66);
+    EXPECT_EQ(exec_src("var o = map{\"b\": bytes(\"AB\")}; o.b[null];").to<int_64>(), 2);
+    auto [e1, v1] = exec_src_catch("var b = bytes(\"AB\"); b[2];");
+    EXPECT_EQ(e1, error_type::IndexError);
+}
+
+TEST(gt_ascript_walk, BytesIndex_Write) {
+    EXPECT_EQ(exec_src("var b = bytes(\"AB\"); b[0] = 97; b[0];").to<int_64>(), 97);
+    EXPECT_EQ(exec_src("var b = bytes(\"AB\"); b[-1] = 99; b[1];").to<int_64>(), 99);
+    EXPECT_EQ(exec_src("var b = bytes(\"AB\"); b[null] = 67; b[null];").to<int_64>(), 3);
+    auto [e1, v1] = exec_src_catch("var b = bytes(\"AB\"); b[null] = \"A\";");
+    EXPECT_EQ(e1, error_type::ConvError);
+}
+
+TEST(gt_ascript_walk, BytesSlice) {
+    EXPECT_EQ(exec_src("var b = bytes(\"hello world\"); b[0,5];").is<bytes>(), true);
+    EXPECT_EQ(exec_src("var b = bytes(\"hello world\"); b[0,5];").to<bytes>().size(), 5u);
+    EXPECT_EQ(exec_src("var b = bytes(\"hello\"); b[3,0,-1];").to<bytes>()[0], 108);
+    EXPECT_EQ(exec_src("var b = bytes(\"abc\"); b[null];").to<int_64>(), 3);
+}
+
+TEST(gt_ascript_walk, ByteValuePolicy) {
+    // wrap by default, an overflow error when the config asks; the conversion is the integer one
+    EXPECT_EQ(exec_src("var s; s = \"a\"; s[0] = 300; s[0];").to<int_64>(), 44);
+    EXPECT_EQ(exec_src("var s; s = \"a\"; s[0] = -1; s[0];").to<int_64>(), 255);
+    EXPECT_EQ(exec_src("var s; s = \"a\"; s[0] = 65.9; s[0];").to<int_64>(), 65);
+    EXPECT_EQ(exec_src("var s; s = \"a\"; s[0] = \"65\"; s[0];").to<int_64>(), 65);
+    EXPECT_EQ(exec_src("var s; s = \"a\"; s[0] = true; s[0];").to<int_64>(), 1);
+
+    error_type e1 = error_type::UnknownError;
+    try {
+        exec_ovf(true, "var s; s = \"a\"; s[0] = 300;");
+    } catch (script_exception& e) {
+        e1 = e.type;
+    }
+    EXPECT_EQ(e1, error_type::OverflowError);
+    EXPECT_EQ(exec_ovf(true, "var s; s = \"a\"; s[0] = 255; s[0];").to<int_64>(), 255);
+}
+
+TEST(gt_ascript_walk, ByteElement_CompoundRefused) {
+    // a byte element has no variant slot: only the explicit read-then-write form works
+    auto check = [](const char* src, const char* what) {
+        auto [etype, eval] = exec_src_catch(src);
+        EXPECT_EQ(etype, error_type::TypeError) << what;
+        EXPECT_EQ(eval.to<std::string>(), what);
+    };
+    check("var s; s = \"hello\"; s[0] += 1;", "string element does not support compound assignment or increment");
+    check("var s; s = \"hello\"; ++s[0];", "string element does not support compound assignment or increment");
+    check("var b = bytes(\"AB\"); b[0] -= 1;", "bytes element does not support compound assignment or increment");
+    check("var s; s = \"hello\"; s[1,3] += \"x\";", "slice does not support compound assignment or increment");
+    check("var v; v = [1,2,3]; v[1,3]++;", "slice does not support compound assignment or increment");
+
+    // the explicit form is the supported spelling
+    EXPECT_EQ(exec_src("var s; s = \"hello\"; s[0] = s[0] + 1; s[0];").to<int_64>(), 105);
+}
+
+TEST(gt_ascript_walk, ByteElement_DeleteRefused) {
+    auto [e1, v1] = exec_src_catch("var s; s = \"hello\"; delete s[0];");
+    EXPECT_EQ(e1, error_type::TypeError);
+    auto [e2, v2] = exec_src_catch("var b = bytes(\"AB\"); delete b[0];");
+    EXPECT_EQ(e2, error_type::TypeError);
+    auto [e3, v3] = exec_src_catch("var v; v = [1,2,3]; delete v[1,3];");
+    EXPECT_EQ(e3, error_type::TypeError);
+}
+
+TEST(gt_ascript_walk, Slice_DotChainReadWrite) {
+    // a chain-based slice reads like the standalone form and writes back through the chain
+    auto sl = exec_src("var o = map{\"v\": [0,1,2,3,4]}; o.v[1,3];");
+    ASSERT_TRUE(sl.is<varvec>());
+    EXPECT_EQ(sl.to_vec().size(), 2u);
+    EXPECT_EQ(sl.to_vec()[0].to<int_64>(), 1);
+    EXPECT_EQ(exec_src("var o = map{\"v\": [0,1,2,3,4]}; o.v[1,3] = [7,8]; o.v[1];").to<int_64>(), 7);
+    EXPECT_EQ(exec_src("var o = map{\"v\": [0,1,2,3,4]}; o.v[1,3] = [9:2]; o.v[2];").to<int_64>(), 9);
+    EXPECT_EQ(exec_src("var o = map{\"s\": \"abcd\"}; o.s[1,3] = \"XY\"; o.s;").to<std::string>(), "aXYd");
+    EXPECT_EQ(exec_src("var o = map{\"s\": \"abcd\"}; o.s[1,3];").to<std::string>(), "bc");
+
+    // a missing chain terminal is a NameError, and nothing is created on the way
+    auto [e1, v1] = exec_src_catch("var o = map{}; o.v[1,3] = [1,2];");
+    EXPECT_EQ(e1, error_type::NameError);
+    EXPECT_EQ(exec_src("var o = map{}; try { o.v[1,3] = [1,2]; } catch (e) {} o[null];").to<int_64>(), 0);
+}
+
+TEST(gt_ascript_walk, Slice_ReadLstReverse) {
+    // the lst slice reads in the traversal order, a reverse step included
+    auto v = exec_src("var l = lst[10,20,30,40,50]; l[3,0,-1];");
+    ASSERT_TRUE(v.is_lst());
+    auto& lst = v.to_lst();
+    ASSERT_EQ(lst.size(), 3u);
+    EXPECT_EQ(lst.front().to<int_64>(), 40);
+    EXPECT_EQ(lst.back().to<int_64>(), 20);
+}
+
+TEST(gt_ascript_walk, WriteTargetOrder) {
+    // the index evaluates before the container is touched: a target the call creates is written
+    EXPECT_EQ(exec_src("var s; def f() { s = [10, 20, 30]; return 1; } s[f()] = 9; s[1];").to<int_64>(), 9);
+    EXPECT_EQ(exec_src("var s; def f() { s = \"abc\"; return 0; } s[f()] = 65; s[0];").to<int_64>(), 65);
+
+    // the index runs exactly once, for plain and compound assignment alike
+    EXPECT_EQ(exec_src("var n; n = 0; def f() { n = n + 1; return 0; } var v; v = [1, 2]; v[f()] = 9; n;")
+                  .to<int_64>(),
+              1);
+    EXPECT_EQ(exec_src("var n; n = 0; def f() { n = n + 1; return 0; } var v; v = [1, 2]; v[f()] += 10; n;")
+                  .to<int_64>(),
+              1);
+
+    // a byte element behind an effectful parent chain writes (no bail-out after evaluation)
+    EXPECT_EQ(exec_src("var a; a = [\"hi\"]; def f() { return 0; } a[f()][0] = 65; a[0][0];").to<int_64>(), 65);
+}
+
+TEST(gt_ascript_walk, ReadTargetOrder) {
+    // reads agree with writes: the index evaluates first, the container is read afterwards
+    EXPECT_EQ(exec_src("var v; def f() { v = [10, 20, 30]; return 1; } v[f()];").to<int_64>(), 20);
+    EXPECT_EQ(exec_src("var v; def f() { v = [10, 20, 30]; return 2; } v[1, f()][0];").to<int_64>(), 20);
+}
+
+TEST(gt_ascript_walk, IndexChainOrder) {
+    // a nested chain evaluates its indexes left to right, then reads the container
+    EXPECT_EQ(exec_src("var log; log = \"\"; def fa() { log = log + \"a\"; return 0; }"
+                       "def fb() { log = log + \"b\"; return 0; }"
+                       "var m; m = [[1]]; m[fa()][fb()] = 9; log;")
+                  .to<std::string>(),
+              "ab");
+    EXPECT_EQ(exec_src("var log; log = \"\"; def fa() { log = log + \"a\"; return 0; }"
+                       "def fb() { log = log + \"b\"; return 0; }"
+                       "var m; m = [[1]]; m[fa()][fb()]; log;")
+                  .to<std::string>(),
+              "ab");
+}
+
+TEST(gt_ascript_walk, WriteIndex_StoreGrowth) {
+    // the index may grow the variable store (a frame variable lives in the same array):
+    // the address is taken after it runs, so the slot stays valid
+    EXPECT_EQ(exec_src("var a; a = [1,2,3];"
+                       "def f() { var q1; var q2; var q3; var q4; var q5; var q6; var q7; var q8;"
+                       " var q9; var q10; var q11; var q12; var q13; var q14; var q15; var q16;"
+                       " var q17; var q18; var q19; var q20; var q21; var q22; var q23; var q24;"
+                       " var q25; var q26; var q27; var q28; var q29; var q30; var q31; var q32;"
+                       " return 1; }"
+                       "a[f()] = 99; a[1];")
+                  .to<int_64>(),
+              99);
+    EXPECT_EQ(exec_src("var a; a = [1,2,3];"
+                       "def f() { var q1; var q2; var q3; var q4; var q5; var q6; var q7; var q8;"
+                       " var q9; var q10; var q11; var q12; var q13; var q14; var q15; var q16;"
+                       " var q17; var q18; var q19; var q20; var q21; var q22; var q23; var q24;"
+                       " var q25; var q26; var q27; var q28; var q29; var q30; var q31; var q32;"
+                       " return 1; }"
+                       "a[f()] += 10; a[1];")
+                  .to<int_64>(),
+              12);
 }

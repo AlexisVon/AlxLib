@@ -1308,27 +1308,10 @@ namespace alx {
                     }
                     bool in_dot = left.size() >= 2 && left[0].is<OPTYPE>() &&
                                   static_cast<op_enum>(left[0].to<OPTYPE>()) == O_DOT;
-                    if (in_dot) {
-                        varvec idx = parse_expr();
-                        consume(T_RB, "]");
 
-                        // a flat chain holds scalar keys only: int, string, null, with -N folded in
-                        if (idx.size() == 1 && idx[0].is<int_64>())
-                            left.push_back(variant(idx[0].to<int_64>()));
-                        else if (idx.size() == 1 && idx[0].is<std::string>())
-                            left.push_back(idx[0]);
-                        else if (idx.size() == 1 && idx[0].null())
-                            left.push_back(variant());
-
-                        else if (idx.size() == 2 && idx[0].is<OPTYPE>() &&
-                                 static_cast<op_enum>(idx[0].to<OPTYPE>()) == O_UMINUS &&
-                                 idx[1].is_vec() && idx[1].to<varvec>().size() == 1 &&
-                                 idx[1].to<varvec>()[0].is<int_64>())
-                            left.push_back(variant(-idx[1].to<varvec>()[0].to<int_64>()));
-                        else
-                            error("[] index in dot chain must be a literal integer, string, or null");
-                    } else if (has_comma_in_brackets()) {
-
+                    // a comma form is a slice whatever the base is: the chain becomes its base and
+                    // the result is a value, so the flat-chain scalar key rule does not apply
+                    auto parse_slice_suffix = [&]() {
                         varvec from = parse_assign();
                         consume(T_COMMA, ",");
                         varvec to = parse_assign();
@@ -1373,6 +1356,31 @@ namespace alx {
                         store_slice_arg(v, to);
                         v.push_back(std::move(step));
                         left = std::move(v);
+                    };
+
+                    if (in_dot && has_comma_in_brackets()) {
+                        parse_slice_suffix();
+                    } else if (in_dot) {
+                        varvec idx = parse_expr();
+                        consume(T_RB, "]");
+
+                        // a flat chain holds scalar keys only: int, string, null, with -N folded in
+                        if (idx.size() == 1 && idx[0].is<int_64>())
+                            left.push_back(variant(idx[0].to<int_64>()));
+                        else if (idx.size() == 1 && idx[0].is<std::string>())
+                            left.push_back(idx[0]);
+                        else if (idx.size() == 1 && idx[0].null())
+                            left.push_back(variant());
+
+                        else if (idx.size() == 2 && idx[0].is<OPTYPE>() &&
+                                 static_cast<op_enum>(idx[0].to<OPTYPE>()) == O_UMINUS &&
+                                 idx[1].is_vec() && idx[1].to<varvec>().size() == 1 &&
+                                 idx[1].to<varvec>()[0].is<int_64>())
+                            left.push_back(variant(-idx[1].to<varvec>()[0].to<int_64>()));
+                        else
+                            error("[] index in dot chain must be a literal integer, string, or null");
+                    } else if (has_comma_in_brackets()) {
+                        parse_slice_suffix();
                     } else {
                         varvec idx = parse_expr();
                         consume(T_RB, "]");

@@ -37,6 +37,112 @@ namespace alx {
             int_64 wrap_neg(int_64 _a) { return (int_64) (0 - (uint_64) _a); }
             int_64 wrap_shl(int_64 _a, int_64 _b) { return (int_64) ((uint_64) _a << (_b & 63)); }
             int_64 wrap_shr(int_64 _a, int_64 _b) { return _a >> (_b & 63); }
+
+            // A byte container's element value: the ordinary integer conversion, then the 0-255
+            // write-back policy -- wrap by default, an overflow error when the config asks
+            int_64 byte_value(const variant& _val, bool _overflow_check) {
+                int_64 v = cov_int(_val);
+                if (!_overflow_check) return v & 0xFF;
+                if (v < 0 || v > 255)
+                    throw script_exception{error_type::OverflowError,
+                                           std::string("Byte value out of range (0-255): ") + std::to_string(v)};
+                return v;
+            }
+
+            // Store one byte in a string/bytes container; _key is the evaluated index (null = append).
+            // The value is converted by the caller, so a refused write leaves no byte behind
+            void byte_store(variant& _parent, const variant& _key, int_64 _byte) {
+                bool is_str = _parent.is<std::string>();
+                uint_64 size = is_str ? _parent.as<std::string>().size() : _parent.as<bytes>().size();
+                if (_key.null()) {
+                    if (is_str) {
+                        _parent.as<std::string>().push_back(static_cast<char>(_byte));
+                    } else {
+                        uint_8 b = static_cast<uint_8>(_byte);
+                        _parent.as<bytes>().append(&b, 1);
+                    }
+                    return;
+                }
+                int_64 i = cov_int(_key);
+                if (i == -1) i = static_cast<int_64>(size) - 1;
+                if (i < 0 || static_cast<uint_64>(i) >= size)
+                    throw script_exception{error_type::IndexError,
+                                           std::string(is_str ? "string index out of range" : "bytes index out of range")};
+                if (is_str) {
+                    _parent.as<std::string>()[static_cast<uint_64>(i)] = static_cast<char>(_byte);
+                } else {
+                    _parent.as<bytes>()[static_cast<uint_64>(i)] = static_cast<uint_8>(_byte);
+                }
+            }
+
+            // The number of positions a slice visits; the read walk and the write scatter share it
+            int_64 slice_count(int_64 _from, int_64 _to, int_64 _step) {
+                if (_step > 0) return _from >= _to ? 0 : (_to - _from + _step - 1) / _step;
+                return _from <= _to ? 0 : (_from - _to - _step - 1) / (-_step);
+            }
+
+            // The slice-assignment messages, shared by every container branch
+            std::string slice_length_error(int_64 _want, uint_64 _got) {
+                return "slice assignment length mismatch: " + std::to_string(_want) + " positions, " +
+                       std::to_string(_got) + " values";
+            }
+
+            std::string slice_type_error(const char* _want, const variant& _got) {
+                return std::string("slice assignment expects ") + _want + ", got " + type_name_script(_got);
+            }
+
+            // Read-side element access, shared by every level of an index chain: [i] / [-1] / [null] /
+            // key. A string or bytes element reads as its byte value (0-255)
+            variant index_value(const variant& _obj, const variant& _idx) {
+                if (_obj.is<varvec>()) {
+                    auto& vec = _obj.to<varvec>();
+                    if (_idx.null()) return variant(static_cast<int_64>(vec.size()));
+                    int_64 i = cov_int(_idx);
+                    if (i == -1) i = static_cast<int_64>(vec.size()) - 1;
+                    if (i >= 0 && static_cast<uint_64>(i) < vec.size())
+                        return vec[static_cast<size_t>(i)];
+                    throw script_exception{error_type::IndexError, std::string("vec index out of range")};
+                }
+                if (_obj.is<varlst>()) {
+                    auto& lst = _obj.to<varlst>();
+                    if (_idx.null()) return variant(static_cast<int_64>(lst.size()));
+                    int_64 i = cov_int(_idx);
+                    if (i == -1) i = static_cast<int_64>(lst.size()) - 1;
+                    if (i < 0 || static_cast<uint_64>(i) >= lst.size())
+                        throw script_exception{error_type::IndexError, std::string("lst index out of range")};
+                    auto it = lst.begin();
+                    for (int_64 n = 0; n < i; ++n) ++it;
+                    return *it;
+                }
+                if (_obj.is<varmap>()) {
+                    auto& m = _obj.to<varmap>();
+                    if (_idx.null()) return variant(static_cast<int_64>(m.size()));
+                    if (!_idx.is<std::string>())
+                        throw script_exception{error_type::TypeError, std::string("map key must be a string")};
+                    std::string key = _idx.to<std::string>();
+                    if (m.contain(key)) return m.value(key);
+                    throw script_exception{error_type::KeyError, std::string("map key not found: " + key)};
+                }
+                if (_obj.is<std::string>()) {
+                    auto& s = _obj.to<std::string>();
+                    if (_idx.null()) return variant(static_cast<int_64>(s.size()));
+                    int_64 i = cov_int(_idx);
+                    if (i == -1) i = static_cast<int_64>(s.size()) - 1;
+                    if (i >= 0 && static_cast<uint_64>(i) < s.size())
+                        return variant(static_cast<int_64>(static_cast<uint_8>(s[static_cast<size_t>(i)])));
+                    throw script_exception{error_type::IndexError, std::string("string index out of range")};
+                }
+                if (_obj.is<bytes>()) {
+                    auto& b = _obj.to<bytes>();
+                    if (_idx.null()) return variant(static_cast<int_64>(b.size()));
+                    int_64 i = cov_int(_idx);
+                    if (i == -1) i = static_cast<int_64>(b.size()) - 1;
+                    if (i >= 0 && static_cast<uint_64>(i) < b.size())
+                        return variant(static_cast<int_64>(b[static_cast<uint_64>(i)]));
+                    throw script_exception{error_type::IndexError, std::string("bytes index out of range")};
+                }
+                throw script_exception{error_type::TypeError, std::string("Type does not support [i] index")};
+            }
         }
 
         op_table walker::s_ops = {};
@@ -413,12 +519,22 @@ namespace alx {
                 return nullptr != stored ? *stored : variant();
             }
 
-            impl_import* owner = _w.state.current;
-            variant* p = resolve_ptr(lhs, _w, false, &owner);
-            if (p) {
-                *p = std::move(val);
-                bind_owner(*p, owner);
-                return *p;
+            target_resolved t = walker::resolve_target(lhs, _w, resolve_mode::write, false);
+            if (t.type == target_resolved::kind::byte) {
+
+                // the value becomes a byte before it is stored, so a refused write leaves nothing behind
+                int_64 b = byte_value(val, _w.m_cfg.overflow_check);
+                byte_store(*t.parent, t.key, b);
+                return variant(b);
+            }
+            if (t.type == target_resolved::kind::slice) {
+                walker::store_slice(t, val);
+                return val;
+            }
+            if (t.type == target_resolved::kind::slot) {
+                *t.slot = std::move(val);
+                bind_owner(*t.slot, t.owner);
+                return *t.slot;
             }
             return val;
         }
@@ -1374,7 +1490,7 @@ namespace alx {
         }
 
         variant walker::op_pre_inc(const varvec& _tree, walker& _w) {
-            variant* p_ = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            variant* p_ = resolve_slot(_tree[1].to<varvec>(), _w, true);
             if (!p_)
                 throw script_exception{error_type::TypeError, std::string("not an lvalue")};
             int_64 old = to_int_strict(*p_);
@@ -1386,7 +1502,7 @@ namespace alx {
         }
 
         variant walker::op_pre_dec(const varvec& _tree, walker& _w) {
-            variant* p_ = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            variant* p_ = resolve_slot(_tree[1].to<varvec>(), _w, true);
             if (!p_)
                 throw script_exception{error_type::TypeError, std::string("not an lvalue")};
             int_64 old = to_int_strict(*p_);
@@ -1398,7 +1514,7 @@ namespace alx {
         }
 
         variant walker::op_post_inc(const varvec& _tree, walker& _w) {
-            variant* p_ = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            variant* p_ = resolve_slot(_tree[1].to<varvec>(), _w, true);
             if (!p_)
                 throw script_exception{error_type::TypeError, std::string("not an lvalue")};
             int_64 old = to_int_strict(*p_);
@@ -1409,7 +1525,7 @@ namespace alx {
         }
 
         variant walker::op_post_dec(const varvec& _tree, walker& _w) {
-            variant* p_ = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            variant* p_ = resolve_slot(_tree[1].to<varvec>(), _w, true);
             if (!p_)
                 throw script_exception{error_type::TypeError, std::string("not an lvalue")};
             int_64 old = to_int_strict(*p_);
@@ -1544,19 +1660,32 @@ namespace alx {
                     std::string dummy;
                     return variant(static_cast<int_64>(r.parent->to(dummy).size()));
                 }
+                if (r.parent->is<bytes>()) {
+                    bytes dummy;
+                    return variant(static_cast<int_64>(r.parent->to(dummy).size()));
+                }
             }
 
-            // A character is not a variant*, so a string element has to be materialised as a new string
+            // A byte element is not a variant*, so it is materialised as its byte value (0-255)
             if (r.key.is<int_64>() && r.kind == TerminalKind::T_Variant && r.parent &&
-                r.parent->is<std::string>()) {
-                std::string dummy;
-                const std::string& s = r.parent->to(dummy);
+                (r.parent->is<std::string>() || r.parent->is<bytes>())) {
                 int_64 i = r.key.to<int_64>();
-                if (i == -1) i = static_cast<int_64>(s.size()) - 1;
-                if (i >= 0 && static_cast<size_t>(i) < s.size())
-                    return variant(std::string(1, s[static_cast<size_t>(i)]));
-                throw script_exception{error_type::IndexError,
-                                       std::string("string index out of range")};
+                if (r.parent->is<std::string>()) {
+                    std::string dummy;
+                    const std::string& s = r.parent->to(dummy);
+                    if (i == -1) i = static_cast<int_64>(s.size()) - 1;
+                    if (i < 0 || static_cast<uint_64>(i) >= s.size())
+                        throw script_exception{error_type::IndexError,
+                                               std::string("string index out of range")};
+                    return variant(static_cast<int_64>(static_cast<uint_8>(s[static_cast<uint_64>(i)])));
+                }
+                bytes dummy;
+                const bytes& b = r.parent->to(dummy);
+                if (i == -1) i = static_cast<int_64>(b.size()) - 1;
+                if (i < 0 || static_cast<uint_64>(i) >= b.size())
+                    throw script_exception{error_type::IndexError,
+                                           std::string("bytes index out of range")};
+                return variant(static_cast<int_64>(b[static_cast<uint_64>(i)]));
             }
             variant* p = r.get(true);
             if (p) {
@@ -1659,102 +1788,86 @@ namespace alx {
                 }
             }
 
-            variant obj = _w.walk_tree(_tree[1].to<varvec>());
-            variant idx = walker::eval_arg(_tree[2], _w);
+            // The whole index chain evaluates left to right before the base is read: an index can
+            // replace, resize or remove the container it indexes
+            std::vector<const varvec*> chain;
+            const varvec* node = &_tree;
+            while (!node->empty() && (*node)[0].is<OPTYPE>() &&
+                   static_cast<op_enum>((*node)[0].to<OPTYPE>()) == O_INDEX) {
+                chain.push_back(node);
+                node = &(*node)[1].to<varvec>();
+            }
+            std::vector<variant> keys(chain.size());
+            for (size_t k = 0; k < chain.size(); k++)
+                keys[k] = walker::eval_arg((*chain[chain.size() - 1 - k])[2], _w);
 
-            if (obj.is<varvec>()) {
-                auto& vec = obj.to<varvec>();
-                if (idx.null()) return variant(static_cast<int_64>(vec.size()));
-                int_64 i = cov_int(idx);
-                if (i == -1) i = static_cast<int_64>(vec.size()) - 1;
-                if (i >= 0 && static_cast<size_t>(i) < vec.size())
-                    return vec[static_cast<size_t>(i)];
-                throw script_exception{error_type::IndexError, std::string("vec index out of range")};
-            }
-            if (obj.is<varlst>()) {
-                auto& lst = obj.to<varlst>();
-                if (idx.null()) return variant(static_cast<int_64>(lst.size()));
-                int_64 i = cov_int(idx);
-                if (i == -1) i = static_cast<int_64>(lst.size()) - 1;
-                if (i < 0 || static_cast<size_t>(i) >= lst.size())
-                    throw script_exception{error_type::IndexError, std::string("lst index out of range")};
-                auto it = lst.begin();
-                for (int_64 n = 0; n < i; ++n) ++it;
-                return *it;
-            }
-            if (obj.is<varmap>()) {
-                auto& m = obj.to<varmap>();
-                if (idx.null()) return variant(static_cast<int_64>(m.size()));
-                if (!idx.is<std::string>())
-                    throw script_exception{error_type::TypeError,
-                                           std::string("map key must be a string")};
-                std::string key = idx.to<std::string>();
-                if (m.contain(key)) return m.value(key);
-                throw script_exception{error_type::KeyError, std::string("map key not found: " + key)};
-            }
-            if (obj.is<std::string>()) {
-                auto& s = obj.to<std::string>();
-                if (idx.null()) return variant(static_cast<int_64>(s.size()));
-                int_64 i = cov_int(idx);
-                if (i == -1) i = static_cast<int_64>(s.size()) - 1;
-                if (i >= 0 && static_cast<size_t>(i) < s.size())
-                    return std::string(1, s[static_cast<size_t>(i)]);
-                throw script_exception{error_type::IndexError, std::string("string index out of range")};
-            }
-            throw script_exception{error_type::TypeError, std::string("Type does not support [i] index")};
+            variant obj = _w.walk_tree(*node);
+            for (size_t k = 0; k < keys.size(); k++)
+                obj = index_value(obj, keys[k]);
+            return obj;
         }
 
         variant walker::op_slice(const varvec& _tree, walker& _w) {
-            variant obj = _w.walk_tree(_tree[1].to<varvec>());
+            // the bounds can run script code: they evaluate before the container is read
+            variant fv, tv;
+            int_64 step;
+            walker::slice_eval_bounds(_tree, _w, fv, tv, step);
 
+            variant obj = _w.walk_tree(_tree[1].to<varvec>());
+            int_64 from, to;
+            walker::slice_apply_bounds(obj, fv, tv, step, from, to);
+
+            if (obj.is<varvec>()) return slice_vec(obj.to<varvec>(), from, to, step);
+            if (obj.is<varlst>()) return slice_lst(obj.to<varlst>(), from, to, step);
+            if (obj.is<std::string>()) return slice_str(obj.to<std::string>(), from, to, step);
+            return slice_bytes(obj.to<bytes>(), from, to, step);
+        }
+
+        // The bounds can run script code: evaluate them before any container pointer is taken
+        void walker::slice_eval_bounds(const varvec& _tree, walker& _w,
+                                       variant& _fv, variant& _tv, int_64& _step) {
             auto eval_bound = [&](const variant& _op) -> variant {
                 if (_op.is<int_64>() || _op.null()) return _op;
                 return walker::eval_arg(_op, _w);
             };
 
-            variant fv = eval_bound(_tree[2]);
-            variant tv = eval_bound(_tree[3]);
+            _fv = eval_bound(_tree[2]);
+            _tv = eval_bound(_tree[3]);
+            _step = _tree[4].is<int_64>() ? _tree[4].to<int_64>()
+                                          : cov_int(walker::eval_arg(_tree[4], _w));
 
-            int_64 step;
-            if (_tree[4].is<int_64>())
-                step = _tree[4].to<int_64>();
-            else
-                step = cov_int(walker::eval_arg(_tree[4], _w));
-
-            if (step == 0)
+            if (_step == 0)
                 throw script_exception{error_type::ArgError,
                                        std::string("slice step cannot be zero")};
+        }
 
+        // Fold the bounds against the container size; a straddling step clamps, so the walk stays in range
+        void walker::slice_apply_bounds(const variant& _obj, const variant& _fv, const variant& _tv,
+                                        int_64& _step, int_64& _from, int_64& _to) {
             int_64 size = 0;
-            if (obj.is<varvec>()) size = static_cast<int_64>(obj.to<varvec>().size());
-            else if (obj.is<varlst>()) size = static_cast<int_64>(obj.to<varlst>().size());
-            else if (obj.is<std::string>()) size = static_cast<int_64>(obj.to<std::string>().size());
+            if (_obj.is<varvec>()) size = static_cast<int_64>(_obj.to<varvec>().size());
+            else if (_obj.is<varlst>()) size = static_cast<int_64>(_obj.to<varlst>().size());
+            else if (_obj.is<std::string>()) size = static_cast<int_64>(_obj.to<std::string>().size());
+            else if (_obj.is<bytes>()) size = static_cast<int_64>(_obj.to<bytes>().size());
             else
                 throw script_exception{error_type::TypeError,
                                        std::string("Type does not support [i, j] slice")};
 
-            int_64 from = fv.null() ? size : cov_int(fv);
-            int_64 to = tv.null() ? size : cov_int(tv);
+            _from = _fv.null() ? size : cov_int(_fv);
+            _to = _tv.null() ? size : cov_int(_tv);
 
-            if (from < 0) from += size;
-            if (to < 0) to += size;
+            if (_from < 0) _from += size;
+            if (_to < 0) _to += size;
 
-            if (from < 0 || from > size || to < 0 || to > size)
+            if (_from < 0 || _from > size || _to < 0 || _to > size)
                 throw script_exception{error_type::IndexError,
                                        std::string("slice index out of range")};
 
-            // A negative step starting at size would read one element past the end
-            if (step < 0 && from == size) from = size - 1;
+            // a negative step starting at size would read one element past the end
+            if (_step < 0 && _from == size) _from = size - 1;
 
-            if ((step > 0 && from >= to) || (step < 0 && from <= to)) {
-                if (obj.is<varvec>()) return variant(varvec());
-                if (obj.is<varlst>()) return variant(varlst());
-                return std::string();
-            }
-
-            if (obj.is<varvec>()) return slice_vec(obj.to<varvec>(), from, to, step);
-            if (obj.is<varlst>()) return slice_lst(obj.to<varlst>(), from, to, step);
-            return slice_str(obj.to<std::string>(), from, to, step);
+            // a step beyond the span visits the same positions; the clamp keeps the arithmetic in range
+            _step = _step > 0 ? alx::min_value(_step, size + 1) : alx::max_value(_step, -(size + 1));
         }
 
         variant walker::slice_vec(const varvec& _vec, int_64 _start, int_64 _end, int_64 _step) {
@@ -1771,35 +1884,38 @@ namespace alx {
 
         variant walker::slice_lst(const varlst& _lst, int_64 _start, int_64 _end, int_64 _step) {
             varlst result;
-            int_64 idx = 0;
             int_64 abs_step = _step > 0 ? _step : -_step;
-            // varlst is forward-only: walk it once and keep the elements whose offset matches the stride
+            // varlst is forward-only: walk it once in scan order, then flip for a reverse traversal
+            int_64 idx = 0;
             for (auto& elem : _lst) {
-                bool in_range = (_step > 0) ? (idx >= _start && idx < _end)
-                                            : (idx <= _start && idx > _end);
+                bool in_range = _step > 0 ? (idx >= _start && idx < _end)
+                                          : (idx <= _start && idx > _end);
                 if (in_range) {
-                    int_64 dist = (_step > 0) ? (idx - _start) : (_start - idx);
+                    int_64 dist = _step > 0 ? (idx - _start) : (_start - idx);
                     if (dist % abs_step == 0) result.push_back(elem);
                 }
-                ++idx;
                 if (_step > 0 && idx >= _end) break;
-                if (_step < 0 && idx <= _end) break;
+                if (_step < 0 && idx > _start) break;
+                ++idx;
             }
+            if (_step < 0) result.reverse();
             return variant(std::move(result));
         }
 
         variant walker::slice_str(const std::string& _str, int_64 _start, int_64 _end, int_64 _step) {
             std::string result;
-            size_t len = _step > 0 ? static_cast<size_t>((_end - _start + _step - 1) / _step)
-                                   : static_cast<size_t>((_start - _end - _step - 1) / (-_step));
-            result.reserve(len);
-            if (_step > 0) {
-                for (int_64 i = _start; i < _end; i += _step)
-                    result.push_back(_str[static_cast<size_t>(i)]);
-            } else {
-                for (int_64 i = _start; i > _end; i += _step)
-                    result.push_back(_str[static_cast<size_t>(i)]);
-            }
+            result.reserve(static_cast<size_t>(slice_count(_start, _end, _step)));
+            for (int_64 i = _start; _step > 0 ? i < _end : i > _end; i += _step)
+                result.push_back(_str[static_cast<size_t>(i)]);
+            return variant(std::move(result));
+        }
+
+        variant walker::slice_bytes(const bytes& _buf, int_64 _start, int_64 _end, int_64 _step) {
+            bytes result(static_cast<uint_64>(slice_count(_start, _end, _step)));
+            uint_8* out = result.data();
+            int_64 k = 0;
+            for (int_64 i = _start; _step > 0 ? i < _end : i > _end; i += _step)
+                out[k++] = _buf[static_cast<uint_64>(i)];
             return variant(std::move(result));
         }
 
@@ -1836,7 +1952,7 @@ namespace alx {
 
         variant walker::op_ass_add(const varvec& _tree, walker& _w) {
             variant b = walker::eval_arg(_tree[2], _w);
-            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            variant* p = resolve_slot(_tree[1].to<varvec>(), _w, true);
             if (!p) return variant();
 
             switch (type_pair(*p, b)) {
@@ -1890,7 +2006,7 @@ namespace alx {
 
         variant walker::op_ass_sub(const varvec& _tree, walker& _w) {
             variant b = walker::eval_arg(_tree[2], _w);
-            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            variant* p = resolve_slot(_tree[1].to<varvec>(), _w, true);
             if (!p) return variant();
             if (p->is<int_64>() && b.is<int_64>()) {
                 int_64 ia = p->to<int_64>(), ib = b.to<int_64>();
@@ -1911,7 +2027,7 @@ namespace alx {
 
         variant walker::op_ass_mul(const varvec& _tree, walker& _w) {
             variant b = walker::eval_arg(_tree[2], _w);
-            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            variant* p = resolve_slot(_tree[1].to<varvec>(), _w, true);
             if (!p) return variant();
             if (p->is<int_64>() && b.is<int_64>()) {
                 int_64 ia = p->to<int_64>(), ib = b.to<int_64>();
@@ -1939,7 +2055,7 @@ namespace alx {
 
         variant walker::op_ass_div(const varvec& _tree, walker& _w) {
             variant b = walker::eval_arg(_tree[2], _w);
-            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            variant* p = resolve_slot(_tree[1].to<varvec>(), _w, true);
             if (!p) return variant();
             if (p->is<int_64>() && b.is<int_64>()) {
                 int_64 ia = p->to<int_64>(), ib = b.to<int_64>();
@@ -1962,7 +2078,7 @@ namespace alx {
 
         variant walker::op_ass_mod(const varvec& _tree, walker& _w) {
             variant b = walker::eval_arg(_tree[2], _w);
-            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            variant* p = resolve_slot(_tree[1].to<varvec>(), _w, true);
             if (!p) return variant();
             int_64 ai = to_int_strict(*p);
             int_64 bi = to_int_strict(b);
@@ -1976,7 +2092,7 @@ namespace alx {
 
         variant walker::op_ass_lshift(const varvec& _tree, walker& _w) {
             variant b = walker::eval_arg(_tree[2], _w);
-            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            variant* p = resolve_slot(_tree[1].to<varvec>(), _w, true);
             if (!p) return variant();
             int_64 a = to_int_strict(*p);
             int_64 sb = to_int_strict(b);
@@ -1991,7 +2107,7 @@ namespace alx {
 
         variant walker::op_ass_rshift(const varvec& _tree, walker& _w) {
             variant b = walker::eval_arg(_tree[2], _w);
-            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            variant* p = resolve_slot(_tree[1].to<varvec>(), _w, true);
             if (!p) return variant();
             int_64 a = to_int_strict(*p);
             int_64 sb = to_int_strict(b);
@@ -2004,7 +2120,7 @@ namespace alx {
 
         variant walker::op_ass_bit_and(const varvec& _tree, walker& _w) {
             variant b = walker::eval_arg(_tree[2], _w);
-            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            variant* p = resolve_slot(_tree[1].to<varvec>(), _w, true);
             if (!p) return variant();
             int_64 a = to_int_strict(*p), bb = to_int_strict(b);
             int_64 r = a & bb;
@@ -2014,7 +2130,7 @@ namespace alx {
 
         variant walker::op_ass_bit_or(const varvec& _tree, walker& _w) {
             variant b = walker::eval_arg(_tree[2], _w);
-            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            variant* p = resolve_slot(_tree[1].to<varvec>(), _w, true);
             if (!p) return variant();
             int_64 a = to_int_strict(*p), bb = to_int_strict(b);
             int_64 r = a | bb;
@@ -2024,7 +2140,7 @@ namespace alx {
 
         variant walker::op_ass_bit_xor(const varvec& _tree, walker& _w) {
             variant b = walker::eval_arg(_tree[2], _w);
-            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            variant* p = resolve_slot(_tree[1].to<varvec>(), _w, true);
             if (!p) return variant();
             int_64 a = to_int_strict(*p), bb = to_int_strict(b);
             int_64 r = a ^ bb;
@@ -2047,21 +2163,43 @@ namespace alx {
         static const char* const s_not_a_target =
             "assignment target must be a variable, member access, or index expression";
 
-        variant* walker::resolve_ptr(const varvec& _lhs, walker& _w, bool _isnav, impl_import** _owner,
-                                     bool _rmw) {
-            if (_lhs.empty()) return nullptr;
+        walker::target_resolved walker::resolve_target(const varvec& _lhs, walker& _w, resolve_mode _mode,
+                                                       bool _rmw, bool _create) {
+            target_resolved r;
+            bool writing = _mode == resolve_mode::write;
+            if (_lhs.empty()) return r;
             if (!_lhs[0].is<OPTYPE>()) {
-                if (!_isnav)
+                if (writing)
                     throw script_exception{error_type::TypeError, std::string(s_not_a_target)};
-                return nullptr;
+                return r;
             }
+
+            // The container an element or slice write lands in: an addressable base resolves, anything
+            // else is an rvalue and never a container
+            impl_import* base_owner = nullptr;
+            auto container_of = [&](const varvec& _t) -> variant* {
+                if (_t.empty() || !_t[0].is<OPTYPE>()) return nullptr;
+                auto op = static_cast<op_enum>(_t[0].to<OPTYPE>());
+                if (op != O_LOAD && op != O_ILOAD && op != O_INDEX && op != O_DOT) return nullptr;
+                target_resolved br = walker::resolve_target(_t, _w, _mode, _rmw, false);
+                if (br.type == target_resolved::kind::slot) {
+                    base_owner = br.owner;
+                    return br.slot;
+                }
+                // a byte element is a value, not a container to index through
+                if (br.type == target_resolved::kind::byte)
+                    throw script_exception{error_type::TypeError, std::string("Type does not support [i]")};
+                return nullptr;
+            };
 
             switch (static_cast<op_enum>(_lhs[0].to<OPTYPE>())) {
             case O_LOAD: {
                 variant* p = _w.state.var_ptr(_lhs[1].to<std::string>());
-                if (!p)
+                if (!p) {
+                    if (!writing) return r;
                     throw script_exception{error_type::NameError,
                                            std::string("Undefined: ") + _lhs[1].to<std::string>()};
+                }
 
                 if (p->is<anyptr>()) {
                     const anyptr& ap = p->to<anyptr>();
@@ -2072,8 +2210,10 @@ namespace alx {
                         throw script_exception{error_type::TypeError,
                                                std::string("import namespace cannot be read as variable")};
                 }
-                if (_owner) *_owner = _w.state.current;
-                return p;
+                r.type = target_resolved::kind::slot;
+                r.slot = p;
+                r.owner = _w.state.current;
+                return r;
             }
 
             case O_ILOAD: {
@@ -2083,10 +2223,12 @@ namespace alx {
                 std::string path = name_val.to<std::string>();
                 if (walker::is_simple_name(path)) {
                     variant* p = _w.state.var_ptr(path);
-                    if (!p && !_isnav)
+                    if (!p) {
+                        if (!writing) return r;
                         throw script_exception{error_type::NameError,
                                                std::string("Undefined: ") + path};
-                    if (p && p->is<anyptr>()) {
+                    }
+                    if (p->is<anyptr>()) {
                         const anyptr& ap = p->to<anyptr>();
                         if (anyptr_ex<impl_link>::as(ap))
                             throw script_exception{error_type::TypeError,
@@ -2095,16 +2237,21 @@ namespace alx {
                             throw script_exception{error_type::TypeError,
                                                    std::string("import namespace cannot be read as variable")};
                     }
-                    if (p && _owner) *_owner = _w.state.current;
-                    return p;
+                    r.type = target_resolved::kind::slot;
+                    r.slot = p;
+                    r.owner = _w.state.current;
+                    return r;
                 }
-                return resolve_ptr(walker::iload_parse_expr(path, _w.m_cfg.parse_depth), _w, _isnav, _owner, _rmw);
+                return walker::resolve_target(walker::iload_parse_expr(path, _w.m_cfg.parse_depth), _w,
+                                              _mode, _rmw, _create);
             }
 
             case O_DOT: {
                 auto dr = resolve_dot(_lhs, _w.state);
-                if (_owner) *_owner = dr.slot_owner;
-                if (!_isnav && dr.kind == TerminalKind::T_Slot && dr.parent) {
+                r.owner = dr.slot_owner;
+
+                // the write-side guards, keyed on the mode: a host probe is exempt, a script write is not
+                if (writing && dr.kind == TerminalKind::T_Slot && dr.parent) {
                     auto& sv = *dr.parent;
                     if (sv.is<anyptr>()) {
                         const anyptr& ap_w = sv.to<anyptr>();
@@ -2115,23 +2262,33 @@ namespace alx {
                     }
                 }
                 // a chain that entered a link's data resolves inside it at any depth: never a script target
-                if (!_isnav && dr.link_owner && dr.kind == TerminalKind::T_Variant)
+                if (writing && dr.link_owner && dr.kind == TerminalKind::T_Variant)
                     throw script_exception{error_type::TypeError, std::string("cannot write to link module variable")};
                 // a null key would append inside get(): reject it before the push for a read-modify-write
                 if (_rmw && dr.kind == TerminalKind::T_Variant && dr.parent && dr.key.null())
                     throw script_exception{error_type::TypeError,
                                            std::string("append index [null] is not a valid target for read-modify-write")};
-                variant* p = dr.get(false);
+                variant* p = dr.get(!_create);
                 if (p) {
 
                     // an existing area native names a registered function, not a writable slot
-                    if (!_isnav && dr.parent_kind == ParentKind::Area)
+                    if (writing && dr.parent_kind == ParentKind::Area)
                         throw script_exception{error_type::NameError,
                                                std::string("Cannot assign to function: " +
                                                            (dr.key.is<std::string>() ? dr.key.to<std::string>() : std::string()))};
-                    return p;
+                    r.type = target_resolved::kind::slot;
+                    r.slot = p;
+                    return r;
                 }
                 if (dr.kind == TerminalKind::T_Variant && dr.parent) {
+
+                    // a byte element is not a variant slot: the write path takes it as a byte position
+                    if (writing && (dr.parent->is<std::string>() || dr.parent->is<bytes>())) {
+                        r.type = target_resolved::kind::byte;
+                        r.parent = dr.parent;
+                        r.key = dr.key;
+                        return r;
+                    }
                     if (dr.key.null()) {
 
                         if (dr.parent->is<std::string>())
@@ -2159,93 +2316,255 @@ namespace alx {
                 throw script_exception{error_type::TypeError, std::string(s_not_a_target)};
             }
 
-            case O_SLICE:
-                throw script_exception{error_type::TypeError,
-                                       std::string("slice is read-only: cannot assign to slice")};
+            case O_SLICE: {
+                // the bounds can run script code: they evaluate before the container is resolved
+                variant fv, tv;
+                int_64 step;
+                walker::slice_eval_bounds(_lhs, _w, fv, tv, step);
+                if (!writing)
+                    throw script_exception{error_type::TypeError,
+                                           std::string("slice is read-only: cannot assign to slice")};
+                if (_rmw)
+                    throw script_exception{error_type::TypeError,
+                                           std::string("slice does not support compound assignment or increment")};
+                variant* parent = container_of(_lhs[1].to<varvec>());
+                if (!parent)
+                    throw script_exception{error_type::TypeError, std::string("cannot assign to an rvalue")};
+                if (!parent->is<varvec>() && !parent->is<varlst>() && !parent->is<std::string>() &&
+                    !parent->is<bytes>())
+                    throw script_exception{error_type::TypeError,
+                                           std::string("Type does not support [i, j] slice")};
+                int_64 from, to;
+                walker::slice_apply_bounds(*parent, fv, tv, step, from, to);
+                r.type = target_resolved::kind::slice;
+                r.parent = parent;
+                r.owner = base_owner;
+                r.from = from;
+                r.to = to;
+                r.step = step;
+                return r;
+            }
 
             case O_INDEX: {
-                auto& obj_load = _lhs[1].to<varvec>();
-                if (!obj_load[0].is<OPTYPE>()) {
-                    if (!_isnav)
-                        throw script_exception{error_type::TypeError, std::string(s_not_a_target)};
-                    return nullptr;
+                // Every index on the chain evaluates left to right before any container pointer is
+                // taken: an index can create, replace or resize the container it indexes
+                std::vector<const varvec*> chain;
+                const varvec* node = &_lhs;
+                while (!node->empty() && (*node)[0].is<OPTYPE>() &&
+                       static_cast<op_enum>((*node)[0].to<OPTYPE>()) == O_INDEX) {
+                    chain.push_back(node);
+                    node = &(*node)[1].to<varvec>();
                 }
-                variant* v = nullptr;
-                op_enum obj_op = static_cast<op_enum>(obj_load[0].to<OPTYPE>());
-                if (obj_op == O_LOAD) {
-                    v = _w.state.var_ptr(obj_load[1].to<std::string>());
-                    if (_owner) *_owner = _w.state.current;
-                    if (!v)
-                        throw script_exception{error_type::NameError,
-                                               std::string("Undefined: ") + obj_load[1].to<std::string>()};
-                } else if (obj_op == O_ILOAD) {
-                    variant name_val = walker::eval_arg(obj_load[1], _w);
-                    if (!name_val.is<std::string>())
-                        throw script_exception{error_type::TypeError,
-                                               std::string("Indirect load: variable did not evaluate to a string")};
-                    const std::string& path = name_val.to<std::string>();
-                    v = _w.state.var_ptr(path);
-                    if (v && _owner) *_owner = _w.state.current;
-                    if (!v)
-                        throw script_exception{error_type::NameError, std::string("Undefined: ") + path};
-                } else if (obj_op == O_INDEX || obj_op == O_DOT) {
-                    v = resolve_ptr(obj_load, _w, false, _owner, _rmw);
-                }
-                // a literal, a call result or any other temporary is an rvalue: never a container to write into
-                if (!v) throw script_exception{error_type::TypeError, std::string("cannot assign to an rvalue")};
-                variant idx = walker::eval_arg(_lhs[2], _w);
+                std::vector<variant> keys(chain.size());
+                for (size_t k = 0; k < chain.size(); k++)
+                    keys[k] = walker::eval_arg((*chain[chain.size() - 1 - k])[2], _w);
 
+                variant* v = container_of(*node);
+                if (!v) {
+                    if (!writing) return r;
+                    throw script_exception{error_type::TypeError, std::string("cannot assign to an rvalue")};
+                }
+                r.owner = base_owner;
+
+                // every level but the last must land on a container; nothing below runs script code
+                for (size_t k = 0; k + 1 < keys.size(); k++) {
+                    const variant& key = keys[k];
+                    if (v->is<varvec>()) {
+                        if (key.null())
+                            throw script_exception{error_type::TypeError, std::string("cannot index an append position")};
+                        int_64 i = cov_int(key);
+                        varvec& vec = v->as<varvec>();
+                        if (i == -1) i = static_cast<int_64>(vec.size()) - 1;
+                        if (i < 0 || static_cast<uint_64>(i) >= vec.size())
+                            throw script_exception{error_type::IndexError, std::string("vec index out of range")};
+                        v = &vec[static_cast<uint_64>(i)];
+                        continue;
+                    }
+                    if (v->is<varlst>()) {
+                        if (key.null())
+                            throw script_exception{error_type::TypeError, std::string("cannot index an append position")};
+                        int_64 i = cov_int(key);
+                        varlst& lst = v->as<varlst>();
+                        if (i == -1) i = static_cast<int_64>(lst.size()) - 1;
+                        if (i < 0 || static_cast<uint_64>(i) >= lst.size())
+                            throw script_exception{error_type::IndexError, std::string("lst index out of range")};
+                        auto it = lst.begin();
+                        for (int_64 n = 0; n < i; ++n) ++it;
+                        v = &*it;
+                        continue;
+                    }
+                    if (v->is<varmap>()) {
+                        if (!key.is<std::string>())
+                            throw script_exception{error_type::TypeError, std::string("map key must be a string")};
+                        varmap& m = v->as<varmap>();
+                        std::string ks = key.to<std::string>();
+                        if (!m.contain(ks))
+                            throw script_exception{error_type::KeyError, std::string("map key not found: " + ks)};
+                        v = &m[ks];
+                        continue;
+                    }
+                    throw script_exception{error_type::TypeError, std::string("Type does not support [i]")};
+                }
+
+                const variant& key = keys.back();
                 if (v->is<varvec>()) {
                     varvec& vec = v->as<varvec>();
-                    if (idx.null()) {
+                    if (key.null()) {
                         if (_rmw)
                             throw script_exception{error_type::TypeError,
                                                    std::string("append index [null] is not a valid target for read-modify-write")};
+                        if (!_create)
+                            throw script_exception{error_type::TypeError, std::string("cannot index an append position")};
                         vec.push_back(variant(static_cast<int_64>(0)));
-                        return &vec.back();
+                        r.type = target_resolved::kind::slot;
+                        r.slot = &vec.back();
+                        return r;
                     }
-                    int_64 i = cov_int(idx);
+                    int_64 i = cov_int(key);
                     if (i == -1) i = static_cast<int_64>(vec.size()) - 1;
-                    if (i < 0 || static_cast<size_t>(i) >= vec.size())
+                    if (i < 0 || static_cast<uint_64>(i) >= vec.size())
                         throw script_exception{error_type::IndexError, std::string("vec index out of range")};
-                    return &vec[static_cast<size_t>(i)];
+                    r.type = target_resolved::kind::slot;
+                    r.slot = &vec[static_cast<uint_64>(i)];
+                    return r;
                 }
                 if (v->is<varlst>()) {
                     varlst& lst = v->as<varlst>();
-                    if (idx.null()) {
+                    if (key.null()) {
                         if (_rmw)
                             throw script_exception{error_type::TypeError,
                                                    std::string("append index [null] is not a valid target for read-modify-write")};
+                        if (!_create)
+                            throw script_exception{error_type::TypeError, std::string("cannot index an append position")};
                         lst.push_back(variant(static_cast<int_64>(0)));
-                        return &lst.back();
+                        r.type = target_resolved::kind::slot;
+                        r.slot = &lst.back();
+                        return r;
                     }
-                    int_64 i = cov_int(idx);
+                    int_64 i = cov_int(key);
                     if (i == -1) i = static_cast<int_64>(lst.size()) - 1;
-                    if (i < 0 || static_cast<size_t>(i) >= lst.size())
+                    if (i < 0 || static_cast<uint_64>(i) >= lst.size())
                         throw script_exception{error_type::IndexError, std::string("lst index out of range")};
                     auto it = lst.begin();
                     for (int_64 n = 0; n < i; ++n) ++it;
-                    return &*it;
+                    r.type = target_resolved::kind::slot;
+                    r.slot = &*it;
+                    return r;
                 }
                 if (v->is<varmap>()) {
-
-                    if (!idx.is<std::string>())
-                        throw script_exception{error_type::TypeError,
-                                               std::string("map key must be a string")};
-                    return &v->as<varmap>()[idx.to<std::string>()];
+                    if (!key.is<std::string>())
+                        throw script_exception{error_type::TypeError, std::string("map key must be a string")};
+                    varmap& m = v->as<varmap>();
+                    std::string ks = key.to<std::string>();
+                    if (!m.contain(ks) && !_create)
+                        throw script_exception{error_type::KeyError, std::string("map key not found: " + ks)};
+                    r.type = target_resolved::kind::slot;
+                    r.slot = &m[ks];
+                    return r;
+                }
+                if (writing && (v->is<std::string>() || v->is<bytes>())) {
+                    r.type = target_resolved::kind::byte;
+                    r.parent = v;
+                    r.key = key;
+                    return r;
                 }
                 if (v->is<std::string>())
                     throw script_exception{error_type::TypeError,
                                            std::string("string does not support index write")};
                 throw script_exception{error_type::TypeError, std::string("Type does not support [i]")};
             }
+
             default:
 
-                // Navigation (a host probe) gets nullptr; an assignment target has to be an lvalue
-                if (!_isnav)
+                // a host probe gets none; an assignment target has to be an lvalue
+                if (writing)
                     throw script_exception{error_type::TypeError, std::string(s_not_a_target)};
-                return nullptr;
+                return r;
             }
+        }
+
+        variant* walker::resolve_slot(const varvec& _lhs, walker& _w, bool _rmw) {
+            target_resolved t = walker::resolve_target(_lhs, _w, resolve_mode::write, _rmw);
+            if (t.type == target_resolved::kind::slot) return t.slot;
+            if (t.type == target_resolved::kind::byte)
+                throw script_exception{error_type::TypeError,
+                                       std::string(t.parent->is<std::string>() ? "string" : "bytes") +
+                                           " element does not support compound assignment or increment"};
+            if (t.type == target_resolved::kind::slice)
+                throw script_exception{error_type::TypeError,
+                                       std::string("slice does not support compound assignment or increment")};
+            return nullptr;
+        }
+
+        variant* walker::resolve_nav(const varvec& _lhs, walker& _w) {
+            target_resolved t = walker::resolve_target(_lhs, _w, resolve_mode::nav, false);
+            return t.type == target_resolved::kind::slot ? t.slot : nullptr;
+        }
+
+        void walker::store_slice(const target_resolved& _t, const variant& _val) {
+            variant* parent = _t.parent;
+            int_64 from = _t.from, to = _t.to, step = _t.step;
+            int_64 count = slice_count(from, to, step);
+
+            // The operand is the same container type, scattered in the read's own position order, and
+            // its length must equal the position count; a fill is written as a constructed [v: N]
+            if (parent->is<varvec>()) {
+                if (!_val.is<varvec>()) throw script_exception{error_type::TypeError, slice_type_error("vec", _val)};
+                const varvec& src = _val.to<varvec>();
+                if (static_cast<int_64>(src.size()) != count)
+                    throw script_exception{error_type::ArgError, slice_length_error(count, src.size())};
+                auto& dst = parent->as<varvec>();
+                int_64 k = 0;
+                for (int_64 i = from; step > 0 ? i < to : i > to; i += step)
+                    dst[static_cast<uint_64>(i)] = src[static_cast<uint_64>(k++)];
+                return;
+            }
+            if (parent->is<varlst>()) {
+                if (!_val.is<varlst>()) throw script_exception{error_type::TypeError, slice_type_error("lst", _val)};
+                const varlst& src = _val.to<varlst>();
+                if (static_cast<int_64>(src.size()) != count)
+                    throw script_exception{error_type::ArgError, slice_length_error(count, src.size())};
+
+                // forward-only: the target positions are collected in the read's order first, then assigned
+                auto& dst = parent->as<varlst>();
+                std::vector<variant*> targets(static_cast<size_t>(count));
+                int_64 idx = 0, found = 0;
+                for (auto it = dst.begin(); it != dst.end(); ++it, ++idx) {
+                    bool hit = step > 0 ? (idx >= from && idx < to && (idx - from) % step == 0)
+                                        : (idx <= from && idx > to && (from - idx) % (-step) == 0);
+                    if (!hit) continue;
+                    targets[static_cast<size_t>((idx - from) / step)] = &*it;
+                    ++found;
+                }
+                if (found != count)
+                    throw script_exception{error_type::IndexError, std::string("slice index out of range")};
+                auto rit = src.begin();
+                for (int_64 k = 0; k < count; ++k) {
+                    *targets[static_cast<size_t>(k)] = *rit;
+                    ++rit;
+                }
+                return;
+            }
+            if (parent->is<std::string>()) {
+                if (!_val.is<std::string>())
+                    throw script_exception{error_type::TypeError, slice_type_error("string", _val)};
+                const std::string& src = _val.to<std::string>();
+                if (static_cast<int_64>(src.size()) != count)
+                    throw script_exception{error_type::ArgError, slice_length_error(count, src.size())};
+                auto& dst = parent->as<std::string>();
+                int_64 k = 0;
+                for (int_64 i = from; step > 0 ? i < to : i > to; i += step)
+                    dst[static_cast<uint_64>(i)] = src[static_cast<uint_64>(k++)];
+                return;
+            }
+            if (!_val.is<bytes>()) throw script_exception{error_type::TypeError, slice_type_error("bytes", _val)};
+            const bytes& src = _val.to<bytes>();
+            if (static_cast<int_64>(src.size()) != count)
+                throw script_exception{error_type::ArgError, slice_length_error(count, src.size())};
+            auto& dst = parent->as<bytes>();
+            int_64 k = 0;
+            for (int_64 i = from; step > 0 ? i < to : i > to; i += step)
+                dst[static_cast<uint_64>(i)] = src[static_cast<uint_64>(k++)];
         }
 
         void walker::store_raw(walker& _w, const variant& _name, variant&& _init_val) {

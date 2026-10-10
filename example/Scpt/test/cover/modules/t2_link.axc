@@ -78,8 +78,8 @@ assert_true(!b3.ex.has(d2, "z"), "2.23 link dict.has missing");
 var avec = vec[10, 20, 30];
 assert_eq(avec[0], 10, "2.24 index vec[0]");
 assert_eq(avec[2], 30, "2.25 index vec[2]");
-assert_eq("hello"[0], "h", "2.26 index string[0]");
-assert_eq("hello"[4], "o", "2.26b index string[4]");
+assert_eq("hello"[0], 104, "2.26 index string[0] = byte value");
+assert_eq("hello"[4], 111, "2.26b index string[4] = byte value");
 
 // index errors
 var at_err = false;

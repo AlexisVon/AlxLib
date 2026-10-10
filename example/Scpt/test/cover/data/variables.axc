@@ -75,8 +75,8 @@ if (l[-1] != 300) { $print("FAIL: l[-1]\n"); }
 
 // String index
 var s = "hello";
-if (s[0] != "h") { $print("FAIL: s[0]\n"); }
-if (s[4] != "o") { $print("FAIL: s[4]\n"); }
+if (s[0] != 104) { $print("FAIL: s[0]\n"); }
+if (s[4] != 111) { $print("FAIL: s[4]\n"); }
 
 // Map index
 var m = map{"key": "value", "num": 42};

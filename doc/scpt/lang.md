@@ -469,36 +469,38 @@ m1 += m2;    // m1 = m1 + m2  (map merge, right overwrites)
 - **The RHS evaluates first, then the target is resolved once**: in `x += f()` the call to `f()` runs before `x` is read, so whatever `f()` does to `x` is what the read sees (`x = 1`; `f()` sets it to 100 and returns 5 → `x` becomes 105). This is the C++17 order for `E1 op= E2` (P0145R3: the right operand is sequenced before the left), the same order `=` uses.
 - **The target is resolved exactly once**: `a[f()] += v` calls `f()` once (the explicit `a[f()] = a[f()] + v` calls it twice) and writes back the slot it read.
 - **Compound assignment (and `++`/`--`) on `[null]` (the append index) is a run-time `TypeError`**: its read is the size and its write is a push — not the same place, so it cannot be read-modified-written. Write it explicitly: `v[null] = 0; v[-1] += x;`.
+- **A byte element and a slice take `=` only**: `s[0] += 1`, `++s[0]`, `v[1, 3] += [1, 2]` are run-time `TypeError`s — the byte is not a variant slot and the slice is not a single place. Write the explicit read-then-write: `s[0] = s[0] + 1; v[1, 3] = v[1, 3];`.
 
 ## 6.3 [] indexing
 
 | Index | Semantics | Applicable types |
 |------|------|---------|
-| `0` | front element, read+write | vec / lst / string |
-| `-1` | back element, read+write | read: vec / lst / string; write: vec / lst |
-| `null` | read→`size()` / write→push_back | read: vec / lst / string / map; write: vec / lst |
+| `0` | front element, read+write | vec / lst / string / bytes |
+| `-1` | back element, read+write | vec / lst / string / bytes |
+| `null` | read→`size()` / write→push_back (one byte on string/bytes) | read: vec / lst / string / bytes / map; write: vec / lst / string / bytes |
 | `"key"` | dictionary key, read+write | map |
 
 **Read / write / compound-assignment behaviour:**
 
 | Type | Operation | `0` | `-1` | `null` | Any `[i]` |
 |------|------|-----|------|--------|-----------|
-| vec | read | ✅ | ✅ | ✅ size | ✅ |
-| vec | write | ✅ | ✅ | ✅ push | ✅ |
+| vec | read / write | ✅ | ✅ | read size / write push | ✅ |
 | vec | compound assignment | ✅ | ✅ | ❌ run-time TypeError | ✅ |
-| lst | read | ✅ front | ✅ back | ✅ size | ✅ O(n) |
-| lst | write | ✅ overwrite front | ✅ overwrite back | ✅ push | ✅ O(n) |
+| lst | read / write | ✅ front | ✅ back | read size / write push | ✅ O(n) |
 | lst | compound assignment | ✅ | ✅ | ❌ run-time TypeError | ✅ O(n) |
-| string | read | ✅ | ✅ back | ✅ size (byte count) | ✅ |
-| map | read | — | — | ✅ size (key count) | ✅ string key only |
+| string / bytes | read | ✅ byte value | ✅ last byte | ✅ size (byte count) | ✅ |
+| string / bytes | write | ✅ byte value | ✅ last byte | ✅ append one byte | ✅ |
+| string / bytes | compound assignment | ❌ run-time TypeError | ❌ | ❌ | ❌ |
+| map | read / write | — | — | ✅ size (key count) | ✅ string key only |
 
-> **The `[null]` rule**: size semantics only at **the terminal of a chain + in a read position**, uniformly across the four containers; a scalar parent value (`n[null]`, n being int/bytes etc.) → `TypeError`. In a write position only vec/lst append, everything else is `TypeError` without exception. A non-terminal `a[null].b` → `IndexError`; `delete a[null]` → `ConvError`.
+> **The `[null]` rule**: size semantics only at **the terminal of a chain + in a read position**, uniformly across vec/lst/string/bytes/map; a scalar parent value (`n[null]`, n being an int etc.) → `TypeError`. In a write position vec/lst/string/bytes append (one byte on a byte container), a map → `TypeError` without exception. A non-terminal `a[null].b` → `IndexError`; `delete a[null]` → `ConvError`.
 >
-> string does not support indexed writes (any index → `TypeError`). A map key must be a string; a non-string (including `null` and numbers) → `TypeError` — it is not silently turned into `""`.
+> **A string / bytes element is its byte value (int 0-255), read and write alike**: the read gives the int, the write takes one. The value goes through the ordinary integer conversion, then the 0-255 write-back policy — wrap (`& 0xFF`) by default, an `OverflowError` under `overflow_check`. `+=` / `++` on a byte element is a run-time `TypeError` (a byte is not a variant slot): write the explicit `s[0] = s[0] + 1`. `delete` refuses a byte element too.
+> A map key must be a string; a non-string (including `null` and numbers) → `TypeError` — it is not silently turned into `""`.
 
 ## 6.4 Slicing `[from, to]` / `[from, to, step]`
 
-A comma-separated index is a slice operation, `[from, to)` half-open, returning a new container of the same type (read-only).
+A comma-separated index is a slice operation, `[from, to)` half-open, returning a new container of the same type. A slice is also an assignment target — see **Slice assignment** below.
 
 ```js
 var v = [0, 1, 2, 3, 4, 5];
@@ -515,7 +517,9 @@ l[1, 3];         // [20, 30]      — an lst slice returns an lst
 "hello world"[0, 5];  // "hello"   — string slice
 "hello"[3, 0, -1];    // "lle"     — string reversed
 
-v[1, 3] = 99;    // ❌ TypeError: slice is read-only
+var o = map{"v": [1, 2, 3, 4]};
+o.v[1, 3];       // [2, 3]        — a slice through a dot chain, `o["v"][1, 3]` alike
+o.v[1, 3] = 9;   // the chain becomes the slice's base; the result is a value
 ```
 
 | Semantics | Description |
@@ -524,7 +528,7 @@ v[1, 3] = 99;    // ❌ TypeError: slice is read-only
 | `step` | defaults to 1, a negative step traverses in reverse |
 | out of bounds | IndexError (no clamp) |
 | step=0 | ArgError |
-| return type | a new container of the same type (vec/lst/string), an rvalue |
+| return type | a new container of the same type (vec/lst/string/bytes), an rvalue |
 
 ```js
 var a = [10, 20, 30];
@@ -535,20 +539,40 @@ $print(a[null]);    // 3 — size
 a[null] = 99;      // push_back → [10, 20, 30, 99]
 
 "hello"[null];     // 5 — string length (byte count)
-"hello"[0];        // "h"
-"hello"[-1];       // "o" — last character; [-2] is out of bounds (only -1 is back)
+"hello"[0];        // 104 — the byte value; a string element is an int 0-255
+"hello"[-1];       // 111 — last byte; [-2] is out of bounds (only -1 is back)
 map{"k": 1}[null]; // 1 — map key count
 var o = map{"arr": [1, 2], "s": "hi"};
 o.arr[null];       // 2 — holds on a dot chain too
 o.s[null];         // 2
-o.s[-1];           // "i"
+o.s[-1];           // 105 — the byte `i`
 ```
 
-> `[]` inside a dot chain accepts **literal** indices only (integer/string/null), so `o.s[0]` / `o.s[-1]` work while `o.s[i]` is illegal.
+**Slice assignment**
+
+```js
+var v = [0, 1, 2, 3, 4, 5];
+v[1, 4] = [10, 20, 30];   // positions 1,2,3 become 10,20,30
+v[0, 6, 2] = [9:3];       // a fill — a constructed operand, positions 0,2,4 become 9
+v[5, 1, -2] = [50, 30];   // a reverse step gathers and scatters in the read's own order
+
+var s = "hello";
+s[1, 3] = "EL";           // same type, byte-count matched → "hELlo"
+```
+
+| Rule | Description |
+|------|------|
+| target | a linear container that already exists (vec/lst/string/bytes); an rvalue base → TypeError |
+| operand | the **same container type**, scattered in the position order the read would produce (a negative step included); its element count must equal the position count. Anything else — a scalar included — is a TypeError, so a fill is written out: `v[1, 3] = [9:2]`, `l[1, 3] = lst([9:2])` |
+| count | equal exactly, else ArgError (`[v: N]` with a matching N, or `[]` for an empty slice) |
+| length | never changes: a slice write overwrites positions in place |
+| operators | `=` only: `v[1, 3] += [1, 2]` and `delete v[1, 3]` are run-time TypeErrors |
+
+> `[]` inside a dot chain accepts **literal** indices only (integer/string/null), so `o.s[0]` / `o.s[-1]` work while `o.s[i]` is illegal. The **comma form is the exception**: `o.v[1, 3]` is a slice whose base is the chain, and its bounds are full expressions.
 
 > **Rule**: `null` has size semantics only at **the terminal + in a read position** (uniform across vec/lst/string/map). `a[null].b` (non-terminal) → `IndexError`. In a write position only vec/lst append, everything else → `TypeError`. `delete a[null]` → `ConvError` (a null index may not be deleted), use `delete a[-1]` to drop the last element.
 > 
-> `[]` inside a dot chain accepts literals only (integer/string/null). A variable index `a[i]` is illegal in a dot chain — when the index must be computed at run time, build the path string first and access it through `@(path)` reflection. A standalone index `a[i]` (not in a dot chain) is not subject to this restriction.
+> `[]` inside a dot chain accepts literals only (integer/string/null). A variable index `a[i]` is illegal in a dot chain — when the index must be computed at run time, build the path string first and access it through `@(path)` reflection. A standalone index `a[i]` (not in a dot chain) is not subject to this restriction, and a comma form (`o.v[1, 3]`) is a slice, not an index — its bounds may be any expression.
 
 
 
@@ -1572,7 +1596,7 @@ A positional dot only walks the entity tree. The nav segment stops once it lands
 - `::` may not appear mid-chain
 - `..` may be repeated (`....` = two levels up)
 - a positional dot **does not enter container values automatically** — `[]` indexing is allowed only inside a `.(...)` bridge
-- **`[]` inside a dot chain accepts literals only** (integer, string, null, including `-N` constant folding). A variable index such as `a[i]` is not allowed — when the index must be computed at run time, build the path by string concatenation first and access it through `@(path)` reflection
+- **`[]` inside a dot chain accepts literals only** (integer, string, null, including `-N` constant folding). A variable index such as `a[i]` is not allowed — when the index must be computed at run time, build the path by string concatenation first and access it through `@(path)` reflection. The **comma form is the exception**: `o.v[1, 3]` builds a slice whose base is the chain, and its bounds may be any expression
 - across modules, a **variable**: an existing variable may be read and written, not created or deleted (the import module rule)
 - across modules, a **container value**: after a bridge the container's keys are reachable
 - `..` beyond the tree depth → `NavError`

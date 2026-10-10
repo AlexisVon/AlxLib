@@ -111,6 +111,6 @@
     <ResourceCompile Include="AlxBase.rc" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\BuildAll\Init.ps1" />
+    <None Include="Init.ps1" />
   </ItemGroup>
 </Project>

@@ -8,6 +8,7 @@
  *********************************************************************/
 
 #include "avariant.h"
+#include <stdexcept>
 #include <gtest/gtest.h>
 
 using namespace alx;
@@ -28,6 +29,10 @@ namespace {
     };
     struct Orange {
         int y = 2;
+    };
+    struct ThrowingCopy {
+        ThrowingCopy() = default;
+        ThrowingCopy(const ThrowingCopy&) { throw std::runtime_error("copy refused"); }
     };
 }
 
@@ -71,6 +76,15 @@ TEST(gt_avarptr, copy_variant_deep_copies_anyptr) {
         EXPECT_EQ(ca->value, 10);
     }
     EXPECT_EQ(Counter::alive, 0);
+}
+
+TEST(gt_avarptr, throwing_copy_leaves_the_handle_empty) {
+    // a failed clone must leave a clean null handle, not the released pointer the destructor would delete twice
+    auto h = anyptr_ex<ThrowingCopy>::make(new ThrowingCopy());
+    auto src = anyptr_ex<ThrowingCopy>::make(new ThrowingCopy());
+    EXPECT_THROW(h = src, std::runtime_error);
+    EXPECT_TRUE(h.null());
+    EXPECT_EQ(anyptr_ex<ThrowingCopy>::as(h), nullptr);
 }
 
 TEST(gt_avarptr, move_variant) {

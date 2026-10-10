@@ -34,11 +34,11 @@ if (!!f) { $print("FAIL: not not false\n"); }
 
 // === String ===
 var dq = "double quote";
-var sq = 'single quote';
+var cp = 'q';
 var raw = `raw string with \n no escape`;
 
 if (dq != "double quote") { $print("FAIL: dq\n"); }
-if (sq != 'single quote') { $print("FAIL: sq\n"); }
+if (cp != 113) { $print("FAIL: cp\n"); }
 if (raw != "raw string with \\n no escape") { $print("FAIL: raw\n"); }
 
 // Escape sequences

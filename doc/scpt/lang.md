@@ -129,18 +129,19 @@ var off = false;
 
 > bool is a distinct type: it cannot be compared with int (`true == 1` → TypeError) and cannot take part in bitwise operations (`true & true` → TypeError). Emphatically "bool is not int".
 
-## 3.4 string
+## 3.4 string / char literal
 
 ```js
-var s = "hello";           // double quotes — " inside must be escaped as \"
-var t = 'world';           // single quotes — ' inside must be escaped as \', the complementary " needs fewer escapes
+var s = "hello";           // double quotes — a byte string; " inside must be escaped as \"
 var esc = "line1\nline2";  // escape sequences
+var c = 'A';               // single quotes — exactly one Unicode code point, evaluates to int (65)
+var nl = '\n';             // escapes decode to a code point (10)
 var raw = `raw \n "a" 'b'`;  // raw string — no escapes, may span lines
 ```
 
-The three quote kinds complement each other: `"..."` needs no escape for a `'` inside, `'...'` needs none for a `"` inside, and `` `...` `` escapes nothing at all.
+**string** (`"..."`): a byte string. Escape sequences: `\t` `\r` `\n` `\\` `\'` `\"` `\0` `\xNN`, where `\xNN` is the single byte 0xNN. A string containing a `'` needs no escape.
 
-**double/single** support escape sequences: `\t` `\r` `\n` `\\` `\'` `\"` `\0` `\xNN`
+**char literal** (`'...'`): exactly one Unicode code point, evaluating to its `int` value — `'A'` = 65, `'é'` = 233, `'你'` = 20320, `'𝄞'` = 119070. The code point may be written directly as a UTF-8 character (validated) or as an escape; in a char literal `\xNN` means code point U+00NN (`'\xE9'` = 233, unlike the byte 0xE9 in a string). Empty (`''`), more than one code point, and invalid UTF-8 are compile errors. An unknown escape keeps the character itself, the same as in `"..."`.
 
 **raw string** (`` `...` ``): characters inside the backticks are kept verbatim, no escape processing, may span multiple lines. Suited to regexes, embedded JSON, and text with many backslashes.
 
@@ -212,7 +213,8 @@ $print(b);                       // bytes(5)
 |------|------|
 | integer | `123` `0xFF` `0o77` `0b1010` |
 | float | `3.14` `1e5` `1.5e-3` |
-| string | `"hello"` `'world'` `"esc\n"` `` `raw str` `` |
+| string | `"hello"` `"esc\n"` `` `raw str` `` |
+| char literal | `'A'` `'\n'` `'你'` (evaluates to int) |
 | boolean | `true` `false` |
 | null value | `null` |
 | special float | `nan` `inf` |
@@ -1097,7 +1099,7 @@ The constraints match those of extension functions: callable but not readable (a
 
 - a bare dot chain after `@` is not read as a name: `@a.b` evaluates the chain and uses its **value** as the target name, exactly like `@(a.b)`. Calling through a literal dot chain is the compile error (`@a.b(...)` → "@ requires a simple variable name, not a dot chain"); use a variable or `@(expr)`
 - an indirect call does not trigger TCO (self-recursion cannot be determined at compile time)
-- a link module reads and writes script variables through `nload` (see §12.4, the fwrap interface)
+- a link module reads and writes script variables through `iload` (see §12.4, the fwrap interface)
 - `for-each`, `catch` and function parameters do not take `@` (they are fixed syntaxes that introduce new names)
 - **avoid modifying the target name string through `@` inside a loop**: if the loop body changes the variable a `@i` depends on, the loop-variable binding becomes uncontrollable, much like a `goto` (the grammar does not forbid it, but it is strongly discouraged).
 
@@ -1321,7 +1323,7 @@ b.y.name();
 - re-init: call `args.remove(name)` before `wrap` to clear the old object, otherwise a repeated area name throws
 - teardown: the `anyptr` destructor deletes the C++ object automatically, so no `alexis_script_release` is needed
 - reflection `@` needs `@(string)` to call an area function indirectly
-- **Module namespace shielding**: an `import`/`link` `as` alias is an opaque namespace — a bare read (`var x = alias`) or a compound assignment (`alias += 1`) throws `TypeError`. link additionally shields dot writes (`alias.x = v` → `TypeError`); dot writes on import are allowed. A link's internal data is completely invisible to a script — unreadable, unwritable, undeletable. Native code can reach it through `nload`; the restriction applies to the script layer only
+- **Module namespace shielding**: an `import`/`link` `as` alias is an opaque namespace — a bare read (`var x = alias`) or a compound assignment (`alias += 1`) throws `TypeError`. link additionally shields dot writes (`alias.x = v` → `TypeError`); dot writes on import are allowed. A link's internal data is completely invisible to a script — unreadable, unwritable, undeletable. Native code can reach it through `iload`; the restriction applies to the script layer only
 - `delete` rules:
   - `delete link.area_instance` → ✅ allowed (destroys the area instance, runs the anyptr destructor)
   - `delete link.area_namespace` → ✅ allowed (removes the whole area registration)
@@ -1368,8 +1370,8 @@ str.upper("hi");  // "HI"
 | `args.load("x")` | read a link private variable → `variant*` (simple name) |
 | `args.store("y", val)` | write a link private variable (`const&` copies; `&&` moves — a non-copyable object is moved to keep it alive) |
 | `args.remove("z")` | delete a link private variable |
-| `args.nload("key")` | unified dot-chain access → `variant*` (copy-free, readable and writable; a miss returns `nullptr`) |
-| `args.call(func, args_vec)` | call: `string` → nload resolution → call_able → execute; `anyptr<call_able>` → execute directly |
+| `args.iload("key")` | unified dot-chain access → `variant*` (copy-free, readable and writable; a miss returns `nullptr`) |
+| `args.call(func, args_vec)` | call: `string` → iload resolution → call_able → execute; `anyptr<call_able>` → execute directly |
 | `args.bind("name", func)` | register a native function (optional third argument `_area`) |
 | `args.bind("name", func, "area")` | register into a sub-scope |
 | `args.raise(val[, type])` | throw a script exception |
@@ -1377,7 +1379,7 @@ str.upper("hi");  // "HI"
 | `args.unwrap<T>()` | `anyptr_ex<T>::as(*object())` — type-safe access to the C++ object |
 | `args.wrap<T>(ptr, "area", {{"m1", fn1}, ...})` | store the obj + register methods into the area |
 
-> **The `nload` path**: a simple name → data_store (`O_ILOAD` → `resolve_dot`).
+> **The `iload` path**: a simple name → data_store (`O_ILOAD` → `resolve_dot`).
 
 > **What extend and link can use**: fwrap is designed for link modules as a whole (`bind`/`area`/`object`/`wrap`/`load`/`store` are all link concepts). An extension function handler borrows the same interface but has **no private domain** — its `m_store` points at the current module's root store. Inside an extend the data plane must **use `nload` only** (reflection semantics, with the full scope/frame machinery, and there is always an active walker during a call); `load`/`store`/`remove` consult the root store directly and bypass scope and `var` declaration checks — they cannot see frame variables, and a write goes straight into the module's root table, so this is misuse and is forbidden. A link's load/unload callbacks (no active walker, `nload` unusable) are the legitimate setting for `load`/`store`.
 
@@ -1658,7 +1660,7 @@ A link module's internal data is **completely shielded** from a script. An area 
 
 > **`@` and the direct syntax have exactly the same semantics**: `delete @("b.x")` ≡ `delete b.x`. `@` is only indirect addressing; it does not change what the operation means.
 >
-> **native interop**: none of the script-layer restrictions above apply to native code. C++ functions of different link modules can reach each other's data through `nload`/`remove`; the data shielding applies to the script layer only.
+> **native interop**: none of the script-layer restrictions above apply to native code. C++ functions of different link modules can reach each other's data through `iload`/`remove`; the data shielding applies to the script layer only.
 
 
 <div style="page-break-after: always;"></div>
@@ -2087,7 +2089,7 @@ eng->get_csys().connect([](uint_64 tid, const std::string& s) {
 |------|------|
 | `set_hook(fn, ud, interval)` | the unified resource control hook (a hard firewall): one exec event per interval checkpoints; an import/link event per load request. **Any event returning false is an interrupt** (InterruptedError, uncatchable). fn=null → off; no engine API may be called inside the hook |
 | `set_pipe(in, out, in_ud, out_ud)` | set the IO pipes (the engine never calls them, it only stores the handles for the user to keep and redirect with); null = host default (stdio) |
-| `running()` | cross-thread query: true while an `exec()` is running (an atomic load); `call()` does not count |
+| `running()` | cross-thread query: true while an entry is running — `exec()` or `call()` (an atomic load) |
 | `set_interrupt()` | cross-thread interrupt: sets the interrupt flag, honoured at the next checkpoint (an atomic store) |
 
 ### Signals

@@ -2176,7 +2176,7 @@ namespace alx {
             "assignment target must be a variable, member access, or index expression";
 
         walker::target_resolved walker::resolve_target(const varvec& _lhs, walker& _w, resolve_mode _mode,
-                                                       bool _rmw, bool _create) {
+                                                       bool _rmw, bool _tail_create) {
             target_resolved r;
             bool writing = _mode == resolve_mode::write;
             if (_lhs.empty()) return r;
@@ -2199,9 +2199,18 @@ namespace alx {
                     return br.slot;
                 }
                 // a byte element is a value, not a container to index through
-                if (br.type == target_resolved::kind::byte)
+                if (br.type == target_resolved::kind::byte) {
+                    if (!writing) return nullptr;
                     throw script_exception{error_type::TypeError, std::string("Type does not support [i]")};
+                }
                 return nullptr;
+            };
+
+            // A resolution failure: the write path reports it; a probe (nav) answers "not an address"
+            // with none — the host asked for a slot, and anything else is simply not there
+            auto fail = [&](error_type _type, std::string _info) -> target_resolved {
+                if (!writing) return r;
+                throw script_exception{_type, std::move(_info)};
             };
 
             switch (static_cast<op_enum>(_lhs[0].to<OPTYPE>())) {
@@ -2216,11 +2225,9 @@ namespace alx {
                 if (p->is<anyptr>()) {
                     const anyptr& ap = p->to<anyptr>();
                     if (anyptr_ex<impl_link>::as(ap))
-                        throw script_exception{error_type::TypeError,
-                                               std::string("link namespace cannot be read as variable")};
+                        return fail(error_type::TypeError, "link namespace cannot be read as variable");
                     if (anyptr_ex<impl_import>::as(ap))
-                        throw script_exception{error_type::TypeError,
-                                               std::string("import namespace cannot be read as variable")};
+                        return fail(error_type::TypeError, "import namespace cannot be read as variable");
                 }
                 r.type = target_resolved::kind::slot;
                 r.slot = p;
@@ -2243,11 +2250,9 @@ namespace alx {
                     if (p->is<anyptr>()) {
                         const anyptr& ap = p->to<anyptr>();
                         if (anyptr_ex<impl_link>::as(ap))
-                            throw script_exception{error_type::TypeError,
-                                                   std::string("link namespace cannot be read as variable")};
+                            return fail(error_type::TypeError, "link namespace cannot be read as variable");
                         if (anyptr_ex<impl_import>::as(ap))
-                            throw script_exception{error_type::TypeError,
-                                                   std::string("import namespace cannot be read as variable")};
+                            return fail(error_type::TypeError, "import namespace cannot be read as variable");
                     }
                     r.type = target_resolved::kind::slot;
                     r.slot = p;
@@ -2255,7 +2260,7 @@ namespace alx {
                     return r;
                 }
                 return walker::resolve_target(walker::iload_parse_expr(path, _w.m_cfg.parse_depth), _w,
-                                              _mode, _rmw, _create);
+                                              _mode, _rmw, _tail_create);
             }
 
             case O_DOT: {
@@ -2284,7 +2289,7 @@ namespace alx {
                 if (_rmw && !byte_pos && dr.kind == TerminalKind::T_Variant && dr.parent && dr.key.null())
                     throw script_exception{error_type::TypeError,
                                            std::string("append index [null] is not a valid target for read-modify-write")};
-                variant* p = dr.get(!_create);
+                variant* p = dr.get(!_tail_create);
                 if (p) {
 
                     // an existing area native names a registered function, not a writable slot
@@ -2309,35 +2314,30 @@ namespace alx {
                     if (dr.key.null()) {
 
                         if (dr.parent->is<std::string>())
-                            throw script_exception{error_type::TypeError,
-                                                   std::string("string does not support index write")};
+                            return fail(error_type::TypeError, "string does not support index write");
                         if (dr.parent->is<varmap>())
-                            throw script_exception{error_type::TypeError,
-                                                   std::string("map does not support [null] write")};
-                        throw script_exception{error_type::TypeError,
-                                               std::string("type does not support [null] write")};
+                            return fail(error_type::TypeError, "map does not support [null] write");
+                        return fail(error_type::TypeError, "type does not support [null] write");
                     }
                     if (dr.key.is<int_64>()) {
                         if (dr.parent->is<varvec>() || dr.parent->is<varlst>())
-                            throw script_exception{error_type::IndexError, std::string("vec index out of range")};
+                            return fail(error_type::IndexError, "vec index out of range");
                         if (dr.parent->is<std::string>())
-                            throw script_exception{error_type::TypeError,
-                                                   std::string("string does not support index write")};
-                        throw script_exception{error_type::TypeError, std::string("type does not support []")};
+                            return fail(error_type::TypeError, "string does not support index write");
+                        return fail(error_type::TypeError, "type does not support []");
                     }
                     if (dr.key.is<std::string>() && !dr.parent->is<varmap>())
-                        throw script_exception{error_type::TypeError, std::string("not a map")};
+                        return fail(error_type::TypeError, "not a map");
                 }
                 if (dr.key.is<std::string>())
-                    throw script_exception{error_type::NameError, std::string("Undefined: " + dr.key.to<std::string>())};
-                throw script_exception{error_type::TypeError, std::string(s_not_a_target)};
+                    return fail(error_type::NameError, "Undefined: " + dr.key.to<std::string>());
+                return fail(error_type::TypeError, s_not_a_target);
             }
 
             case O_SLICE: {
-                // a probe meets the refusal before the bounds run: no script code on a path that only fails
-                if (!writing)
-                    throw script_exception{error_type::TypeError,
-                                           std::string("slice is read-only: cannot assign to slice")};
+                // a probe gets none before the bounds run: a slice is not an address, and a path that
+                // only fails must not run script code
+                if (!writing) return r;
                 // the bounds can run script code: they evaluate before the container is resolved
                 variant fv, tv;
                 int_64 step;
@@ -2389,23 +2389,23 @@ namespace alx {
                     const variant& key = keys[k];
                     if (v->is<varvec>()) {
                         if (key.null())
-                            throw script_exception{error_type::TypeError, std::string("cannot index an append position")};
+                            return fail(error_type::TypeError, "cannot index an append position");
                         int_64 i = cov_int(key);
                         varvec& vec = v->as<varvec>();
                         if (i == -1) i = static_cast<int_64>(vec.size()) - 1;
                         if (i < 0 || static_cast<uint_64>(i) >= vec.size())
-                            throw script_exception{error_type::IndexError, std::string("vec index out of range")};
+                            return fail(error_type::IndexError, "vec index out of range");
                         v = &vec[static_cast<uint_64>(i)];
                         continue;
                     }
                     if (v->is<varlst>()) {
                         if (key.null())
-                            throw script_exception{error_type::TypeError, std::string("cannot index an append position")};
+                            return fail(error_type::TypeError, "cannot index an append position");
                         int_64 i = cov_int(key);
                         varlst& lst = v->as<varlst>();
                         if (i == -1) i = static_cast<int_64>(lst.size()) - 1;
                         if (i < 0 || static_cast<uint_64>(i) >= lst.size())
-                            throw script_exception{error_type::IndexError, std::string("lst index out of range")};
+                            return fail(error_type::IndexError, "lst index out of range");
                         auto it = lst.begin();
                         for (int_64 n = 0; n < i; ++n) ++it;
                         v = &*it;
@@ -2413,15 +2413,15 @@ namespace alx {
                     }
                     if (v->is<varmap>()) {
                         if (!key.is<std::string>())
-                            throw script_exception{error_type::TypeError, std::string("map key must be a string")};
+                            return fail(error_type::TypeError, "map key must be a string");
                         varmap& m = v->as<varmap>();
                         std::string ks = key.to<std::string>();
                         if (!m.contain(ks))
-                            throw script_exception{error_type::KeyError, std::string("map key not found: " + ks)};
+                            return fail(error_type::KeyError, "map key not found: " + ks);
                         v = &m[ks];
                         continue;
                     }
-                    throw script_exception{error_type::TypeError, std::string("Type does not support [i]")};
+                    return fail(error_type::TypeError, "Type does not support [i]");
                 }
 
                 const variant& key = keys.back();
@@ -2431,8 +2431,8 @@ namespace alx {
                         if (_rmw)
                             throw script_exception{error_type::TypeError,
                                                    std::string("append index [null] is not a valid target for read-modify-write")};
-                        if (!_create)
-                            throw script_exception{error_type::TypeError, std::string("cannot index an append position")};
+                        if (!_tail_create)
+                            return fail(error_type::TypeError, "cannot index an append position");
                         vec.push_back(variant(static_cast<int_64>(0)));
                         r.type = target_resolved::kind::slot;
                         r.slot = &vec.back();
@@ -2441,7 +2441,7 @@ namespace alx {
                     int_64 i = cov_int(key);
                     if (i == -1) i = static_cast<int_64>(vec.size()) - 1;
                     if (i < 0 || static_cast<uint_64>(i) >= vec.size())
-                        throw script_exception{error_type::IndexError, std::string("vec index out of range")};
+                        return fail(error_type::IndexError, "vec index out of range");
                     r.type = target_resolved::kind::slot;
                     r.slot = &vec[static_cast<uint_64>(i)];
                     return r;
@@ -2452,8 +2452,8 @@ namespace alx {
                         if (_rmw)
                             throw script_exception{error_type::TypeError,
                                                    std::string("append index [null] is not a valid target for read-modify-write")};
-                        if (!_create)
-                            throw script_exception{error_type::TypeError, std::string("cannot index an append position")};
+                        if (!_tail_create)
+                            return fail(error_type::TypeError, "cannot index an append position");
                         lst.push_back(variant(static_cast<int_64>(0)));
                         r.type = target_resolved::kind::slot;
                         r.slot = &lst.back();
@@ -2462,7 +2462,7 @@ namespace alx {
                     int_64 i = cov_int(key);
                     if (i == -1) i = static_cast<int_64>(lst.size()) - 1;
                     if (i < 0 || static_cast<uint_64>(i) >= lst.size())
-                        throw script_exception{error_type::IndexError, std::string("lst index out of range")};
+                        return fail(error_type::IndexError, "lst index out of range");
                     auto it = lst.begin();
                     for (int_64 n = 0; n < i; ++n) ++it;
                     r.type = target_resolved::kind::slot;
@@ -2471,11 +2471,11 @@ namespace alx {
                 }
                 if (v->is<varmap>()) {
                     if (!key.is<std::string>())
-                        throw script_exception{error_type::TypeError, std::string("map key must be a string")};
+                        return fail(error_type::TypeError, "map key must be a string");
                     varmap& m = v->as<varmap>();
                     std::string ks = key.to<std::string>();
-                    if (!m.contain(ks) && !_create)
-                        throw script_exception{error_type::KeyError, std::string("map key not found: " + ks)};
+                    if (!m.contain(ks) && !_tail_create)
+                        return fail(error_type::KeyError, "map key not found: " + ks);
                     r.type = target_resolved::kind::slot;
                     r.slot = &m[ks];
                     return r;
@@ -2487,9 +2487,8 @@ namespace alx {
                     return r;
                 }
                 if (v->is<std::string>())
-                    throw script_exception{error_type::TypeError,
-                                           std::string("string does not support index write")};
-                throw script_exception{error_type::TypeError, std::string("Type does not support [i]")};
+                    return fail(error_type::TypeError, "string does not support index write");
+                return fail(error_type::TypeError, "Type does not support [i]");
             }
 
             default:
@@ -2516,8 +2515,8 @@ namespace alx {
             return nullptr;
         }
 
-        variant* walker::resolve_nav(const varvec& _lhs, walker& _w) {
-            target_resolved t = walker::resolve_target(_lhs, _w, resolve_mode::nav, false);
+        variant* walker::resolve_iload(const varvec& _lhs, walker& _w, bool _tail_create) {
+            target_resolved t = walker::resolve_target(_lhs, _w, resolve_mode::nav, false, _tail_create);
             return t.type == target_resolved::kind::slot ? t.slot : nullptr;
         }
 

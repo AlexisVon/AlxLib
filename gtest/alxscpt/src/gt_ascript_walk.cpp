@@ -1052,7 +1052,9 @@ TEST(gt_ascript_walk, BoolLiteralExec) {
 
 TEST(gt_ascript_walk, CharLiteralExec) {
     auto v = exec_src("'c';");
-    EXPECT_EQ(v.to<std::string>(), "c");
+    EXPECT_EQ(v.to<int_64>(), 99);
+    EXPECT_EQ(exec_src("'你';").to<int_64>(), 20320);
+    EXPECT_EQ(exec_src("type('c') == \"int\";").to<bool>(), true);
 }
 
 TEST(gt_ascript_walk, UnaryPlusExec) {
@@ -3873,6 +3875,8 @@ TEST(gt_ascript_walk, Slice_AssignOperandEdges) {
     EXPECT_EQ(e1, error_type::ArgError);
     auto [e2, v2] = exec_src_catch("var b=bytes(\"abc\"); b[0,2] = bytes(\"X\");");
     EXPECT_EQ(e2, error_type::ArgError);
+    auto [e2b, v2b] = exec_src_catch("var s=\"abcd\"; s[0,2] = \"X\";");
+    EXPECT_EQ(e2b, error_type::ArgError);
     auto [e3, v3] = exec_src_catch("var v=[1,2,3]; v[10,20] = [1];");
     EXPECT_EQ(e3, error_type::IndexError);
     auto [e4, v4] = exec_src_catch("def f() { return [1,2,3]; } f()[1,3] = [9];");

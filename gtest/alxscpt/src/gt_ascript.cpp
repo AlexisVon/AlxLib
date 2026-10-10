@@ -2630,6 +2630,30 @@ TEST(gt_ascript_engine, Call_Counter) {
     delete eng;
 }
 
+static engine* g_running_probe_eng = nullptr;
+
+static void probe_running(fwrap& fw) { fw.freturn(variant(g_running_probe_eng->running())); }
+
+TEST(gt_ascript_engine, RunningCoversBothEntries) {
+    // the cross-thread query is true while either entry runs: a native inside the run observes it
+    engine* eng = engine::create();
+    g_running_probe_eng = eng;
+    eng->set_extend("probe_running", probe_running);
+    eng->exec(alx::bytes_view(alx::bytes("def f() { return $probe_running(); }")), "");
+    EXPECT_FALSE(eng->running()) << "outside any entry the engine is idle";
+
+    auto r = eng->call("f", {});
+    EXPECT_EQ(r.error, error_type::NoError);
+    EXPECT_TRUE(r.value.to<bool>()) << "call is an entry too";
+
+    auto r2 = eng->exec(alx::bytes_view(alx::bytes("$probe_running();")), "");
+    EXPECT_TRUE(r2.value.to<bool>()) << "exec as before";
+
+    EXPECT_FALSE(eng->running());
+    g_running_probe_eng = nullptr;
+    delete eng;
+}
+
 TEST(gt_ascript_engine, Call_Interruptible) {
     // call is an engine entry like exec: a bounded, interruptible run
     auto* eng = engine::create();

@@ -1,4 +1,4 @@
-// §3.4 string — double quote, single quote, backtick raw, escape sequences
+// §3.4 string / char literal — double-quote string, single-quote char literal, backtick raw, escape sequences
 // lang-guide §3.4
 
 var passed = 0;
@@ -13,10 +13,13 @@ def assert_true(c, n) { if (c) { passed = passed + 1; return; } failed = failed 
 assert_eq("hello", "hello", "double-quote literal");
 assert_eq("", "", "empty double-quote string");
 
-// ---- single-quote string (complementary, reduces escaping) ----
-assert_eq('A', "A", "single-quote char literal");
-assert_eq('hello', "hello", "single-quote string literal");
-assert_eq('"quoted"', "\"quoted\"", "single-quote contains double-quote without escape");
+// ---- char literal: exactly one code point, evaluates to int ----
+assert_eq('A', 65, "char literal is a code point int");
+assert_eq('\n', 10, "char escape is a code point int");
+assert_eq('\x41', 65, "\\xNN is the code point U+00NN");
+assert_eq('é', 233, "multibyte source char");
+assert_eq('你', 20320, "multibyte source char");
+assert_eq("'", "'", "a lone single quote needs double quotes");
 
 // ---- double-quote contains single-quote ----
 assert_eq("it's", "it's", "double-quote contains single-quote without escape");

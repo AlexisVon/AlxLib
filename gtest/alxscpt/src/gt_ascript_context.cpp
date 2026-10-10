@@ -305,3 +305,34 @@ TEST(gt_ascript_context, Args_EndValue_S4_ErrorOrdering) {
     ASSERT_NE(p, nullptr);
     EXPECT_EQ(p->to<int_64>(), 0);
 }
+
+TEST(gt_ascript_context, Iload_WritePosture) {
+    // iload is the host's one slot handle: a missing terminal key is created and the slot is writable
+    test_harness h;
+    h.w.state.push_frame();
+    h.w.m_root.m_store.store("m", variant(varmap{}));
+
+    variant ret_slot;
+    fwrap_impl fw(std::vector<variant*>(), &ret_slot, &h.w.m_root.m_store, &h.w);
+    variant* p = fw.iload("m.k");
+    ASSERT_NE(p, nullptr) << "the write posture creates the terminal key";
+    *p = variant(static_cast<int_64>(5));
+    EXPECT_EQ(h.w.m_root.m_store.find("m")->to<varmap>().value("k").to<int_64>(), 5);
+}
+
+TEST(gt_ascript_context, Call_DoesNotCreateItsPath) {
+    // call only locates a callee: a path that does not resolve must leave nothing behind
+    test_harness h;
+    h.w.state.push_frame();
+    h.w.m_root.m_store.store("m", variant(varmap{}));
+
+    variant ret_slot;
+    fwrap_impl fw(std::vector<variant*>(), &ret_slot, &h.w.m_root.m_store, &h.w);
+    try {
+        fw.call("m.missing_fn", varvec());
+        FAIL() << "a path with no callable must be refused";
+    } catch (script_exception& e) {
+        EXPECT_EQ(e.info, "call: function not found");
+    }
+    EXPECT_EQ(h.w.m_root.m_store.find("m")->to<varmap>().size(), 0u) << "the lookup created a stub";
+}

@@ -69,7 +69,14 @@ TEST(gt_ascript_parse, FloatLiteral) {
 
 TEST(gt_ascript_parse, CharLiteral) {
     auto ast = parse_src("'c';");
-    EXPECT_EQ(ast[1].to<varvec>()[0].to<std::string>(), "c");
+    EXPECT_EQ(ast[1].to<varvec>()[0].to<int_64>(), 99);
+}
+
+TEST(gt_ascript_parse, CharLiteralCodePoints) {
+    EXPECT_EQ(parse_src("'\\x41';")[1].to<varvec>()[0].to<int_64>(), 65);
+    EXPECT_EQ(parse_src("'é';")[1].to<varvec>()[0].to<int_64>(), 233);
+    EXPECT_EQ(parse_src("'你';")[1].to<varvec>()[0].to<int_64>(), 20320);
+    EXPECT_EQ(parse_src("'𝄞';")[1].to<varvec>()[0].to<int_64>(), 119070);
 }
 
 TEST(gt_ascript_parse, StringLiteral) {
@@ -693,7 +700,7 @@ TEST(gt_ascript_parse, ImportFileNotFound) {
 TEST(gt_ascript_parse, CharEscapedNewline) {
     auto ast = parse_src("'\\n';");
     auto& inner = ast[1].to<varvec>();
-    EXPECT_EQ(inner[0].to<std::string>(), "\n");
+    EXPECT_EQ(inner[0].to<int_64>(), 10);
 }
 
 TEST(gt_ascript_parse, StringEscAfterComment) {
@@ -1337,6 +1344,24 @@ TEST(gt_ascript_parse, MissingOperand_ReportedAtOperator) {
     EXPECT_NE(out.errors[0].msg.find("Expected expression after '-='"), std::string::npos);
     EXPECT_TRUE(head_is(out.ast, O_PROGRAM));
     EXPECT_TRUE(head_is(out.ast[1].to<varvec>(), O_LOAD));
+}
+
+TEST(gt_ascript_parse, CharLiteralErrors) {
+
+    auto empty = parse_full("'';");
+    ASSERT_EQ(empty.errors.size(), 1u);
+    EXPECT_NE(empty.errors[0].msg.find("empty character literal"), std::string::npos);
+
+    for (const char* src : {"'ab';", "'\\x41\\x42';"}) {
+        auto multi = parse_full(src);
+        ASSERT_EQ(multi.errors.size(), 1u) << src;
+        EXPECT_NE(multi.errors[0].msg.find("exactly one code point"), std::string::npos) << src;
+    }
+
+    const char bad[] = {'\'', static_cast<char>(0xff), '\'', ';', 0};
+    auto invalid = parse_full(bad);
+    ASSERT_EQ(invalid.errors.size(), 1u);
+    EXPECT_NE(invalid.errors[0].msg.find("invalid UTF-8"), std::string::npos);
 }
 
 TEST(gt_ascript_parse, MissingOperand_NoCrashShapes) {

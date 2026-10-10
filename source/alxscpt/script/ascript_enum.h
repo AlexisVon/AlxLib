@@ -246,8 +246,8 @@ namespace alx {
             T_BIN_LITERAL,
             T_FLOAT_LITERAL,
             T_STRING_LITERAL,
-            // `...`: raw text, no escape processing, newlines allowed
-            T_BACKTICK_STRING,
+            T_CHAR_LITERAL,
+            T_BACKTICK_LITERAL,
 
             T_NAME,
 

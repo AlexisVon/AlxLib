@@ -15,10 +15,11 @@ $print("1e5 = %1", 1e5);
 $print("1.5e-3 = %1", 1.5e-3);
 $print("2e-3 = %1", 2e-3);
 
-// char
+// char literal = one code point, an int
 $print("char c = %1", 'c');
 $print("char newline = %1", '\n');
 $print("char x41 = %1", '\x41');
+$print("char 你 = %1", '你');
 
 // string
 $print("str hello = %1", "hello");

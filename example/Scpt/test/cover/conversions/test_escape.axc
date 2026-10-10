@@ -28,8 +28,8 @@ assert_eq(s6, "AB", "\\xHH decodes hex byte");
 var s7; s7 = "a\0b";
 assert_eq(string(s7), "a\0b", "\\0 decodes NUL");
 
-var s8; s8 = '\n\x43';
-assert_eq(s8, "\nC", "single-quote escapes slice+decode");
+var s8; s8 = "\n\x43";
+assert_eq(s8, "\nC", "escapes slice+decode");
 
 var s9; s9 = "abc\ndef\x47";
 assert_eq(s9, "abc\ndefG", "adjacent escapes");

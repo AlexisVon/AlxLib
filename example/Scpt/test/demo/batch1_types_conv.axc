@@ -75,7 +75,7 @@ var s; s = "hello";
 assert_eq(s, "hello", "string literal");
 
 var ch; ch = 'A';
-assert_eq(ch, "A", "char literal");
+assert_eq(ch, 65, "char literal = code point");
 
 // escape sequences — compare with hex escapes or string([byte])
 assert_eq("\t", "\x09", "tab escape = 0x09");
@@ -86,7 +86,7 @@ assert_eq("\"", "\x22", "double quote escape");
 assert_eq("\0", string([0]), "null char escape");
 
 var hexesc; hexesc = '\x41';
-assert_eq(hexesc, "A", "hex escape \\x41 = A");
+assert_eq(hexesc, 65, "hex escape \\x41 = A = 65");
 
 // ========== §3.5 null default ==========
 var x;

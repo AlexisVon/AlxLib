@@ -24,6 +24,15 @@
 
 namespace alx {
     namespace script {
+        namespace {
+
+            // A running entry marks the engine busy for as long as it runs (every exit included)
+            struct running_guard {
+                std::atomic<bool>& flag;
+                running_guard(std::atomic<bool>& _f) : flag(_f) { flag.store(true, std::memory_order_relaxed); }
+                ~running_guard() { flag.store(false, std::memory_order_relaxed); }
+            };
+        }
 
         class engine_impl : public engine {
         public:
@@ -103,6 +112,7 @@ namespace alx {
                     return {variant("not a def function: " + _name), 0, error_type::NameError};
 
                 auto t0 = std::chrono::steady_clock::now();
+                running_guard _rg(m_running);
                 call_walk cw;
                 cw.ca = ca;
                 cw.name = _name;
@@ -121,11 +131,7 @@ namespace alx {
                         const std::string& _home_dir) override {
                 auto t0 = std::chrono::steady_clock::now();
                 result res;
-                struct running_guard {
-                    std::atomic<bool>& flag;
-                    running_guard(std::atomic<bool>& f) : flag(f) { flag.store(true, std::memory_order_relaxed); }
-                    ~running_guard() { flag.store(false, std::memory_order_relaxed); }
-                } _rg(m_running);
+                running_guard _rg(m_running);
 
                 m_w.m_insn = 0;
                 m_w.m_insn_total = 0;

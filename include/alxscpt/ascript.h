@@ -352,8 +352,9 @@ namespace alx {
             /// Leave the call without a value; the script sees an empty variant
             void freturn() { freturn(variant()); }
 
-            /// Slot of _key in the calling scope; null when the name or path resolves to nothing
-            virtual variant* nload(const std::string& _key) = 0;
+            /// Resolve _key (a name or a `.` path) in the calling scope to a slot address, or null:
+            /// the host's one slot handle, in write posture (a missing terminal key is created)
+            virtual variant* iload(const std::string& _key) = 0;
 
             /**
              * \brief Call a script function and get its value back

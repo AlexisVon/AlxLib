@@ -173,14 +173,17 @@ namespace alx {
                                                nav };
 
             // _rmw: the caller reads and writes back the same slot, so an append index ([null]) is not a
-            // usable target; _create: a terminal map key or append may be created -- false for the base of
-            // an element or slice write, where a miss is an error and nothing may be left behind
+            // usable target; _tail_create: the terminal map key or the append may be created -- false for
+            // the base of an element or slice write, where a miss is an error and nothing may be left behind
             static target_resolved resolve_target(const varvec& _lhs, walker& _w, resolve_mode _mode,
-                                                  bool _rmw, bool _create = true);
+                                                  bool _rmw, bool _tail_create = true);
             // Slot-only view: a byte element or a slice has no variant slot to hand back
             static variant* resolve_slot(const varvec& _lhs, walker& _w, bool _rmw);
-            // Host-probe view (fwrap): the slot, or nullptr for a path that resolves to nothing
-            static variant* resolve_nav(const varvec& _lhs, walker& _w);
+            // Host view (fwrap), named after the op it runs: an indirect load by path. `call` is the
+            // host's dispatcher and uses _tail_create = false -- locating a callee creates nothing;
+            // `fwrap::iload` is the host's one slot handle and hands back a writable slot, so it keeps
+            // the write posture (a missing terminal key is created)
+            static variant* resolve_iload(const varvec& _lhs, walker& _w, bool _tail_create = true);
             // Slice assignment: the operand is the same container type, scattered in the read's own
             // position order, and its length must equal the position count
             static void store_slice(const target_resolved& _t, const variant& _val);

@@ -9,6 +9,7 @@
  ******************************************************************************/
 #include "ascript_parse.h"
 #include "afile.h"
+#include "astring.h"
 #include "avarsolid.h"
 #include "averify.h"
 #include <cstdio>
@@ -978,10 +979,11 @@ namespace alx {
             return left;
         }
 
-        // returns bytes consumed; 0 = invalid escape, which the caller reports and skips by one
-        static size_t unescape_one(const char* _p, size_t _len, std::string& _out) {
+        // returns bytes consumed; 0 = invalid escape, which the caller reports and skips by one.
+        // _cp receives the escape's code point, always within 0xFF
+        static size_t decode_escape(const char* _p, size_t _len, uint_32& _cp) {
             if (_len < 2) {
-                _out += '\\';
+                _cp = '\\';
                 return 1;
             }
             auto hexval = [](char h) -> int {
@@ -991,24 +993,38 @@ namespace alx {
                 return -1;
             };
             switch (_p[1]) {
-            case 'n': _out += '\n'; return 2;
-            case 't': _out += '\t'; return 2;
-            case 'r': _out += '\r'; return 2;
-            case '\\': _out += '\\'; return 2;
-            case '"': _out += '"'; return 2;
-            case '0': _out += '\0'; return 2;
+            case 'n': _cp = '\n'; return 2;
+            case 't': _cp = '\t'; return 2;
+            case 'r': _cp = '\r'; return 2;
+            case '\\': _cp = '\\'; return 2;
+            case '"': _cp = '"'; return 2;
+            case '\'': _cp = '\''; return 2;
+            case '0': _cp = '\0'; return 2;
             case 'x': {
                 if (_len < 4) return 0;
                 int v1 = hexval(_p[2]), v2 = hexval(_p[3]);
                 if (v1 < 0 || v2 < 0) return 0;
-                _out += static_cast<char>((v1 << 4) | v2);
+                _cp = static_cast<uint_32>((v1 << 4) | v2);
                 return 4;
             }
             default:
                 // an unknown escape keeps the character and swallows the backslash
-                _out += _p[1];
+                _cp = static_cast<unsigned char>(_p[1]);
                 return 2;
             }
+        }
+
+        // returns bytes consumed; 0 = invalid escape, which the caller reports and skips by one
+        static size_t unescape_one(const char* _p, size_t _len, std::string& _out) {
+            uint_32 cp = 0;
+            size_t used = decode_escape(_p, _len, cp);
+            if (used == 0) return 0;
+            if (used == 1) {
+                _out += '\\';
+                return 1;
+            }
+            _out += static_cast<char>(cp);
+            return used;
         }
 
         varvec parser::parse_assign() {
@@ -1652,7 +1668,36 @@ namespace alx {
                 v.push_back(variant(result));
                 return v;
             }
-            case T_BACKTICK_STRING: {
+            case T_CHAR_LITERAL: {
+                size_t t_idx = index();
+                bytes_view tv = text();
+                advance();
+                std::string s = tv.to_string();
+                s = s.substr(1, s.size() - 2);
+
+                const auto& escs = m_tokens.esc(t_idx);
+                uint_32 cp = 0;
+                size_t i = 0;
+                if (s.empty()) {
+                    error("empty character literal");
+                } else if (!escs.empty() && i + 1 == escs[0]) {
+                    i = decode_escape(s.data(), s.size(), cp);
+                    if (i == 0) error("invalid escape sequence");
+                } else {
+                    size_t next = 0;
+                    cp = strutil::from_utf8(s, 0, next);
+                    if (next == uint_64_npos)
+                        error("invalid UTF-8 in character literal");
+                    else
+                        i = next;
+                }
+                if (i > 0 && i < s.size()) error("character literal must contain exactly one code point");
+
+                varvec v;
+                v.push_back(variant(static_cast<int_64>(cp)));
+                return v;
+            }
+            case T_BACKTICK_LITERAL: {
                 bytes_view tv = text();
                 advance();
                 std::string s = tv.to_string();

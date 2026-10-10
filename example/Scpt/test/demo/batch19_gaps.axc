@@ -278,25 +278,21 @@ assert_eq(bts, "line one\nline two", "backtick: multiline");
 bts = ``;
 assert_eq(bts, "", "backtick: empty string");
 
-// ========== §3.4 single-quote string (complementary to ") ==========
-var sqs; sqs = 'hello world';
-assert_eq(sqs, "hello world", "squote: basic string");
+// ========== §3.4 char literal: exactly one code point, an int ==========
+var cp; cp = 'A';
+assert_eq(cp, 65, "char: ASCII code point");
 
-sqs = 'contains "double" quotes';  // no need to escape "
-assert_eq(sqs, "contains \"double\" quotes", "squote: dquote without escape");
+cp = '\t';  // escape sequences read as code points
+assert_eq(cp, 9, "char: escape sequence");
 
-sqs = 'tab:\there, newline:\nhere';  // escape sequences work
-assert_eq(sqs, "tab:\there, newline:\nhere", "squote: escape sequences");
+cp = '\'';  // escaped single quote
+assert_eq(cp, 39, "char: escaped squote");
 
-sqs = 'it\'s ok';  // escaped single quote
-assert_eq(sqs, "it's ok", "squote: escaped squote");
+cp = '\x41';  // hex escape = U+00NN
+assert_eq(cp, 65, "char: hex escape");
 
-sqs = '\x41\x42\x43';  // hex escape
-assert_eq(sqs, "ABC", "squote: hex escape");
+cp = '你';
+assert_eq(cp, 20320, "char: multibyte source char");
 
-sqs = '';  // empty
-assert_eq(sqs, "", "squote: empty string");
-
-// complementary: double-quote contains single quotes without escape
-sqs = "it's ok without escape";
-assert_eq(sqs, "it's ok without escape", "dquote: squote without escape");
+cp = "it's ok without escape";
+assert_eq(cp, "it's ok without escape", "dquote: squote without escape");

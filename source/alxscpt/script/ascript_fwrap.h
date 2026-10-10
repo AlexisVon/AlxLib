@@ -28,7 +28,7 @@ namespace alx {
             void freturn(const variant& _v) override;
             void freturn(variant&& _v) override;
 
-            variant* nload(const std::string& _key) override;
+            variant* iload(const std::string& _key) override;
 
             variant call(const variant& _func, const varvec& _args) override;
             void raise(const variant& _info,

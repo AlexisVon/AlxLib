@@ -486,7 +486,7 @@ namespace alx {
             auto prev_is_value = [](tk_enum _t) {
                 return _t == T_NAME || _t == T_INT_LITERAL || _t == T_HEX_LITERAL ||
                        _t == T_OCT_LITERAL || _t == T_BIN_LITERAL || _t == T_FLOAT_LITERAL ||
-                       _t == T_STRING_LITERAL || _t == T_BACKTICK_STRING || _t == T_RP ||
+                       _t == T_STRING_LITERAL || _t == T_CHAR_LITERAL || _t == T_BACKTICK_LITERAL || _t == T_RP ||
                        _t == T_RB || _t == T_TRUE || _t == T_FALSE || _t == T_NULL_ ||
                        _t == T_NAN || _t == T_INF ||
                        _t == T_INT || _t == T_FLOAT || _t == T_STRING || _t == T_BOOL ||
@@ -584,10 +584,12 @@ namespace alx {
                     // f(x) / a[i] stay tight; "if (x)" and operator contexts get the space
                     indent_pre();
                     if (prev_is_op(prev) || prev == T_RC) space();
-                    else if (prev == T_NAME || prev == T_RP || prev == T_RB) {   } else if (prev == T_IF || prev == T_WHILE || prev == T_FOR ||
-                                                                                                               prev == T_SWITCH || prev == T_CATCH || prev == T_TRY)
+                    else if (prev == T_NAME || prev == T_RP || prev == T_RB) {
+                    } else if (prev == T_IF || prev == T_WHILE || prev == T_FOR ||
+                               prev == T_SWITCH || prev == T_CATCH || prev == T_TRY)
                         space();
-                    else if (t == T_LP) {   } else
+                    else if (t == T_LP) {
+                    } else
                         space();
                     out.append(c, n);
                     paren++;

@@ -258,7 +258,7 @@ namespace alx {
                     if (pos < size && data[pos] == '`') {
                         pos++;
                         col++;
-                        emit(T_BACKTICK_STRING, start, pos - start, start_r, start_c);
+                        emit(T_BACKTICK_LITERAL, start, pos - start, start_r, start_c);
                     } else {
                         if (_on_error)
                             _on_error->exec({{_file_path, start_r, real_col(start, start_r), start}, "unterminated backtick string"});
@@ -287,10 +287,10 @@ namespace alx {
                     if (pos < size && data[pos] == '\'') {
                         pos++;
                         col++;
-                        emit(T_STRING_LITERAL, start, pos - start, start_r, start_c, std::move(esc));
+                        emit(T_CHAR_LITERAL, start, pos - start, start_r, start_c, std::move(esc));
                     } else {
                         if (_on_error)
-                            _on_error->exec({{_file_path, start_r, real_col(start, start_r), start}, "unterminated string literal"});
+                            _on_error->exec({{_file_path, start_r, real_col(start, start_r), start}, "unterminated character literal"});
                         emit(T_ERROR, start, pos - start, start_r, start_c);
                         ok = false;
                         skip_to_sync();

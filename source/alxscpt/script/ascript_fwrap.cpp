@@ -58,17 +58,17 @@ namespace alx {
             return m_store->remove(_name);
         }
 
-        variant* fwrap_impl::nload(const std::string& _key) {
+        variant* fwrap_impl::iload(const std::string& _key) {
             if (_key.empty()) return nullptr;
             if (!m_ws) return nullptr;
             if (!m_store)
                 throw script_exception{error_type::TypeError,
-                                       std::string("nload: private data not available")};
+                                       std::string("iload: private data not available")};
             varvec iload;
             iload.push_back(variant(OPTYPE(O_ILOAD)));
             iload.push_back(variant(_key));
             // true = navigation: a path that resolves to nothing yields null instead of throwing
-            return walker::resolve_nav(iload, *m_ws);
+            return walker::resolve_iload(iload, *m_ws);
         }
 
         variant fwrap_impl::call(const variant& _func, const varvec& _args) {
@@ -86,7 +86,7 @@ namespace alx {
                 varvec iload;
                 iload.push_back(variant(OPTYPE(O_ILOAD)));
                 iload.push_back(variant(path));
-                variant* v = walker::resolve_nav(iload, *m_ws);
+                variant* v = walker::resolve_iload(iload, *m_ws, false);
                 if (v && v->is<anyptr>())
                     ca = anyptr_ex<call_able>::as(v->to<anyptr>());
             }

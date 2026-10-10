@@ -176,7 +176,8 @@ eng->set_extend("print", [](alx::script::fwrap& _fw) {
 | `size()` / `operator[](i)` | read an argument (`variant&`; a bare variable name aliases the script's variable, any other argument is a temporary; **dead once the call returns**; throws IndexError past the last argument) |
 | `freturn(v)` / `freturn()` | set the return value |
 | `raise(info, error_type)` | throw an exception the script can catch |
-| `call(func, args)` | call a script function from the native (`func` may be a function name string) |
+| `call(func, args)` | call a script function from the native (`func` may be a function name or a `.` path); the path lookup is read-only — a path that does not resolve leaves nothing behind |
+| `iload(key)` | resolve a name or `.` path in the calling scope to a **slot address or nothing** — the script-level read semantics (a `[null]` size, an element's value) do not apply here, and a shape that is not an address (a slice, an out-of-range index, a byte element, a name that is not there) is simply `nullptr`. **The host's one slot handle, in write posture**: it hands back a writable slot, so a missing terminal map key (and a `[null]` append position) is created — write into the returned slot to bind a value |
 | `bind(name, func, area)` | register a native function into an area (what a link module uses) |
 | `load/store/remove(name)` | reach the calling link instance's own data store |
 | `object()` / `unwrap<T>()` | the C++ object bound to the current area |
@@ -295,7 +296,7 @@ The channels are per-engine; with none set (`nullptr`) the host's default is std
 ## 10. Interrupt
 
 ```cpp
-bool running() const;        // true while an exec() is running (call() does not count)
+bool running() const;        // true while an entry runs: exec() or call()
 void set_interrupt();        // ask for an interrupt (callable from any thread)
 ```
 

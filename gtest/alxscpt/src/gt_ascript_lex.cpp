@@ -72,15 +72,15 @@ TEST(gt_ascript_lex, FloatLiteralExp) {
     EXPECT_TEXT(t, 0, "1e5");
 }
 
-TEST(gt_ascript_lex, SingleQuoteString) {
+TEST(gt_ascript_lex, CharLiteral) {
     auto t = lex("'c'");
-    EXPECT_TOK(t, 0, T_STRING_LITERAL);
+    EXPECT_TOK(t, 0, T_CHAR_LITERAL);
     EXPECT_TEXT(t, 0, "'c'");
 }
 
-TEST(gt_ascript_lex, SingleQuoteStringEscaped) {
+TEST(gt_ascript_lex, CharLiteralEscaped) {
     auto t = lex("'\\n'");
-    EXPECT_TOK(t, 0, T_STRING_LITERAL);
+    EXPECT_TOK(t, 0, T_CHAR_LITERAL);
     EXPECT_TEXT(t, 0, "'\\n'");
 }
 
@@ -502,18 +502,29 @@ TEST(gt_ascript_lex, UnterminatedSingleQuote) {
     EXPECT_TOK(t, 0, T_ERROR);
 }
 
-TEST(gt_ascript_lex, EmptySingleQuoteString) {
+TEST(gt_ascript_lex, ErrorCallback_UnterminatedChar) {
+    token_list tl;
+    alx::bytes b("'x");
+    std::vector<compile_error> errors;
+    alx::signal<const compile_error&> err_sig;
+    err_sig.connect([&](const compile_error& e) { errors.push_back(e); });
+    tl.tokenize(alx::bytes_view(b), &err_sig);
+    ASSERT_EQ(errors.size(), 1u);
+    EXPECT_EQ(errors[0].msg, "unterminated character literal");
+}
+
+TEST(gt_ascript_lex, EmptyCharLiteral) {
 
     auto t = lex("''");
     EXPECT_EQ(t.count(), 2u);
-    EXPECT_TOK(t, 0, T_STRING_LITERAL);
+    EXPECT_TOK(t, 0, T_CHAR_LITERAL);
 }
 
-TEST(gt_ascript_lex, SingleQuoteStringEscapes) {
+TEST(gt_ascript_lex, CharLiteralEscapes) {
 
     auto t = lex("'\\t' '\\r' '\\\\' '\\'' '\\\"' '\\0' '\\x41'");
     EXPECT_EQ(t.count(), 8u);
-    for (int i = 0; i < 7; i++) EXPECT_TOK(t, i, T_STRING_LITERAL);
+    for (int i = 0; i < 7; i++) EXPECT_TOK(t, i, T_CHAR_LITERAL);
 }
 
 TEST(gt_ascript_lex, StringEscapes) {

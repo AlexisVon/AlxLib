@@ -51,7 +51,7 @@ static void fn_read_parent(fwrap& args) {
         return;
     }
     std::string name = args[0].to<std::string>();
-    variant* v = args.nload(name);
+    variant* v = args.iload(name);
     if (v) args.freturn(*v);
     else args.freturn(variant(false));
 }

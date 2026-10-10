@@ -956,6 +956,17 @@ static bool parse_has_error(const char* src) {
     p.parse();
     return p.has_error();
 }
+TEST(gt_ascript_parse, DotChainIndex_LiteralsOnlyWithSliceException) {
+    // a variable index inside a dot chain is a parse error; the comma form is the exception
+    EXPECT_TRUE(parse_has_error("var o; o.s[i];"));
+    EXPECT_TRUE(parse_has_error("var o; o.s[i + 1];"));
+    EXPECT_FALSE(parse_has_error("var o; o.s[0];"));
+    EXPECT_FALSE(parse_has_error("var o; o.s[-1];"));
+    EXPECT_FALSE(parse_has_error("var o; o.v[1, 3];")) << "a slice through a chain, bounds may be expressions";
+    EXPECT_FALSE(parse_has_error("var o; o.v[i, j];"));
+    EXPECT_TRUE(parse_has_error("var o; o.v[1, 3].x;")) << "a member of a slice result is not navigable";
+}
+
 
 TEST(gt_ascript_parse, NavReject_BareIndex) {
     EXPECT_TRUE(parse_has_error("..[0];"));
@@ -1304,7 +1315,7 @@ static parse_out parse_full(const char* src) {
 
 TEST(gt_ascript_parse, AssignTarget_NotCheckedAtParse) {
 
-    // not an lvalue, but the parse leaves the judgement to the run-time resolve_ptr
+    // not an lvalue, but the parse leaves the judgement to the run-time resolver
     const char* deferred[] = {"1 = 2;", "\"abc\" = 1;", "[1,2] = 3;", "1 += 1;", "(1) = 2;"};
     for (const char* src : deferred) {
         auto out = parse_full(src);

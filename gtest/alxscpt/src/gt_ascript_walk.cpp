@@ -3221,7 +3221,7 @@ TEST(gt_ascript_walk, Compound_RhsGrowsStore) {
 }
 
 TEST(gt_ascript_walk, AssignTarget_Rejected) {
-    // the lvalue check lives in resolve_ptr: `=` and the compound assignments both report at run time
+    // the lvalue check lives in the resolver: `=` and the compound assignments both report at run time
     const char* bad[] = {"1 = 2;", "\"abc\" = 1;", "[1,2] = 3;", "1 += 1;", "(1) = 2;"};
     for (const char* src : bad) {
         auto r = exec_src_catch(src);
@@ -3547,6 +3547,11 @@ TEST(gt_ascript_walk, Slice_AssignScatter) {
     auto l = exec_src("var l=lst[0,1,2,3,4]; l[1,4] = lst[9,8,7]; l;");
     ASSERT_TRUE(l.is_lst());
     EXPECT_EQ(l.to_lst().front().to<int_64>(), 0);
+    EXPECT_EQ(l.to_lst().size(), 5u) << "a slice write never changes the length";
+    auto lread = exec_src("var l=lst[0,1,2,3,4]; l[1,4] = lst[9,8,7]; l[1,4];");
+    ASSERT_TRUE(lread.is_lst());
+    EXPECT_EQ(lread.to_lst().front().to<int_64>(), 9) << "the scatter lands in the read's order";
+    EXPECT_EQ(lread.to_lst().back().to<int_64>(), 7);
 
     // a strided or reversing slice scatters in the order the read would produce
     auto s = exec_src("var v=[0,1,2,3,4,5]; v[0,6,2] = [10,20,30]; v;");
@@ -3583,8 +3588,7 @@ TEST(gt_ascript_walk, Slice_AssignOperand) {
     EXPECT_EQ(e5, error_type::ArgError);
     auto [e6, v6] = exec_src_catch("var v=[1,2,3]; v[3,3] = [7];");
     EXPECT_EQ(e6, error_type::ArgError);
-    auto [e7, v7] = exec_src_catch("var v=[1,2,3]; v[3,3] = [];");
-    EXPECT_EQ(e7, error_type::UnknownError);
+    EXPECT_NO_SCRIPT_THROW(exec_src_catch("var v=[1,2,3]; v[3,3] = [];"));
     EXPECT_EQ(exec_src("var v=[1,2,3]; v[3,3] = []; v[null];").to<int_64>(), 3);
 }
 
@@ -3688,6 +3692,20 @@ TEST(gt_ascript_walk, ByteValuePolicy) {
     }
     EXPECT_EQ(e1, error_type::OverflowError);
     EXPECT_EQ(exec_ovf(true, "var s; s = \"a\"; s[0] = 255; s[0];").to<int_64>(), 255);
+
+    // the position is checked before the value: an out-of-range index wins
+    auto ovf_type = [](const char* _src) {
+        try {
+            exec_ovf(true, _src);
+        } catch (script_exception& e) {
+            return e.type;
+        }
+        return error_type::UnknownError;
+    };
+    EXPECT_EQ(ovf_type("var s; s = \"hello\"; s[5] = 300;"), error_type::IndexError);
+    EXPECT_EQ(ovf_type("var s; s = \"hello\"; s[0] = 300;"), error_type::OverflowError);
+    EXPECT_EQ(ovf_type("var s; s = \"hello\"; s[null] = 300;"), error_type::OverflowError)
+        << "an append has no position, so the value converts first";
 }
 
 TEST(gt_ascript_walk, ByteElement_CompoundRefused) {
@@ -3801,4 +3819,74 @@ TEST(gt_ascript_walk, WriteIndex_StoreGrowth) {
                        "a[f()] += 10; a[1];")
                   .to<int_64>(),
               12);
+}
+
+// ==================== the target evaluation order, pinned shape by shape ====================
+
+TEST(gt_ascript_walk, TargetOrder_BaseAfterIndex) {
+    // the index decides which container the base expression is asked for: it runs first
+    EXPECT_EQ(exec_src("var log; log = \"\";"
+                       "def g() { log = log + \"g\"; return 1; }"
+                       "def f() { log = log + \"f\"; return [10, 20, 30]; }"
+                       "f()[g()]; log;")
+                  .to<std::string>(),
+              "gf");
+    // a write target whose base is a call result is refused before the base is evaluated at all
+    EXPECT_EQ(exec_src("var log; log = \"\";"
+                       "def g() { log = log + \"g\"; return 1; }"
+                       "def f() { log = log + \"f\"; return [10, 20, 30]; }"
+                       "try { f()[g()] = 9; } catch (e) {} log;")
+                  .to<std::string>(),
+              "g");
+}
+
+TEST(gt_ascript_walk, TargetOrder_SliceBoundsBeforeBaseIndex) {
+    // the slice's bounds are the target's own expressions; the base chain (its index included) follows
+    EXPECT_EQ(exec_src("var log; log = \"\";"
+                       "def g() { log = log + \"g\"; return 0; }"
+                       "def h() { log = log + \"h\"; return 2; }"
+                       "var a; a = [[1, 2, 3]]; a[g()][h(), 3] = [9]; log;")
+                  .to<std::string>(),
+              "hg");
+}
+
+TEST(gt_ascript_walk, TargetOrder_AtPathAfterIndex) {
+    // an @() path is part of the base chain: it resolves after the target's own indexes
+    EXPECT_EQ(exec_src("var log; log = \"\";"
+                       "def g() { log = log + \"g\"; return \"o\"; }"
+                       "def h() { log = log + \"h\"; return 0; }"
+                       "var o; o = map{\"v\": [1]};"
+                       "@(g() + \".v\")[h()] = 9; log;")
+                  .to<std::string>(),
+              "hg");
+}
+
+TEST(gt_ascript_walk, Slice_DotChainBoundsAreExpressions) {
+    EXPECT_EQ(exec_src("var i; i = 2; var o; o = map{\"v\": [0, 1, 2, 3]}; o.v[i, 3] = [9]; o.v[2];")
+                  .to<int_64>(),
+              9);
+}
+
+TEST(gt_ascript_walk, Slice_AssignOperandEdges) {
+    // the operand's own shape and the container's length hold for every linear container
+    auto [e1, v1] = exec_src_catch("var l=lst[1,2,3]; l[0,2] = lst[9];");
+    EXPECT_EQ(e1, error_type::ArgError);
+    auto [e2, v2] = exec_src_catch("var b=bytes(\"abc\"); b[0,2] = bytes(\"X\");");
+    EXPECT_EQ(e2, error_type::ArgError);
+    auto [e3, v3] = exec_src_catch("var v=[1,2,3]; v[10,20] = [1];");
+    EXPECT_EQ(e3, error_type::IndexError);
+    auto [e4, v4] = exec_src_catch("def f() { return [1,2,3]; } f()[1,3] = [9];");
+    EXPECT_EQ(e4, error_type::TypeError);
+    EXPECT_EQ(v4.to<std::string>(), "cannot assign to an rvalue");
+
+    // a self-assignment is a scatter from a value copy, and the length never changes
+    EXPECT_EQ(exec_src("var v; v = [1,2,3]; v[0,2] = v[1,3]; v[null];").to<int_64>(), 3);
+    EXPECT_EQ(exec_src("var v; v = [1,2,3]; v[0,2] = v[1,3]; v[0];").to<int_64>(), 2);
+}
+
+TEST(gt_ascript_walk, Slice_AssignIndexBaseNoCreate) {
+    // an index-form base is resolved without creation: a mid miss is a KeyError and leaves nothing
+    auto [e1, v1] = exec_src_catch("var m = map{}; m[\"k\"][0] = 5;");
+    EXPECT_EQ(e1, error_type::KeyError);
+    EXPECT_EQ(exec_src("var m; m = map{}; try { m[\"k\"][0] = 5; } catch (e) {} m[null];").to<int_64>(), 0);
 }

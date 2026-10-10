@@ -49,30 +49,35 @@ namespace alx {
                 return v;
             }
 
-            // Store one byte in a string/bytes container; _key is the evaluated index (null = append).
-            // The value is converted by the caller, so a refused write leaves no byte behind
-            void byte_store(variant& _parent, const variant& _key, int_64 _byte) {
+            // The position a byte write lands on: the index folds [-1] and is checked first, so an
+            // out-of-range position reports before the value is looked at
+            uint_64 byte_index(variant& _parent, const variant& _key) {
                 bool is_str = _parent.is<std::string>();
                 uint_64 size = is_str ? _parent.as<std::string>().size() : _parent.as<bytes>().size();
-                if (_key.null()) {
-                    if (is_str) {
-                        _parent.as<std::string>().push_back(static_cast<char>(_byte));
-                    } else {
-                        uint_8 b = static_cast<uint_8>(_byte);
-                        _parent.as<bytes>().append(&b, 1);
-                    }
-                    return;
-                }
                 int_64 i = cov_int(_key);
                 if (i == -1) i = static_cast<int_64>(size) - 1;
                 if (i < 0 || static_cast<uint_64>(i) >= size)
                     throw script_exception{error_type::IndexError,
                                            std::string(is_str ? "string index out of range" : "bytes index out of range")};
-                if (is_str) {
-                    _parent.as<std::string>()[static_cast<uint_64>(i)] = static_cast<char>(_byte);
-                } else {
-                    _parent.as<bytes>()[static_cast<uint_64>(i)] = static_cast<uint_8>(_byte);
+                return static_cast<uint_64>(i);
+            }
+
+            // Append one byte: the value is converted by the caller, so a refusal leaves no byte behind
+            void byte_append(variant& _parent, int_64 _byte) {
+                if (_parent.is<std::string>()) {
+                    _parent.as<std::string>().push_back(static_cast<char>(_byte));
+                    return;
                 }
+                uint_8 b = static_cast<uint_8>(_byte);
+                _parent.as<bytes>().append(&b, 1);
+            }
+
+            void byte_put(variant& _parent, uint_64 _i, int_64 _byte) {
+                if (_parent.is<std::string>()) {
+                    _parent.as<std::string>()[_i] = static_cast<char>(_byte);
+                    return;
+                }
+                _parent.as<bytes>()[_i] = static_cast<uint_8>(_byte);
             }
 
             // The number of positions a slice visits; the read walk and the write scatter share it
@@ -522,9 +527,16 @@ namespace alx {
             target_resolved t = walker::resolve_target(lhs, _w, resolve_mode::write, false);
             if (t.type == target_resolved::kind::byte) {
 
-                // the value becomes a byte before it is stored, so a refused write leaves nothing behind
+                // the position is checked before the value: with overflow_check on, s[5] = 300 reports
+                // the IndexError; an append has no position to check, so the value converts first
+                if (t.key.null()) {
+                    int_64 b = byte_value(val, _w.m_cfg.overflow_check);
+                    byte_append(*t.parent, b);
+                    return variant(b);
+                }
+                uint_64 i = byte_index(*t.parent, t.key);
                 int_64 b = byte_value(val, _w.m_cfg.overflow_check);
-                byte_store(*t.parent, t.key, b);
+                byte_put(*t.parent, i, b);
                 return variant(b);
             }
             if (t.type == target_resolved::kind::slice) {
@@ -2264,8 +2276,12 @@ namespace alx {
                 // a chain that entered a link's data resolves inside it at any depth: never a script target
                 if (writing && dr.link_owner && dr.kind == TerminalKind::T_Variant)
                     throw script_exception{error_type::TypeError, std::string("cannot write to link module variable")};
+                // a byte position first: [null] on a byte container is an element, not an append slot
+                bool byte_pos = dr.kind == TerminalKind::T_Variant && dr.parent &&
+                                (dr.key.null() || dr.key.is<int_64>()) &&
+                                (dr.parent->is<std::string>() || dr.parent->is<bytes>());
                 // a null key would append inside get(): reject it before the push for a read-modify-write
-                if (_rmw && dr.kind == TerminalKind::T_Variant && dr.parent && dr.key.null())
+                if (_rmw && !byte_pos && dr.kind == TerminalKind::T_Variant && dr.parent && dr.key.null())
                     throw script_exception{error_type::TypeError,
                                            std::string("append index [null] is not a valid target for read-modify-write")};
                 variant* p = dr.get(!_create);
@@ -2283,7 +2299,8 @@ namespace alx {
                 if (dr.kind == TerminalKind::T_Variant && dr.parent) {
 
                     // a byte element is not a variant slot: the write path takes it as a byte position
-                    if (writing && (dr.parent->is<std::string>() || dr.parent->is<bytes>())) {
+                    // (a string key on a byte container stays the tail's "not a map", as the read side has it)
+                    if (writing && byte_pos) {
                         r.type = target_resolved::kind::byte;
                         r.parent = dr.parent;
                         r.key = dr.key;
@@ -2317,13 +2334,14 @@ namespace alx {
             }
 
             case O_SLICE: {
+                // a probe meets the refusal before the bounds run: no script code on a path that only fails
+                if (!writing)
+                    throw script_exception{error_type::TypeError,
+                                           std::string("slice is read-only: cannot assign to slice")};
                 // the bounds can run script code: they evaluate before the container is resolved
                 variant fv, tv;
                 int_64 step;
                 walker::slice_eval_bounds(_lhs, _w, fv, tv, step);
-                if (!writing)
-                    throw script_exception{error_type::TypeError,
-                                           std::string("slice is read-only: cannot assign to slice")};
                 if (_rmw)
                     throw script_exception{error_type::TypeError,
                                            std::string("slice does not support compound assignment or increment")};
@@ -2484,7 +2502,9 @@ namespace alx {
         }
 
         variant* walker::resolve_slot(const varvec& _lhs, walker& _w, bool _rmw) {
-            target_resolved t = walker::resolve_target(_lhs, _w, resolve_mode::write, _rmw);
+
+            // a read-modify-write reads first: a missing key is a refusal, not a slot to create
+            target_resolved t = walker::resolve_target(_lhs, _w, resolve_mode::write, _rmw, false);
             if (t.type == target_resolved::kind::slot) return t.slot;
             if (t.type == target_resolved::kind::byte)
                 throw script_exception{error_type::TypeError,
@@ -2515,8 +2535,10 @@ namespace alx {
                     throw script_exception{error_type::ArgError, slice_length_error(count, src.size())};
                 auto& dst = parent->as<varvec>();
                 int_64 k = 0;
-                for (int_64 i = from; step > 0 ? i < to : i > to; i += step)
+                for (int_64 i = from; step > 0 ? i < to : i > to; i += step) {
                     dst[static_cast<uint_64>(i)] = src[static_cast<uint_64>(k++)];
+                    bind_owner(dst[static_cast<uint_64>(i)], _t.owner);
+                }
                 return;
             }
             if (parent->is<varlst>()) {
@@ -2541,6 +2563,7 @@ namespace alx {
                 auto rit = src.begin();
                 for (int_64 k = 0; k < count; ++k) {
                     *targets[static_cast<size_t>(k)] = *rit;
+                    bind_owner(*targets[static_cast<size_t>(k)], _t.owner);
                     ++rit;
                 }
                 return;

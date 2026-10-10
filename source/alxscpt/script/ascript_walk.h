@@ -167,8 +167,8 @@ namespace alx {
                 impl_import* owner = nullptr;
             };
 
-            // write runs the write-side guards; nav is the host probe (guards off, a miss is none) --
-            // a script write must never resolve in nav mode
+            // write runs the write-side guards; nav is the host probe (guards off, an unresolved name or
+            // path yields none) -- a script write must never resolve in nav mode
             enum class resolve_mode : uint_8 { write,
                                                nav };
 

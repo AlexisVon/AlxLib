@@ -92,13 +92,51 @@ ts.set("m", map{"a": "XY", "inner": vec[7, 8, 9]});
     assert_eq(k, "TypeError", "10.14 nav element read → TypeError");
 }
 
-// ── string element read (a one-char string on plain data) ──
+// ── string element read (a byte value; a link shields it, plain data does not) ──
 {
     var k = ""; try { var q = ts.s[0]; } catch (e) { k = string(e.what); }
     assert_eq(k, "TypeError", "10.15 string element read → TypeError");
 }
 var plain = "ABCD";
 assert_eq(plain[0], 65, "10.16 plain string element read follows the byte semantics");
+
+// ── the byte / slice surface the byte-element round opened (the shield holds at any depth) ──
+ts.set("sbuf", "ABCD");
+ts.set("v4", vec[1, 2, 3, 4]);
+{
+    var k = ""; try { ts.sbuf[0] = 65; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.23 link string element write → TypeError");
+}
+{
+    var k = ""; try { ts.sbuf[null] = 65; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.24 link string append → TypeError");
+}
+{
+    var k = ""; try { ts.sbuf[0] += 1; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.25 link string element compound → TypeError");
+}
+{
+    var k = ""; try { var q = ts.v4[1, 3]; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.26 link slice read → TypeError");
+}
+{
+    var k = ""; try { ts.v4[1, 3] = [9, 9]; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.27 link slice write → TypeError");
+}
+{
+    var k = ""; try { ts.v4[1, 3] += [9]; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.28 link slice compound → TypeError");
+}
+{
+    var k = ""; try { delete ts.v4[1, 3]; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.29 link slice delete → TypeError");
+}
+{
+    var k = ""; try { ts.sbuf[0, 2] = "XY"; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.30 link string slice write → TypeError");
+}
+assert_eq(ts.get("sbuf"), "ABCD", "10.31 link string untouched");
+assert_eq(ts.get("v4")[null], 4, "10.32 link vec untouched");
 
 // ── must not break: functions and areas ──
 assert_eq(ts.get("s"), "ABCD", "10.17 ts.get still works");

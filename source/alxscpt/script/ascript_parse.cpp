@@ -1466,6 +1466,9 @@ namespace alx {
                         }
                         v.push_back(variant(std::move(mem_str)));
                         left = std::move(v);
+                    } else if (left.size() >= 1 && left[0].is<OPTYPE>() &&
+                               static_cast<op_enum>(left[0].to<OPTYPE>()) == O_SLICE) {
+                        error("cannot navigate into a slice result");
                     } else {
 
                         varvec v;

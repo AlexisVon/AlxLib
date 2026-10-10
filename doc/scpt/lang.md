@@ -462,7 +462,7 @@ v1 += v2;    // v1 = v1 + v2  (vec/lst concat)
 m1 += m2;    // m1 = m1 + m2  (map merge, right overwrites)
 ```
 
-**Assignment target**: must be a variable, a member access, an index expression or an `@()` dynamic path. The shape check is a **run-time** one (the lvalue check in the resolver, shared by `=` and the compound assignments): a literal, an arbitrary expression, a host constant folded out of `$name` or a slice reports `TypeError` at run time (see §6.4); a name that is missing, or names a function binding or an `import`/`link` namespace, reports `NameError` (on the `@()` path a namespace reports `TypeError`).
+**Assignment target**: must be a variable, a member access, an index expression or an `@()` dynamic path. The shape check is a **run-time** one (the lvalue check in the resolver, shared by `=` and the compound assignments): a literal, an arbitrary expression, a host constant folded out of `$name` or a slice reports `TypeError` at run time (see §6.4); a name that is missing reports `NameError` (`Undefined: <name>`; on the `@()` path the same). A function binding or an `import`/`link` namespace is not assignable either, and the two operators refuse it differently: `g = 5` / `m = 1` report `NameError` (`Cannot assign to function` / `Cannot assign to namespace`), while the compound form dies later, as `TypeError` — a namespace through the resolver's guard (`import namespace cannot be read as variable`), a function binding through the operand's own type check.
 
 **Compound assignment semantics:**
 
@@ -491,11 +491,12 @@ m1 += m2;    // m1 = m1 + m2  (map merge, right overwrites)
 | string / bytes | read | ✅ byte value | ✅ last byte | ✅ size (byte count) | ✅ |
 | string / bytes | write | ✅ byte value | ✅ last byte | ✅ append one byte | ✅ |
 | string / bytes | compound assignment | ❌ run-time TypeError | ❌ | ❌ | ❌ |
-| map | read / write | — | — | ✅ size (key count) | ✅ string key only |
+| map | read | — | — | ✅ size (key count) | ✅ string key only |
+| map | write | — | — | ❌ run-time TypeError | ✅ string key only |
 
 > **The `[null]` rule**: size semantics only at **the terminal of a chain + in a read position**, uniformly across vec/lst/string/bytes/map; a scalar parent value (`n[null]`, n being an int etc.) → `TypeError`. In a write position vec/lst/string/bytes append (one byte on a byte container), a map → `TypeError` without exception. A non-terminal `a[null].b` → `IndexError`; `delete a[null]` → `ConvError`.
 >
-> **A string / bytes element is its byte value (int 0-255), read and write alike**: the read gives the int, the write takes one. The value goes through the ordinary integer conversion, then the 0-255 write-back policy — wrap (`& 0xFF`) by default, an `OverflowError` under `overflow_check`. `+=` / `++` on a byte element is a run-time `TypeError` (a byte is not a variant slot): write the explicit `s[0] = s[0] + 1`. `delete` refuses a byte element too.
+> **A string / bytes element is its byte value (int 0-255), read and write alike**: the read gives the int, the write takes one. The value goes through the ordinary integer conversion, then the 0-255 write-back policy — wrap (`& 0xFF`) by default, an `OverflowError` under `overflow_check`. **The position is checked before the value**: `s[5] = 300` reports the `IndexError` under `overflow_check` (a `[null]` append has no position, so its value converts first). `+=` / `++` on a byte element is a run-time `TypeError` (a byte is not a variant slot): write the explicit `s[0] = s[0] + 1`. `delete` refuses a byte element too.
 > A map key must be a string; a non-string (including `null` and numbers) → `TypeError` — it is not silently turned into `""`.
 
 ## 6.4 Slicing `[from, to]` / `[from, to, step]`
@@ -519,7 +520,7 @@ l[1, 3];         // [20, 30]      — an lst slice returns an lst
 
 var o = map{"v": [1, 2, 3, 4]};
 o.v[1, 3];       // [2, 3]        — a slice through a dot chain, `o["v"][1, 3]` alike
-o.v[1, 3] = 9;   // the chain becomes the slice's base; the result is a value
+o.v[1, 3] = [9:2];  // the chain becomes the slice's base; a fill is constructed
 ```
 
 | Semantics | Description |
@@ -570,7 +571,7 @@ s[1, 3] = "EL";           // same type, byte-count matched → "hELlo"
 
 > `[]` inside a dot chain accepts **literal** indices only (integer/string/null), so `o.s[0]` / `o.s[-1]` work while `o.s[i]` is illegal. The **comma form is the exception**: `o.v[1, 3]` is a slice whose base is the chain, and its bounds are full expressions.
 
-> **Rule**: `null` has size semantics only at **the terminal + in a read position** (uniform across vec/lst/string/map). `a[null].b` (non-terminal) → `IndexError`. In a write position only vec/lst append, everything else → `TypeError`. `delete a[null]` → `ConvError` (a null index may not be deleted), use `delete a[-1]` to drop the last element.
+> **Rule**: the `[null]` read/write split is stated once in §6.3 — a null is the size at the terminal of a read, and an append position (one byte on a byte container) only where the container supports it. `a[null].b` (non-terminal) → `IndexError`. `delete a[null]` → `ConvError` (a null index may not be deleted), use `delete a[-1]` to drop the last element.
 > 
 > `[]` inside a dot chain accepts literals only (integer/string/null). A variable index `a[i]` is illegal in a dot chain — when the index must be computed at run time, build the path string first and access it through `@(path)` reflection. A standalone index `a[i]` (not in a dot chain) is not subject to this restriction, and a comma form (`o.v[1, 3]`) is a slice, not an index — its bounds may be any expression.
 

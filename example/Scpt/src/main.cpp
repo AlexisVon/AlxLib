@@ -107,10 +107,10 @@ static void ext_print(script::fwrap& fw) {
         case variant::id<int_64>(): args.push_back(std::to_string(v.to<int_64>())); break;
         case variant::id<double>(): args.push_back(std::to_string(v.to<double>())); break;
         case variant::id<bool>(): args.push_back(v.to<bool>() ? "true" : "false"); break;
-        case variant::id<bytes>(): args.push_back(strutil::format("bytes(%1)", std::to_string(v.to<bytes>().size())));
-        case variant::id<varvec>(): args.push_back(strutil::format("vec(%1)", std::to_string(v.to<varvec>().size())));
-        case variant::id<varlst>(): args.push_back(strutil::format("lst(%1)", std::to_string(v.to<varlst>().size())));
-        case variant::id<varmap>(): args.push_back(strutil::format("map(%1)", std::to_string(v.to<varmap>().size())));
+        case variant::id<bytes>(): args.push_back(strutil::format("bytes(%1)", std::to_string(v.to<bytes>().size()))); break;
+        case variant::id<varvec>(): args.push_back(strutil::format("vec(%1)", std::to_string(v.to<varvec>().size()))); break;
+        case variant::id<varlst>(): args.push_back(strutil::format("lst(%1)", std::to_string(v.to<varlst>().size()))); break;
+        case variant::id<varmap>(): args.push_back(strutil::format("map(%1)", std::to_string(v.to<varmap>().size()))); break;
         default: args.push_back("null"); break;
         }
     }

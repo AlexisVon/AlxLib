@@ -131,11 +131,11 @@ var nt_type; nt_type = "";
 try {
     var a; a = [1, 2, 3];
     tmp = a[null]; // terminal = ok, reads size
-    // Actually: a[null].b would be non-terminal. Test with array of dicts.
     var aa; aa = [map{"x": 1}];
-    var tmp2; tmp2 = aa[null].x; // Should this work? null here reads size=1, then .x on int... hmm
+    var tmp2; tmp2 = aa[null].x; // non-terminal: a null index is a terminal-only read → IndexError
 } catch (e) { null_nonterm_fail = true; nt_type = e.what; }
-// This might pass or fail depending on semantics. We'll see.
+assert_true(null_nonterm_fail, "non-terminal a[null].b throws");
+assert_eq(nt_type, "IndexError", "non-terminal a[null].b → IndexError");
 
 // ========== Operator type checking (§7.8) ==========
 // Bitwise on bool: int-only, throws TypeError

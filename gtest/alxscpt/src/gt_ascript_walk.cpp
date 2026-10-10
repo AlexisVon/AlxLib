@@ -860,6 +860,95 @@ TEST(gt_ascript_walk, ImportEndToEnd) {
     std::remove(tmp.c_str());
 }
 
+TEST(gt_ascript_walk, NestedImportParentNav) {
+
+    std::string leaf = "/tmp/alx_walk_nav_leaf.axc";
+    std::string mid = "/tmp/alx_walk_nav_mid.axc";
+    {
+        std::ofstream ofs(leaf);
+        ofs << "def read_tag() { return ..tag; }" << std::endl
+            << "def write_tag(v) { ..tag = v; }" << std::endl;
+    }
+    {
+        std::ofstream ofs(mid);
+        ofs << "import \"/tmp/alx_walk_nav_leaf.axc\" as lf;" << std::endl
+            << "var tag; tag = \"mid\";" << std::endl
+            << "def via_read() { return lf.read_tag(); }" << std::endl
+            << "def via_write(v) { lf.write_tag(v); }" << std::endl;
+    }
+
+    // `..` from the leaf must reach the mid instance, which outlives the init walk it was bound in
+    auto v = exec_src(
+        "import \"/tmp/alx_walk_nav_mid.axc\" as m;"
+        "m.via_write(\"x\");"
+        "m.via_read();");
+    EXPECT_EQ(v.to<std::string>(), "x");
+
+    auto v2 = exec_src(
+        "import \"/tmp/alx_walk_nav_mid.axc\" as a;"
+        "import \"/tmp/alx_walk_nav_mid.axc\" as b;"
+        "a.via_write(\"A\");"
+        "b.via_write(\"B\");"
+        "a.via_read() + b.via_read();");
+    EXPECT_EQ(v2.to<std::string>(), "AB");
+
+    std::remove(leaf.c_str());
+    std::remove(mid.c_str());
+}
+
+TEST(gt_ascript_walk, InstanceCopyKeepsItsTree) {
+
+    std::string leaf = "/tmp/alx_walk_leaf2.axc";
+    std::string mid = "/tmp/alx_walk_mid2.axc";
+    {
+        std::ofstream ofs(leaf);
+        ofs << "def read_tag() { return ..tag; }" << std::endl;
+    }
+    {
+        std::ofstream ofs(mid);
+        ofs << "import \"/tmp/alx_walk_leaf2.axc\" as lf;" << std::endl
+            << "var tag; tag = \"mid\";" << std::endl
+            << "def via_read() { return lf.read_tag(); }" << std::endl
+            << "def get_lf() { return lf; }" << std::endl;
+    }
+
+    // a handle passed as an argument is copied; the copy's leaf must navigate inside the copy
+    auto v = exec_src(
+        "import \"/tmp/alx_walk_mid2.axc\" as cm;"
+        "def take(m) { return m; }"
+        "var a; a = take(cm);"
+        "cm.tag = \"ORIG\";"
+        "a.tag = \"COPY\";"
+        "a.via_read() + cm.via_read();");
+    EXPECT_EQ(v.to<std::string>(), "COPYORIG");
+
+    // the copy outlives the original
+    auto v2 = exec_src(
+        "import \"/tmp/alx_walk_mid2.axc\" as cm;"
+        "def take(m) { return m; }"
+        "var a; a = take(cm);"
+        "delete cm;"
+        "a.tag = \"x\";"
+        "a.via_read();");
+    EXPECT_EQ(v2.to<std::string>(), "x");
+
+    // a copied child belongs to its holder: its `..` looks in the holder, and the original's deletion
+    // does not touch it
+    auto v3 = exec_src(
+        "import \"/tmp/alx_walk_mid2.axc\" as cm;"
+        "var x; x = cm.get_lf();"
+        "var e; e = \"no_error\";"
+        "try { x.read_tag(); } catch (err) { e = string(err.what); }"
+        "delete cm;"
+        "var e2; e2 = \"no_error\";"
+        "try { x.read_tag(); } catch (err) { e2 = string(err.what); }"
+        "e + \"/\" + e2;");
+    EXPECT_EQ(v3.to<std::string>(), "NameError/NameError");
+
+    std::remove(leaf.c_str());
+    std::remove(mid.c_str());
+}
+
 TEST(gt_ascript_walk, LinkNoCrash) {
 
     auto r = exec_src_catch("link \"no_such_file\" as dummy; 1;");
@@ -1282,6 +1371,117 @@ TEST(gt_ascript_walk, DeleteIndirectInFunction) {
         "def f() { var t; t = 3; return delete @(\"t\"); }"
         "f();");
     EXPECT_TRUE(v.to<bool>());
+}
+
+TEST(gt_ascript_walk, DeleteForHeadVarFromBody) {
+
+    auto v = exec_src_no_frame(
+        "def f() {"
+        "  var r = [false, 0, 0];"
+        "  for (var i = 0; i < 3; i++) {"
+        "    if (i == 0) r[0] = delete i;"
+        "    r[1] = i;"
+        "    var u = \"S\"; var w = 9;"
+        "    r[2] = r[2] + 1;"
+        "  }"
+        "  return r;"
+        "}"
+        "f();");
+    auto& vec = v.to<varvec>();
+    EXPECT_FALSE(vec[0].to<bool>());
+    EXPECT_EQ(vec[1].to<int_64>(), 2);
+    EXPECT_EQ(vec[2].to<int_64>(), 3);
+}
+
+TEST(gt_ascript_walk, DeleteForeachIterVarFromBody) {
+
+    auto v = exec_src_no_frame(
+        "def f() {"
+        "  var d = true; var seen = \"\";"
+        "  for (var k : vec[1, 2]) { d = delete k; seen = seen + string(k); }"
+        "  return [d, seen];"
+        "}"
+        "f();");
+    auto& vec = v.to<varvec>();
+    EXPECT_FALSE(vec[0].to<bool>());
+    EXPECT_EQ(vec[1].to<std::string>(), std::string("12"));
+}
+
+TEST(gt_ascript_walk, DeleteBodyVarInLoopStillWorks) {
+
+    auto v = exec_src_no_frame(
+        "var d = false;"
+        "for (var i = 0; i < 2; i++) { var u = 1; d = delete u; }"
+        "d;");
+    EXPECT_TRUE(v.to<bool>());
+}
+
+TEST(gt_ascript_walk, DeleteLoopHeadSlotNotResurrected) {
+
+    auto v = exec_src_no_frame(
+        "def f() {"
+        "  var j = 0; var d = false; var later = -1;"
+        "  for (var i = 0; j < 2; j++) {"
+        "    if (j == 0) d = delete i;"
+        "    var u = \"STR\"; var w = 5;"
+        "    if (j == 1) later = i;"
+        "  }"
+        "  return [d, later];"
+        "}"
+        "f();");
+    auto& vec = v.to<varvec>();
+    EXPECT_FALSE(vec[0].to<bool>());
+    EXPECT_EQ(vec[1].to<int_64>(), 0);
+}
+
+TEST(gt_ascript_walk, DeleteInNestedBlockOfLoopIsolated) {
+
+    auto v = exec_src_no_frame(
+        "var d = true;"
+        "for (var i = 0; i < 2; i++) { { d = delete i; } }"
+        "d;");
+    EXPECT_FALSE(v.to<bool>());
+}
+
+TEST(gt_ascript_walk, DeleteThroughFrameHeldImport) {
+
+    std::string tmp = "/tmp/alx_del_frame_import.axc";
+    {
+        std::ofstream ofs(tmp);
+        ofs << "var z = 7;" << std::endl;
+    }
+    std::string code =
+        "import \"" + tmp + "\" as m;"
+                            "def g() { var z = 111; var x = @(\"m\"); var hit = false;"
+                            "  try { delete x.z; } catch (e) { hit = true; }"
+                            "  return [hit, z, m.z]; }"
+                            "g();";
+    auto v = exec_src_no_frame(code.c_str());
+    std::remove(tmp.c_str());
+    auto& vec = v.to<varvec>();
+    EXPECT_TRUE(vec[0].to<bool>());
+    EXPECT_EQ(vec[1].to<int_64>(), 111);
+    EXPECT_EQ(vec[2].to<int_64>(), 7);
+}
+
+TEST(gt_ascript_walk, LoopUpdateSeesBodyVarWithDelete) {
+
+    auto v = exec_src_no_frame(
+        "def f() { var out = \"\";"
+        "  for (var i = 0; i < 4; i = i + u) { var u = 1; delete zzz; out = out + string(i); }"
+        "  return out;"
+        "}"
+        "f();");
+    EXPECT_EQ(v.to<std::string>(), std::string("0123"));
+}
+
+TEST(gt_ascript_walk, DeleteLoopHeadVarViaReflection) {
+
+    auto v = exec_src_no_frame(
+        "var d = true;"
+        "for (var i = 0; i < 2; i++) { d = delete @(\"i\"); }"
+        "d;");
+    EXPECT_FALSE(v.to<bool>());
 }
 
 TEST(gt_ascript_walk, DeleteTcoFrameVar) {

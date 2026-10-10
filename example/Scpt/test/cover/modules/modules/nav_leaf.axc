@@ -1,0 +1,29 @@
+// nav_leaf.axc — leaf module: `..` / `....` landing on the middle module and the root script
+
+def read_tag() {
+    return ..mid_tag;
+}
+
+def write_tag(v) {
+    ..mid_tag = v;
+}
+
+def read_root() {
+    return ....root_tag;
+}
+
+def write_root(v) {
+    ....root_tag = v;
+}
+
+def try_create_in_mid() {
+    var e; e = "no_error";
+    try { ..new_var = 1; } catch (err) { e = string(err.what); }
+    return e;
+}
+
+def try_delete_in_mid() {
+    var e; e = "no_error";
+    try { delete ..mid_tag; } catch (err) { e = string(err.what); }
+    return e;
+}

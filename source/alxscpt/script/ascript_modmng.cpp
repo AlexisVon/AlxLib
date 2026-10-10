@@ -40,30 +40,56 @@ namespace alx {
             }
         }
 
+        // a cloned child still names the owner it was copied from: re-point it, and its own subtree, at the new one
+        static void rebind_children(data_store& _store, impl_import* _owner) {
+            for (const auto& p : _store.m_map) {
+                if (p.second >= _store.m_data.size()) continue;
+                auto& v = _store.m_data[p.second];
+                if (!v.is<anyptr>()) continue;
+                const anyptr& ap = v.to<anyptr>();
+                if (auto* child = anyptr_ex<impl_import>::as(ap)) {
+                    child->m_alias = p.first;
+                    child->m_parent = _owner;
+                    rebind_children(child->m_store, child);
+                    continue;
+                }
+                if (auto* child_link = anyptr_ex<impl_link>::as(ap)) {
+                    child_link->m_alias = p.first;
+                    child_link->m_parent = _owner;
+                }
+            }
+        }
+
         // an anyptr copy clones the impl, so every clone takes its own fly ref for its destructor
+        // a fresh copy has no home: its m_parent is stamped by the binding site it lands on
         impl_import::impl_import(const impl_import& _o)
             : m_fly(_o.m_fly), m_mng(_o.m_mng), m_store(_o.m_store),
-              m_env_paths(_o.m_env_paths), m_parent(_o.m_parent),
+              m_env_paths(_o.m_env_paths), m_parent(nullptr),
               m_alias(_o.m_alias) {
+            // re-bind first, ref last: a throw in the re-bind must not leave a reference no destructor returns
+            rebind_children(m_store, this);
             if (m_mng && m_fly) m_fly->m_ref.ref();
         }
 
         impl_import& impl_import::operator=(const impl_import& _o) {
             if (this == &_o) return *this;
+            // ref the incoming fly before releasing the old one: they may be the same fly, and every throw
+            // below must leave this object holding a reference its destructor will return
+            if (_o.m_mng && _o.m_fly) _o.m_fly->m_ref.ref();
             if (m_mng && m_fly) m_mng->release_fly(m_fly);
             m_fly = _o.m_fly;
             m_mng = _o.m_mng;
             m_store = _o.m_store;
             m_env_paths = _o.m_env_paths;
-            m_parent = _o.m_parent;
+            m_parent = nullptr;
             m_alias = _o.m_alias;
-            if (m_mng && m_fly) m_fly->m_ref.ref();
+            rebind_children(m_store, this);
             return *this;
         }
 
         impl_link::impl_link(const impl_link& _o)
             : m_fly(_o.m_fly), m_mng(_o.m_mng), m_store(_o.m_store),
-              m_parent(_o.m_parent), m_alias(_o.m_alias) {
+              m_parent(nullptr), m_alias(_o.m_alias) {
             if (m_mng && m_fly) m_fly->m_ref.ref();
         }
 
@@ -73,7 +99,7 @@ namespace alx {
             m_fly = _o.m_fly;
             m_mng = _o.m_mng;
             m_store = _o.m_store;
-            m_parent = _o.m_parent;
+            m_parent = nullptr;
             m_alias = _o.m_alias;
             if (m_mng && m_fly) m_fly->m_ref.ref();
             return *this;
@@ -161,9 +187,12 @@ namespace alx {
             std::unique_ptr<fly_import> fly(new fly_import());
             fly->m_id = key;
             fly->m_path = resolved;
-            // the module's own directory leads its env search, so nested imports resolve next to it
-            fly->m_env_paths.push_back(dirname_of(resolved));
             fly->m_ast = ast;
+            // the template root's identity: pos_file and env() read m_fly, and m_mng stays null
+            // so the fly's own root never holds a reference to the fly
+            fly->m_root.m_fly = fly.get();
+            // the module's own directory leads its env search, so nested imports resolve next to it
+            fly->m_root.m_env_paths.push_back(dirname_of(resolved));
             // unsharable until here, where every deref() reads as the last one: this is the one owner
             fly->m_ref.init_owned();
             fly_import* ptr = fly.release();
@@ -299,13 +328,11 @@ namespace alx {
                                     script_exception& _err) {
             walker sub(_w->m_cfg);
             sub.mgr = this;
-            sub.m_root.m_fly = fly;
-            // not an instance: a null manager keeps this temp root from releasing the fly ref
-            sub.m_root.m_mng = nullptr;
-            sub.m_root.m_env_paths = fly->m_env_paths;
-            sub.state.root = &sub.m_root;
-            sub.state.current = &sub.m_root;
-            sub.state.root_entity = &sub.m_root;
+            // the walk runs on the fly's own root: the store needs no move at the end, and a nested
+            // import/link binding its parent to it names the fly, not this stack frame
+            sub.state.root = &fly->m_root;
+            sub.state.current = &fly->m_root;
+            sub.state.root_entity = &fly->m_root;
 
             sub.state.m_engine = _w->state.m_engine;
             sub.state.m_search_paths = _w->state.m_search_paths;
@@ -330,9 +357,7 @@ namespace alx {
                     _err = {error_type::InterruptedError, _w->m_interrupt_desc};
                     return false;
                 }
-                // the module body's variables and added env paths become the template instances copy
-                fly->m_store = std::move(sub.m_root.m_store);
-                fly->m_env_paths = sub.m_root.m_env_paths;
+                // the module body's variables and added env paths are already on the fly's root
                 return true;
             } catch (const script_exception& _e) {
                 if (sub.m_interrupted || _w->m_interrupted) {
@@ -378,22 +403,12 @@ namespace alx {
             std::unique_ptr<impl_import> inst(new impl_import());
             // the caller's ref is inherited, not counted again: this instance owes one release
             inst->m_fly = fly;
-            inst->m_env_paths = fly->m_env_paths;
+            inst->m_env_paths = fly->m_root.m_env_paths;
 
             try {
-                // a deep copy, children included: the clones below get back the name each was bound to
-                inst->m_store = fly->m_store;
-                for (const auto& p : fly->m_store.m_map) {
-                    if (p.second >= inst->m_store.m_data.size()) continue;
-                    auto& v = inst->m_store.m_data[p.second];
-                    if (v.is<anyptr>()) {
-                        const anyptr& ap = v.to<anyptr>();
-                        if (auto* child = anyptr_ex<impl_import>::as(ap))
-                            child->m_alias = p.first;
-                        else if (auto* child_link = anyptr_ex<impl_link>::as(ap))
-                            child_link->m_alias = p.first;
-                    }
-                }
+                // a deep copy of the prefab, children included: every clone is re-bound to this copy
+                inst->m_store = fly->m_root.m_store;
+                rebind_children(inst->m_store, inst.get());
             } catch (const std::bad_alloc&) {
                 _err = {error_type::MemoryError, std::string("out of memory")};
                 return nullptr;

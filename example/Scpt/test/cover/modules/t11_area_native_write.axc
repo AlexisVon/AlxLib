@@ -21,42 +21,36 @@ def assert_true(c, name) {
 
 // ── direct write ──
 {
-    var hit; hit = false;
-    try { ts.sub.echo = 5; } catch (e) { hit = true; }
-    assert_true(hit, "11.1 area native write → refused");
+    var k = ""; try { ts.sub.echo = 5; } catch (e) { k = string(e.what); }
+    assert_eq(k, "NameError", "11.1 area native write → refused");
 }
 {
-    var hit; hit = false;
-    try { b.mt.abs = 5; } catch (e) { hit = true; }
-    assert_true(hit, "11.2 area native write (other link) → refused");
+    var k = ""; try { b.mt.abs = 5; } catch (e) { k = string(e.what); }
+    assert_eq(k, "NameError", "11.2 area native write (other link) → refused");
 }
 
 // ── compound / @() forms ──
 {
-    var hit; hit = false;
-    try { ts.sub.echo += 1; } catch (e) { hit = true; }
-    assert_true(hit, "11.3 area native compound → refused");
+    var k = ""; try { ts.sub.echo += 1; } catch (e) { k = string(e.what); }
+    assert_eq(k, "NameError", "11.3 area native compound → refused");
 }
 {
-    var hit; hit = false;
-    try { @("ts.sub.echo") = 5; } catch (e) { hit = true; }
-    assert_true(hit, "11.4 @() area native write → refused");
+    var k = ""; try { @("ts.sub.echo") = 5; } catch (e) { k = string(e.what); }
+    assert_eq(k, "NameError", "11.4 @() area native write → refused");
 }
 
 // ── a missing key is not a function either ──
 {
-    var hit; hit = false;
-    try { ts.sub.nope = 5; } catch (e) { hit = true; }
-    assert_true(hit, "11.5 missing area key write → refused");
+    var k = ""; try { ts.sub.nope = 5; } catch (e) { k = string(e.what); }
+    assert_eq(k, "NameError", "11.5 missing area key write → refused");
 }
 
 // ── the registrations survive: calls and the root-native guard unchanged ──
 assert_eq(ts.sub.echo(42), 42, "11.6 area call after the attempts");
 assert_eq(b.mt.abs(-5), 5, "11.7 other link's area call");
 {
-    var hit; hit = false;
-    try { ts.set = 5; } catch (e) { hit = true; }
-    assert_true(hit, "11.8 link root native write still refused");
+    var k = ""; try { ts.set = 5; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "11.8 link root native write still refused");
 }
 ts.set("k", 9);
 assert_eq(ts.get("k"), 9, "11.9 ts.set/get still work");

@@ -46,13 +46,13 @@ flowchart TB
 - **AST node types are enumerated**: `op_enum` (`uint_8`) is defined in `ascript_enum.h`, replacing the former `std::string` tag. The `varvec[0]` the parser produces changed from `variant(string)` to `variant(uint_8)`; the walker dispatches by O(1) indexing into the bare `op_func[O_ENUMSIZE]` array via `O_ENUMSIZE`
 - **var_map promote cache**: once `var_ptr()` finds a variable in an outer frame it promotes it into the current frame's var_map, so later accesses hit in O(1) and the repeated cross-frame hash disappears
 - **token_type de-classing**: `enum class token_type` → `enum tk_enum`; the former `T_BUILTIN_FUNC` is gone, split into separate tokens (`T_INT`/`T_FLOAT`/`T_STRING`/`T_BOOL`/`T_VEC`/`T_MAP`/`T_LST`/`T_TYPE`/`T_ENV`; `T_TOJS`/`T_FMJS`/`T_PRINT`/`T_INPUT` were removed along with their 2026-08-04 migration out to extension functions)
-- **Unified data_store storage**: all data (variables / defs / native functions / sub-entities / link modules / areas) is stored in `data_store` (`vector<variant> m_data` + `unordered_map m_map` + `vector m_free`), exposing `find`/`store`/`remove`/`contain`. Script objects are accessed through `anyptr` (`call_able` unifies def/native, `link_area` holds the area object + natives). `fly_import`/`fly_link` hold `data_store m_store` directly (the template data); `impl_fly_import` deep-copies the template from `fly->m_store` and then replaces the sub-instance references. An instance holds a fly ref (`m_ref.ref()`) so that sharing among multiple instances cannot release it early. `mod_mng::release_fly` manages the fly lifetime passively
+- **Unified data_store storage**: all data (variables / defs / native functions / sub-entities / link modules / areas) is stored in `data_store` (`vector<variant> m_data` + `unordered_map m_map` + `vector m_free`), exposing `find`/`store`/`remove`/`contain`. Script objects are accessed through `anyptr` (`call_able` unifies def/native, `link_area` holds the area object + natives). `fly_link` holds `data_store m_store` directly (the template data), and `fly_import` holds its template in `m_root` — an `impl_import` the init walk runs on directly, so a child imported during that walk binds its `m_parent` to a live object; `impl_fly_import` deep-copies the template from `fly->m_root.m_store` and re-points every cloned child (recursively) at the new instance. An instance holds a fly ref (`m_ref.ref()`) so that sharing among multiple instances cannot release it early. `mod_mng::release_fly` manages the fly lifetime passively
 - **walker class encapsulation**: the `walker` class holds `walk_state state` + `mod_mng* mgr` + the static op dispatch table `s_ops`; every op function and helper is a walker static method, and `walk_tree()`/`walk_forest()` are walker member functions. The Engine holds a `mod_mng` + a `walker` and exposes functionality through the `engine` class and the `fwrap` interface
 - `fwrap::bind(name, func[, area])` — register a native function: no area → `m_store.store(name, anyptr<call_able>)`; with area → create a link_area → store the native into area->m_natives
 - `fwrap::object()` — the C++ object currently bound to the area (`&m_area->m_object`)
 - `fwrap::unwrap<T>()` — `anyptr_ex<T>::as(*object())`, null-guarded — type-safe unwrapping
 - `fwrap::wrap<T>(ptr, area, methods)` — store the anyptr + bulk-register the area methods (creates an instance dynamically)
-- **Module namespace shielding**: an `import`/`link` `as` alias is an opaque namespace; its members are reachable only through `.` (`alias.func()`, `alias.x`) and it cannot be read or copied as a value. `op_load`, the terminal read in `op_dot`, `resolve_ptr` and `op_iload` — four places in all — check `impl_import`/`impl_link` — a bare read (`var x = alias`) and a compound assignment (`alias += 1`) raise `TypeError`. link additionally shields dot writes (`alias.x = v` → `TypeError`); import allows dot writes (they write into the import entity's `m_store`). An area instance/namespace (a non-callable anyptr) can be removed by the script with `delete` (the anyptr destructor destroys the host object); link/area functions (callable) and data variables cannot be deleted → `TypeError`. The script can only reach link data operations indirectly, through functions the area registered
+- **Module namespace shielding**: an `import`/`link` `as` alias is an opaque namespace; its members are reachable only through `.` (`alias.func()`, `alias.x`) and a bare read as a value is refused — `op_load`, the terminal read in `op_dot` and `resolve_ptr` check `impl_import`/`impl_link`, so `var x = alias` and `alias += 1` raise `TypeError`. Where the handle is handed on instead of read — a call argument, a return, `@("alias")` — the instance is **copied** (value semantics). The copy's parent is its holder: every binding site stamps the slot it wrote (`bind_owner` from `store_raw` / `assign_raw` / `scope_frame::raw_store` / the `resolve_ptr` store branch, whose out-parameter names the resolved slot's owner), so `..` from the copy resolves in the module that holds it; a copy that is never bound (a temporary, or one merely carried inside a container until it is read out into a binding) has no parent. The copy is independent of the original — its own store, its own sub-module instances (the copy constructor re-binds its children to the copy), its own fly reference — so a later `delete` of the original does not touch it. link additionally shields dot writes (`alias.x = v` → `TypeError`); import allows dot writes (they write into the import entity's `m_store`). An area instance/namespace (a non-callable anyptr) can be removed by the script with `delete` (the anyptr destructor destroys the host object); link/area functions (callable) and data variables cannot be deleted → `TypeError`. The script can only reach link data operations indirectly, through functions the area registered
 - `scope_frame` binds `impl_import*` by RAII: the constructor records `base` (`ent->m_store.m_data.size()`), the destructor resizes `ent->m_store.m_data` back to base. Exposes `find`/`store`/`remove`/`contain`
 - `scope_frame::def` — `const varvec*` function definition pointer, used for call-stack tracing on an exception (the trace lazily builds an entity → def→name reverse mapping)
 - Variable data lives in `data_store` (`m_data` + `m_map` + `m_free`), which gives O(1) resize rollback and zero-cost template copying
@@ -437,6 +437,8 @@ delete a[key]   → [O_DEL, [O_INDEX, ...]]          // index
 
 **Delete layering** — the module store is reached only from the module top layer, which the walker reads as `frames.empty()`: the root script and every imported module's top level run in their own walker with no frame pushed, while a function / TCO / block / loop / eval / try frame pushes one. `root_entity` (the old `is_root()` test, now gone) is set to the root entity in `walker::reset()` and to itself when a sub-module is walked for import; it is read by the position/trace mapping.
 
+**The loop head is protected** — `op_for`/`op_foreach` point the loop frame's `prot` at the var_map snapshot they take anyway, and `scope_frame::remove()` refuses a name in it: the for-init declarations and the foreach iteration variable report `false` from a body-level delete, while a body variable stays deletable and everything else about the loop is unchanged (the update clause still sees body variables, `var i` in the body is still a name conflict, no extra frame is pushed).
+
 ### 3.3 Flyweight module structure (fly_import / fly_link / impl_import / impl_link)
 
 ```
@@ -444,8 +446,9 @@ fly_import {
     uint_64  m_id;
     string   m_path;
     ast_resource* m_ast;                     // resource reference (taken by ref_fly; call_able::m_def points into the resource AST)
-    data_store m_store;                      // ★ template data (variables + defs + dep)
-    vector<string> m_env_paths;
+    impl_import m_root;                      // ★ the template root: variables + defs + dep live in its m_store,
+                                             //   and the init walk runs on it, so a child bound during that walk
+                                             //   (m_parent) names an object that lives as long as the fly
     ref_count m_ref;
 
     bool m_init_done = false;                // simplified gate (per-engine single-threaded, no atomics)
@@ -468,7 +471,8 @@ impl_import {
     mod_mng*    m_mng = nullptr;             // ★ dtor calls back release_fly (the resource layer, hence the event source, hangs off m_mng->m_res)
     data_store  m_store;                     // ★ the only storage (variables/defs/entities/links)
     vector<string> m_env_paths;
-    impl_import* m_parent = nullptr;
+    impl_import* m_parent = nullptr;         // ★ the entity that holds this handle (the importing entity for an
+                                             //   alias); null for a fresh copy until a binding site stamps it
     string m_alias;
     // no event-source field: mod_mng is silent (2026-08-06) and resource events all go
     // through the pool-level signal (res_mng::on_csys, forwarded by engine::get_csys()).
@@ -483,7 +487,7 @@ impl_link {
     fly_link* m_fly = nullptr;
     mod_mng*  m_mng = nullptr;               // ★ dtor calls back release_fly (instance layer)
     data_store m_store;                      // ★ the only storage (native fn / area)
-    impl_import* m_parent = nullptr;
+    impl_import* m_parent = nullptr;         // ★ as impl_import (stamped at the binding site)
     string m_alias;
     // copy/move semantics as impl_import (no event-source field)
 };
@@ -494,11 +498,11 @@ call_able  { bool m_is_def; union { const varvec* m_def; native_func m_fn; }; li
 link_area  { anyptr m_object; unordered_map<string, variant> m_natives; }; // variant(anyptr<call_able>)
 ```
 
-- `fly_import` / `fly_link` hold `data_store m_store` directly (the template data), with `res_mng` managing their lifetime uniformly
+- `fly_import` holds its template in `m_root`, `fly_link` a `data_store m_store` directly, with `res_mng` managing their lifetime uniformly
 - All of `impl_import` / `impl_link`'s data lives in `data_store::m_data`. On destruction `m_store.m_data.clear()` → the anyptr deleter recursively clears the child nodes → `m_mng->release_fly(m_fly)` manages the fly reference. `data_store` exposes `find`/`store`/`remove`/`contain`
-- `impl_fly_import` deep-copies the template data from `fly->m_store` and then replaces the anyptr&lt;impl_import&gt;/&lt;impl_link&gt; with the new instances (a child instance is created through a sub-walker and given its m_parent)
+- `impl_fly_import` deep-copies the prefab (`fly->m_root.m_store`) and then re-binds every cloned child: the anyptr clones come out naming the owner they were copied from, so the copy re-points each child at itself — `m_alias` from the store's name, `m_parent` at the new instance — and recurses into the child's own store, so a grandchild names the child's copy, not the template
 - `impl_fly_link` calls `m_create_fn` when the module has one (a fresh area per instance), otherwise copies the template data
-- **A deep copy is an independent holder**: an anyptr deep copy clones the impl object (sharing m_fly without an independent ref) — with no pool ref a double-deref is immediately dangling, so the copy constructor/assignment must take an explicit ref (+1) and the dtor return it symmetrically
+- **A deep copy is an independent holder**: an anyptr deep copy clones the impl object (sharing m_fly without an independent ref) — with no pool ref a double-deref is immediately dangling, so the copy constructor/assignment must take an explicit ref (+1) and the dtor return it symmetrically; the copy also re-binds its own children to itself (`rebind_children`), so a copied tree navigates inside the copy, and the ref is taken only after that re-bind (a throw must not leave a reference no destructor returns). A fresh copy starts unbound (`m_parent` is null) and takes its parent from the binding site it lands on — the binding sits inside the holder's lifetime, so the parent can never outlive the holder
 - The root entity has a `fly_import` of its own too (the walker's `m_root_fly`), which removes the `m_fly == nullptr` special case
 - `res_mng` is a process-wide singleton flyweight pool: pool de-duplication, strict refcount, init gate, DAG cycle detection (see §4.3)
 - `import` creates a child `impl_import` + `fly_import` (the first time); a later import only creates an impl that copies the template
@@ -527,7 +531,7 @@ contain(name)                // whether var_map holds name
 walk_state {
     const varvec* code = nullptr;
     impl_import* root = nullptr;           // = &walker::m_root
-    impl_import* root_entity = nullptr;    // walk origin entity (for is_root() check)
+    impl_import* root_entity = nullptr;    // walk origin entity; read by the position/trace mapping
     deque<scope_frame> frames;             // the global flat frame stack
     impl_import* current = nullptr;        // = frames.back().ent (or root)
     src_pos top_pos;                       // position slot while no frame is live
@@ -539,7 +543,6 @@ walk_state {
     const signal<uint_64, const string&>* on_csys;   // pool-level signal (forwarded by engine::get_csys())
     const engine_config* m_cfg = nullptr;  // max_stack / max_vecfill / parse_depth / overflow_check live here
 
-    bool is_root() const { return current == root_entity; }
     scope_frame& push_frame(impl_import* _ent = nullptr, uint_8 _flags = FF_NONE);  // max_stack check
     void pop_frame();
     variant* var_ptr(const string& _name);  // frame chain lookup + promote
@@ -594,9 +597,9 @@ eval _tree[1] to a string → parse it as an expression
 - **Resource layer res_mng** (a shared singleton): AST cache + dlopen handle pool — read-only/stateless, the only multithreaded surface
 - **Instance layer mod_mng** (one per engine): fly pool (template + instances + simplified gate) — single-threaded, lock-free
 
-**First import**: resolve → the gate hook (an import event, per-engine) → `res_mng::ref_ast` (parse/compile into the cache + an "ast load" event) → build the fly (**holding a resource reference from birth**) → inside the simplified gate (a bool + loading_stack cycle detection) `run_init_walk`: create an isolated sub-walker → walk the body → on success move the store into the fly → `m_init_done = true`. **Failure is layered**: an AST parse failure happens in the ref stage (no fly, no bad — a fix is retried directly); an init failure (walk / nested import / interrupt) marks the fly bad (retrying needs its refs to hit zero and leave the pool).
+**First import**: resolve → the gate hook (an import event, per-engine) → `res_mng::ref_ast` (parse/compile into the cache + an "ast load" event) → build the fly (**holding a resource reference from birth**) → inside the simplified gate (a bool + loading_stack cycle detection) `run_init_walk`: create an isolated sub-walker → walk the body **on the fly's own root** (`fly->m_root`: the store needs no move at the end, and a child the walk imports binds its `m_parent` to an object that lives as long as the fly) → `m_init_done = true`. **Failure is layered**: an AST parse failure happens in the ref stage (no fly, no bad — a fix is retried directly); an init failure (walk / nested import / interrupt) marks the fly bad (retrying needs its refs to hit zero and leave the pool).
 
-**Later imports** (`impl_fly_import`): a pool hit → a fast bool check of the simplified gate → deep-copy the template data from `fly->m_store` → recursively replace the anyptr&lt;impl_import&gt;/&lt;impl_link&gt; with new instances (the recursion goes through **this engine's** mod_mng → gate dependency closures are isolated naturally). Sets `m_parent` + `m_alias`.
+**Later imports** (`impl_fly_import`): a pool hit → a fast bool check of the simplified gate → deep-copy the prefab from `fly->m_root.m_store` → re-bind every cloned child recursively (the copy goes through **this engine's** mod_mng → gate dependency closures are isolated naturally). Sets `m_parent` + `m_alias`.
 
 **Failure reporting stance**: a load failure is always the single message `Cannot load module: <path>`; unreadable / decode failure / decompression failure / parse failure / version mismatch all **share it with no finer distinction** — "it will not load" is one concept by itself, and distinguishing only turns into "sometimes it explains, sometimes it does not". The path reported is **the layer that actually failed** (on a multi-level import chain, the leaf that went wrong), which is enough to locate it.
 
@@ -707,12 +710,13 @@ ref_fly_import(path, w, err)   // ① lookup/create + ref (mod_mng, single-threa
 init_fly_import(fly, w, err)   // ② the simplified gate (per-engine single-threaded: a bool + loading_stack cycle detection)
   - a fast bool check of m_init_done / m_bad; bad → replay the recorded exception (retrying needs refs to hit zero and leave the pool)
   - loading_stack duplicate check: a repeat on the stack = a cycle (self at the top / circular deeper) → ImportError
-  - push → run_init_walk (the AST is already taken by the resource layer: init_scope RAII → walk → templated) → pop
+  - push → run_init_walk (the AST is already taken by the resource layer: init_scope RAII → walk on fly->m_root, which is itself the template) → pop
   - success sets m_init_done = true (silent: no "load" event -- mod_mng prints nothing)
   - failure marks it bad + records the error
 
-impl_fly_import(fly, w, err)   // ③ pure construction: deep-copy from fly->m_store → the instance store (a recursive
-                               // sub-module goes through this engine's mod_mng → gates/pools are per-engine by nature)
+impl_fly_import(fly, w, err)   // ③ pure construction: deep-copy from fly->m_root.m_store → the instance store, then
+                               // re-bind every cloned child (recursively) at the copy (a sub-module goes through this
+                               // engine's mod_mng → gates/pools are per-engine by nature)
 
 import = ①②③ chained; a failure returns this ref uniformly in the composition layer.
 The zero-exception contract: every failure gives nullptr/false plus a script_exception& err (carrying type and message).

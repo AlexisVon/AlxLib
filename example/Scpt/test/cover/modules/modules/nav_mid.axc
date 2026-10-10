@@ -1,0 +1,21 @@
+// nav_mid.axc — middle module for nested parent-nav tests: one import child, one link child
+
+import "nav_leaf.axc" as lf;
+link "../../../bin/test_store.so" as ts;
+
+var mid_tag; mid_tag = "MID";
+
+def set_tag(v) { mid_tag = v; }
+def get_tag() { return mid_tag; }
+def leaf_handle() { return lf; }
+def read_root_direct() { return ..root_tag; }
+
+def read_tag_via_leaf()      { return lf.read_tag(); }
+def write_tag_via_leaf(v)    { lf.write_tag(v); }
+def read_root_via_leaf()     { return lf.read_root(); }
+def write_root_via_leaf(v)   { lf.write_root(v); }
+def try_create_in_mid()      { return lf.try_create_in_mid(); }
+def try_delete_in_mid()      { return lf.try_delete_in_mid(); }
+
+def ts_set(k, v) { ts.set(k, v); }
+def ts_get(k)    { return ts.get(k); }

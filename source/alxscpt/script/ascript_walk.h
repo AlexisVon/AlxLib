@@ -22,7 +22,6 @@ namespace alx {
 
         class walker {
         public:
-
             // must precede `state`: ~walk_state runs first, and its frame dtors truncate m_root's store
             impl_import m_root;
             // synthetic fly owned by this walker alone; m_root carries no mod_mng, so it is never refcounted
@@ -146,9 +145,10 @@ namespace alx {
             static variant op_econst(const varvec&, walker&);
 
         public:
-
             // _isnav (navigation, for indirect loads): an unresolved path yields nullptr instead of throwing
-            static variant* resolve_ptr(const varvec& _lhs, walker& _w, bool _isnav = false);
+            // _owner receives the entity that owns the resolved slot, for the binding sites to stamp on a handle value
+            static variant* resolve_ptr(const varvec& _lhs, walker& _w, bool _isnav = false,
+                                        impl_import** _owner = nullptr);
             static void store_raw(walker& _w, const variant& _name, variant&& _init_val);
             static void assign_raw(walker& _w, const variant& _name, const variant& _val);
             static void assign_raw(walker& _w, const variant& _name, variant&& _val);

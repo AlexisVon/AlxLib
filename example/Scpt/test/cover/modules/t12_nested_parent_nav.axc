@@ -1,0 +1,46 @@
+// ====== t12_nested_parent_nav.axc — `..` from a module imported by an imported module ======
+// The parent of a nested import must name the live instance tree (it used to name the init walk's
+// stack frame, which is dead by the time a function runs: deterministic segfault on `..`).
+
+var passed = 0;
+var failed = 0;
+
+def assert_eq(a, b, name) {
+    if (a == b) { passed = passed + 1; }
+    else { failed = failed + 1; $print("FAIL " + name + ": expected " + string(b) + " got " + string(a)); }
+}
+
+env(["../../bin"]);
+
+var root_tag; root_tag = "ROOT";
+
+import "modules/modules/nav_mid.axc" as m1;
+import "modules/modules/nav_mid.axc" as m2;
+
+// ── one level up: leaf → its own mid instance ──
+m1.set_tag("M1");
+m2.set_tag("M2");
+assert_eq(m1.read_tag_via_leaf(), "M1", ".. read sees the owning instance (1)");
+assert_eq(m2.read_tag_via_leaf(), "M2", ".. read sees the owning instance (2)");
+m1.write_tag_via_leaf("M1W");
+assert_eq(m1.get_tag(), "M1W", ".. write lands in the owning instance");
+assert_eq(m2.get_tag(), "M2", ".. write did not cross instances");
+
+// ── two levels up: leaf → mid → root script ──
+assert_eq(m1.read_root_via_leaf(), "ROOT", ".... read reaches the root script");
+m1.write_root_via_leaf("ROOT2");
+assert_eq(root_tag, "ROOT2", ".... write lands in the root script");
+
+// ── cross-module create / delete stay rejected ──
+assert_eq(m1.try_create_in_mid(), "NameError", ".. create across modules → NameError");
+assert_eq(m1.try_delete_in_mid(), "NameError", ".. delete across modules → NameError");
+
+// ── a link child clones per instance and stays independent ──
+m1.ts_set("k", 1);
+m2.ts_set("k", 2);
+assert_eq(m1.ts_get("k"), 1, "link clone of instance 1");
+assert_eq(m2.ts_get("k"), 2, "link clone of instance 2");
+
+if (failed > 0) {
+    $print("FAIL " + string(failed) + "/" + string(passed + failed) + " t12_nested_parent_nav");
+}

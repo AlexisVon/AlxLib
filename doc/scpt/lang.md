@@ -712,7 +712,7 @@ for (var j = 0; j < 5; ++j) {  // var in init — j scoped to loop
 for (;;) { break; }    // infinite loop (empty condition = true)
 ```
 
-The loop body pushes a frame implicitly; a `var` declared inside the loop does not leak to the enclosing scope. After each iteration the body's temporary variables are cleared by a checkpoint reset.
+The loop pushes a frame implicitly; a `var` declared inside the loop does not leak to the enclosing scope. After each iteration the body's temporary variables are cleared by the iteration cleanup.
 
 ## 8.3 for-each
 
@@ -1139,7 +1139,7 @@ import "math.axp" as math;    // compiled product
 - importing the same module several times in one module (under different aliases) is legal: the defs are shared, the data is isolated
 - the body runs on the first execution; later ones skip execution and copy the initial state directly
 - an optional compile-time embed (`compile(..., _embed=true)`): imports are resolved and inlined recursively at parse time (absolute paths looked up directly / the `"."` rule = the module's own directory), key = `"@"+sha256(absolute path+content)[0:16]`; in embed mode link/env() are compile errors, an import that cannot be resolved is a compile error, a circular import is a compile error, and an imported .axp must have an empty unresolved-dependency list. The product is self-contained
-- `delete aliasName` removes an import namespace; it may be imported again afterwards
+- `delete aliasName` removes an import namespace (module top layer; from a frame it returns `false`); it may be imported again afterwards
 - across modules a variable may only be read and written, not created or deleted
 - **multiple engines in parallel**: several engines in one process (in parallel across threads) may import the same module at once — parsing is shared, instances are isolated; once every module instance has been released, importing again re-parses (hot reload, so new content on disk takes effect)
 
@@ -1182,8 +1182,8 @@ b.ex.slice(v, 0, 2);
 
 - **Variable lookup**: the current frame's var_map → parent frames of the same module → the entity's persistent m_map. At a module boundary (the frame's ent changes) the frame search stops and only the current entity's m_map is used as a fallback
 - **Module isolation**: different import/link aliases create independent modules whose variables do not connect
-- **Namespace shielding**: an import/link `as` alias is an opaque namespace, reachable only through `.` for its members (`alias.func()`, `alias.x`); it cannot be read or copied as a value (`var x = alias` → `TypeError`). link additionally shields dot writes (`alias.x = v` → `TypeError`); dot writes on an import are allowed (they go into the import entity's `m_store`)
-- **Frames**: only block / function call / for / while / for-each push a new frame implicitly, and popping them rolls back (scope_frame RAII). A module's top level has no frame — `var` writes straight into the entity's persistent m_map
+- **Namespace shielding**: an import/link `as` alias is an opaque namespace, reachable only through `.` for its members (`alias.func()`, `alias.x`); a bare read as a value is refused (`var x = alias` → `TypeError`). Where the handle is handed on instead — a call argument, a return, `@("alias")` — the instance is copied. The copy belongs to wherever it lands: bound to a variable or a parameter, `..` from the copy resolves in the module that holds that binding; a copy that never lands (a temporary) has no parent. The copy is independent of the original — its own store and sub-module instances — so a later `delete` of the original does not touch it. link additionally shields dot writes (`alias.x = v` → `TypeError`); dot writes on an import are allowed (they go into the import entity's `m_store`)
+- **Frames**: only block / function call / eval / try / for / while / for-each push a new frame implicitly, and popping them rolls back (scope_frame RAII). A module's top level has no frame — `var` writes straight into the entity's persistent m_map
 - **dot chains across modules**: a positional dot (`::` / `..`) consults the target entity only and cannot penetrate function frames (module value-semantics isolation)
 
 ## 11.4 env
@@ -1230,7 +1230,7 @@ link "mylib" as mylib;     // dlopen → dlsym("alexis_script_load"), the engine
 
 - `as NAME` is mandatory, top level only
 - alias conflict (a var/def/link/import of the same name already in this module) → `NameError`
-- `delete aliasName` removes the link instance (refcount-- → dlclose at zero); it may be linked again afterwards
+- `delete aliasName` removes the link instance (refcount-- → dlclose at zero; module top layer — from a frame it returns `false`); it may be linked again afterwards
 - **multiple engines in parallel**: several engines (in parallel across threads) may link the same library at once — the dlopen handle is shared, the template/instance is per-engine and independent; once every instance has been released, linking again re-dlopens (hot reload)
 - the four link ABI functions (all `void (*)(fwrap&)`, all optional):
   - `alexis_script_load` — whole-link initialisation (once after dlopen, builds the template)
@@ -1590,10 +1590,11 @@ It can be used in an expression context: `var r = delete x; r;` — `r` is `true
 ```js
 delete x;             // delete a variable of the current layer
 delete func_name;     // delete a function definition (module top layer)
-delete alias;         // delete an import / link alias
+delete alias;         // delete an import / link alias (module top layer)
 ```
 
 - **execution layer**: only the module top layer — no frame pushed, i.e. the root script's top level and an imported module's top level — deletes from the entity's `m_store`; any frame (function / TCO / block / loop / eval / try) deletes its own variables only and returns `false` for anything outside it
+- **loop head**: the for-init declarations and the foreach iteration variable cannot be deleted from the body (`delete i` → `false`, the loop goes on); a body variable is deletable as usual
 - silent failure: a name that does not exist → returns `false`, no exception
 - after a deletion the name can be declared again — once it is out of every namespace, `var`/`def`/`link` all create it normally
 - **cross-module delete**: another module's variable cannot be deleted → throws `NameError`
@@ -1617,7 +1618,7 @@ delete alias;         // delete an import / link alias
 
 ### link/area delete rules
 
-An import/link `as` alias is an **opaque namespace** — its members are reachable only through `.`, and it cannot be read or copied as a value (`var x = alias` → `TypeError`). link additionally shields dot writes (`alias.x = v` → `TypeError`); dot writes on an import are allowed (they go into the import entity's `m_store`).
+An import/link `as` alias is an **opaque namespace** — its members are reachable only through `.`, and a bare read as a value is refused (`var x = alias` → `TypeError`). Where the handle is handed on instead — a call argument, a return, `@("alias")` — the instance is copied. The copy belongs to wherever it lands: bound to a variable or a parameter, `..` from the copy resolves in the module that holds that binding; a copy that never lands (a temporary) has no parent. The copy is independent of the original — its own store and sub-module instances — so a later `delete` of the original does not touch it. link additionally shields dot writes (`alias.x = v` → `TypeError`); dot writes on an import are allowed (they go into the import entity's `m_store`).
 
 A link module's internal data is **completely shielded** from a script. An area instance/namespace (mounted under a link, holding the host object's anyptr) **may be deleted** — deleting it destroys the host object (anyptr destructor → the host object is deleted); **functions (callables) and data variables may not be deleted**. Once an instance/namespace has been deleted, a script touching that path again throws.
 

@@ -130,39 +130,6 @@ namespace alx {
         struct ast_resource;
         struct link_resource;
 
-        class fly_import {
-        public:
-            uint_64 m_id;
-            std::string m_path;
-            ast_resource* m_ast = nullptr;
-            data_store m_store;
-            std::vector<std::string> m_env_paths;
-
-            ref_count m_ref;
-
-            // init gate: written only by the owning engine, deliberately not atomic
-            bool m_init_done = false;
-            bool m_bad = false;
-            error_type m_err_type = error_type::UnknownError;
-            std::string m_err_value;
-        };
-
-        class fly_link {
-        public:
-            uint_64 m_id;
-            std::string m_path;
-            link_resource* m_link = nullptr;
-            data_store m_store;
-
-            ref_count m_ref;
-
-            // init gate: written only by the owning engine, deliberately not atomic
-            bool m_init_done = false;
-            bool m_bad = false;
-            error_type m_err_type = error_type::UnknownError;
-            std::string m_err_value;
-        };
-
         class impl_import {
         public:
             fly_import* m_fly = nullptr;
@@ -205,6 +172,48 @@ namespace alx {
 
             ~impl_link();
         };
+
+        class fly_import {
+        public:
+            uint_64 m_id;
+            std::string m_path;
+            ast_resource* m_ast = nullptr;
+            // the template root: the init walk runs directly on it, so what that walk binds as a parent
+            // (a nested import / link) stays valid for as long as the fly is pooled
+            impl_import m_root;
+
+            ref_count m_ref;
+
+            // init gate: written only by the owning engine, deliberately not atomic
+            bool m_init_done = false;
+            bool m_bad = false;
+            error_type m_err_type = error_type::UnknownError;
+            std::string m_err_value;
+        };
+
+        class fly_link {
+        public:
+            uint_64 m_id;
+            std::string m_path;
+            link_resource* m_link = nullptr;
+            data_store m_store;
+
+            ref_count m_ref;
+
+            // init gate: written only by the owning engine, deliberately not atomic
+            bool m_init_done = false;
+            bool m_bad = false;
+            error_type m_err_type = error_type::UnknownError;
+            std::string m_err_value;
+        };
+
+        // a module handle belongs to the entity that holds it: every binding site stamps the slot it just wrote
+        inline void bind_owner(const variant& _val, impl_import* _owner) {
+            if (!_owner || !_val.is<anyptr>()) return;
+            const anyptr& ap = _val.to<anyptr>();
+            if (auto* imp = anyptr_ex<impl_import>::as(ap)) imp->m_parent = _owner;
+            else if (auto* lnk = anyptr_ex<impl_link>::as(ap)) lnk->m_parent = _owner;
+        }
 
         class walker;
 
@@ -343,6 +352,8 @@ namespace alx {
             std::vector<size_t> free;
             slot_map<4> var_map;
             const varvec* def = nullptr;
+            // names this layer may not delete: the for/foreach head snapshot
+            const slot_map<4>* prot = nullptr;
             uint_8 flags = FF_NONE;
             src_pos pos;
 
@@ -361,7 +372,7 @@ namespace alx {
                 : ent(_other.ent), base(_other.base),
                   free(std::move(_other.free)),
                   var_map(std::move(_other.var_map)),
-                  def(_other.def), flags(_other.flags), pos(_other.pos) {
+                  def(_other.def), prot(_other.prot), flags(_other.flags), pos(_other.pos) {
                 _other.ent = nullptr;
             }
 
@@ -372,6 +383,7 @@ namespace alx {
                     free = std::move(_other.free);
                     var_map = std::move(_other.var_map);
                     def = _other.def;
+                    prot = _other.prot;
                     flags = _other.flags;
                     pos = _other.pos;
                     _other.ent = nullptr;
@@ -395,6 +407,7 @@ namespace alx {
 
             // takes the var_map entry even when the variable is an outer frame's, then reports false without freeing it
             bool remove(const std::string& _name) {
+                if (prot && prot->has(_name)) return false;
                 uint_64 vi = var_map.take(_name);
                 if (vi == uint_64_npos) return false;
                 if (vi < base) return false;
@@ -430,6 +443,7 @@ namespace alx {
                     idx = ds.m_data.size() - 1;
                 }
                 var_map.set(_name, idx);
+                bind_owner(ds.m_data[idx], ent);
                 return &ds.m_data[idx];
             }
 

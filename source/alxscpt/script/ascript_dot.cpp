@@ -68,7 +68,8 @@ namespace alx {
                     _s.current = anyptr_ex<impl_import>::as(ap);
                     r.parent = nullptr;
                     r.kind = TerminalKind::T_Slot;
-                    r.parent_kind = pk;
+                    // the terminal key belongs to the entity just entered, not to the frame the alias was found in
+                    r.parent_kind = ParentKind::Entity;
                     return;
                 }
                 if (anyptr_ex<impl_link>::as(ap)) {

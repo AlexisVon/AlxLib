@@ -24,95 +24,78 @@ ts.set("m", map{"a": "XY", "inner": vec[7, 8, 9]});
 
 // ── vec element / append ──
 {
-    var hit; hit = false;
-    try { ts.v[0] = 65; } catch (e) { hit = true; }
-    assert_true(hit, "10.1 vec element write → TypeError");
+    var k = ""; try { ts.v[0] = 65; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.1 vec element write → TypeError");
 }
 {
-    var hit; hit = false;
-    try { var q = ts.v[0]; } catch (e) { hit = true; }
-    assert_true(hit, "10.2 vec element read → TypeError");
+    var k = ""; try { var q = ts.v[0]; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.2 vec element read → TypeError");
 }
 {
-    var hit; hit = false;
-    try { ts.v[null] = 99; } catch (e) { hit = true; }
-    assert_true(hit, "10.3 vec append write → TypeError");
+    var k = ""; try { ts.v[null] = 99; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.3 vec append write → TypeError");
 }
 {
-    var hit; hit = false;
-    try { ts.v[1] += 1; } catch (e) { hit = true; }
-    assert_true(hit, "10.4 vec compound element → TypeError");
+    var k = ""; try { ts.v[1] += 1; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.4 vec compound element → TypeError");
 }
 
 // ── map key / nested ──
 {
-    var hit; hit = false;
-    try { var q = ts.m.a; } catch (e) { hit = true; }
-    assert_true(hit, "10.5 map key read → TypeError");
+    var k = ""; try { var q = ts.m.a; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.5 map key read → TypeError");
 }
 {
-    var hit; hit = false;
-    try { ts.m.a = "QQ"; } catch (e) { hit = true; }
-    assert_true(hit, "10.6 map key write → TypeError");
+    var k = ""; try { ts.m.a = "QQ"; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.6 map key write → TypeError");
 }
 {
-    var hit; hit = false;
-    try { ts.m.newk = 1; } catch (e) { hit = true; }
-    assert_true(hit, "10.7 map key create → TypeError");
+    var k = ""; try { ts.m.newk = 1; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.7 map key create → TypeError");
 }
 {
-    var hit; hit = false;
-    try { ts.m.inner[0] = 65; } catch (e) { hit = true; }
-    assert_true(hit, "10.8 nested element write → TypeError");
+    var k = ""; try { ts.m.inner[0] = 65; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.8 nested element write → TypeError");
 }
 {
-    var hit; hit = false;
-    try { var q = ts.m.inner[1]; } catch (e) { hit = true; }
-    assert_true(hit, "10.9 nested element read → TypeError");
+    var k = ""; try { var q = ts.m.inner[1]; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.9 nested element read → TypeError");
 }
 {
-    var hit; hit = false;
-    try { delete ts.m.a; } catch (e) { hit = true; }
-    assert_true(hit, "10.10 nested delete → TypeError");
+    var k = ""; try { delete ts.m.a; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.10 nested delete → TypeError");
 }
 {
-    var hit; hit = false;
-    try { delete ts.m.inner[0]; } catch (e) { hit = true; }
-    assert_true(hit, "10.10b nested element delete → TypeError");
+    var k = ""; try { delete ts.m.inner[0]; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.10b nested element delete → TypeError");
 }
 {
-    var hit; hit = false;
-    try { delete @("ts.m.inner[1]"); } catch (e) { hit = true; }
-    assert_true(hit, "10.10c @() nested element delete → TypeError");
+    var k = ""; try { delete @("ts.m.inner[1]"); } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.10c @() nested element delete → TypeError");
 }
 
 // ── @() and nav forms ──
 {
-    var hit; hit = false;
-    try { @("ts.v[0]") = 66; } catch (e) { hit = true; }
-    assert_true(hit, "10.11 @() element write → TypeError");
+    var k = ""; try { @("ts.v[0]") = 66; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.11 @() element write → TypeError");
 }
 {
-    var hit; hit = false;
-    try { @("ts.m.a") = "ZZ"; } catch (e) { hit = true; }
-    assert_true(hit, "10.12 @() nested key write → TypeError");
+    var k = ""; try { @("ts.m.a") = "ZZ"; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.12 @() nested key write → TypeError");
 }
 {
-    var hit; hit = false;
-    try { var q = @("ts.m.inner[1]"); } catch (e) { hit = true; }
-    assert_true(hit, "10.13 @() nested element read → TypeError");
+    var k = ""; try { var q = @("ts.m.inner[1]"); } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.13 @() nested element read → TypeError");
 }
 {
-    var hit; hit = false;
-    try { var q = .ts.v[0]; } catch (e) { hit = true; }
-    assert_true(hit, "10.14 nav element read → TypeError");
+    var k = ""; try { var q = .ts.v[0]; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.14 nav element read → TypeError");
 }
 
 // ── string element read (a one-char string on plain data) ──
 {
-    var hit; hit = false;
-    try { var q = ts.s[0]; } catch (e) { hit = true; }
-    assert_true(hit, "10.15 string element read → TypeError");
+    var k = ""; try { var q = ts.s[0]; } catch (e) { k = string(e.what); }
+    assert_eq(k, "TypeError", "10.15 string element read → TypeError");
 }
 var plain = "ABCD";
 assert_eq(plain[0], "A", "10.16 plain string element read unaffected");

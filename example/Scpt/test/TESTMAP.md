@@ -29,7 +29,7 @@ Unit tests: `cd gtest && ./test.sh`
 | 7. Functions | `cover/functions/` 11 files | — |
 | 8. Reflection @ | `cover/reflection/` 10 files | `t09_excall.axc`: @("$xxx")() — the extension-function reflection fast path, plus the static definitions $PI/$vtype/$etype folding and reflecting; `t10_eval.axc`: eval string function (last value / return / params becoming named frame variables / frame-chain closure / nested eval recursive reflection / error catching / TCO inside) |
 | 9. Variables and scope | `cover/scope/` 28 files | — |
-| 10. Modules and chained access | `cover/modules/` 15 files | `t10_link_data_depth.axc`: the link data shield below the slot (element / nested key / `@()` / nav), with area and function access as the controls; `t11_area_native_write.axc`: an area's registered natives are not writable slots |
+| 10. Modules and chained access | `cover/modules/` 17 files | `t10_link_data_depth.axc`: the link data shield below the slot (element / nested key / `@()` / nav), with area and function access as the controls; `t11_area_native_write.axc`: an area's registered natives are not writable slots; `t12_nested_parent_nav.axc`: `..`/`....` out of a module imported by an imported module (per-instance parents, a cloned link child); `t13_module_copy.axc`: a copied instance belongs to its holder, keeps its own tree, and outlives the original |
 | 11. Data types, combined | `cover/data/` 11 files | **new directory** |
 | 12. Control flow, combined | `cover/control/` 6 files | **new directory** |
 | 13. Extension functions ($xxx) | `cover/excall/` 6 files | `datetime.axc`: $datetime() numeric map fields + snapshot consistency + reflection call |

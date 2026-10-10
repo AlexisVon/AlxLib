@@ -1,0 +1,55 @@
+// ====== t13_module_copy.axc — a copied instance is its own tree ======
+// A handle handed on as a value (argument / return) is copied: the copy's children must navigate
+// inside the copy, stay independent of the original, and survive the original's deletion.
+
+var passed = 0;
+var failed = 0;
+
+def assert_eq(a, b, name) {
+    if (a == b) { passed = passed + 1; }
+    else { failed = failed + 1; $print("FAIL " + name + ": expected " + string(b) + " got " + string(a)); }
+}
+
+env(["../../bin"]);
+
+var root_tag; root_tag = "ROOT";
+
+import "modules/modules/nav_mid.axc" as cm;
+
+def take(m) { return m; }
+
+var copy1; copy1 = take(cm);
+
+// ── the copy owns its sub-modules: the leaf of each tree sees its own mid ──
+cm.set_tag("ORIG");
+copy1.set_tag("COPY");
+assert_eq(cm.read_tag_via_leaf(), "ORIG", "the original's leaf sees the original");
+assert_eq(copy1.read_tag_via_leaf(), "COPY", "the copy's leaf sees the copy");
+
+// ── a copy belongs to the entity that holds it: `..` from the copy is that entity ──
+assert_eq(copy1.read_root_direct(), "ROOT", "the copy's own .. reaches its holder (the root script)");
+
+// ── a copied child belongs to its holder too: its `..` looks in the holder, not the original's parent ──
+var x; x = cm.leaf_handle();
+var xerr; xerr = "no_error";
+try { x.read_tag(); } catch (e) { xerr = string(e.what); }
+assert_eq(xerr, "NameError", "a copied child's .. looks in its holder, not the original's parent");
+
+// ── the copy's link child is its own instance ──
+copy1.ts_set("k", 1);
+cm.ts_set("k", 2);
+assert_eq(copy1.ts_get("k"), 1, "the copy's link is independent");
+
+// ── the copy survives the original's deletion ──
+delete cm;
+copy1.set_tag("ALIVE");
+assert_eq(copy1.read_tag_via_leaf(), "ALIVE", "the copy keeps working after the original is deleted");
+assert_eq(copy1.ts_get("k"), 1, "the copy's link survived too");
+
+var xerr2; xerr2 = "no_error";
+try { x.read_tag(); } catch (e) { xerr2 = string(e.what); }
+assert_eq(xerr2, "NameError", "the copied child is unaffected by the original's deletion");
+
+if (failed > 0) {
+    $print("FAIL " + string(failed) + "/" + string(passed + failed) + " t13_module_copy");
+}

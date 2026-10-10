@@ -155,9 +155,9 @@ namespace alx {
             m_root = impl_import();
             m_root.m_fly = &m_root_fly;
             m_root_fly.m_ast = nullptr;
-            m_root_fly.m_store.clear();
+            m_root_fly.m_root.m_store.clear();
             m_root_fly.m_path.clear();
-            m_root_fly.m_env_paths.clear();
+            m_root_fly.m_root.m_env_paths.clear();
             m_root_asts.clear();
             state.root = &m_root;
             state.current = &m_root;
@@ -414,9 +414,11 @@ namespace alx {
                     return nullptr != stored ? *stored : variant();
                 }
                 {
-                    variant* p = resolve_ptr(lhs, _w);
+                    impl_import* owner = _w.state.current;
+                    variant* p = resolve_ptr(lhs, _w, false, &owner);
                     if (p) {
                         *p = std::move(val);
+                        bind_owner(*p, owner);
                         return *p;
                     }
                 }
@@ -610,8 +612,8 @@ namespace alx {
             }
 
             auto var_map_snap = sf.var_map;
-            auto free_snap = sf.free;
             const size_t pre_size = sf.ent->m_store.m_data.size();
+            sf.prot = &var_map_snap;
 
             while (true) {
 
@@ -642,7 +644,7 @@ namespace alx {
                 if (sf.ent->m_store.m_data.size() > pre_size) {
 
                     sf.var_map = var_map_snap;
-                    sf.free = free_snap;
+                    sf.free.clear();
                     sf.ent->m_store.m_data.resize(pre_size);
                 }
 
@@ -667,8 +669,8 @@ namespace alx {
             if (is_var) walker::store_raw(_w, vname, variant());
 
             auto var_map_snap = sf.var_map;
-            auto free_snap = sf.free;
             const size_t pre_size = sf.ent->m_store.m_data.size();
+            sf.prot = &var_map_snap;
 
             switch (iter_val.type()) {
             case variant::id<varvec>(): {
@@ -686,7 +688,7 @@ namespace alx {
 
                     if (sf.ent->m_store.m_data.size() > pre_size) {
                         sf.var_map = var_map_snap;
-                        sf.free = free_snap;
+                        sf.free.clear();
                         sf.ent->m_store.m_data.resize(pre_size);
                     }
 
@@ -708,7 +710,7 @@ namespace alx {
 
                     if (sf.ent->m_store.m_data.size() > pre_size) {
                         sf.var_map = var_map_snap;
-                        sf.free = free_snap;
+                        sf.free.clear();
                         sf.ent->m_store.m_data.resize(pre_size);
                     }
 
@@ -731,7 +733,7 @@ namespace alx {
 
                     if (sf.ent->m_store.m_data.size() > pre_size) {
                         sf.var_map = var_map_snap;
-                        sf.free = free_snap;
+                        sf.free.clear();
                         sf.ent->m_store.m_data.resize(pre_size);
                     }
 
@@ -2034,7 +2036,7 @@ namespace alx {
         static const char* const s_not_a_target =
             "assignment target must be a variable, member access, or index expression";
 
-        variant* walker::resolve_ptr(const varvec& _lhs, walker& _w, bool _isnav) {
+        variant* walker::resolve_ptr(const varvec& _lhs, walker& _w, bool _isnav, impl_import** _owner) {
             if (_lhs.empty()) return nullptr;
             if (!_lhs[0].is<OPTYPE>()) {
                 if (!_isnav)
@@ -2058,6 +2060,7 @@ namespace alx {
                         throw script_exception{error_type::TypeError,
                                                std::string("import namespace cannot be read as variable")};
                 }
+                if (_owner) *_owner = _w.state.current;
                 return p;
             }
 
@@ -2071,13 +2074,15 @@ namespace alx {
                     if (!p && !_isnav)
                         throw script_exception{error_type::NameError,
                                                std::string("Undefined variable: ") + path};
+                    if (p && _owner) *_owner = _w.state.current;
                     return p;
                 }
-                return resolve_ptr(walker::iload_parse_expr(path, _w.m_cfg.parse_depth), _w, _isnav);
+                return resolve_ptr(walker::iload_parse_expr(path, _w.m_cfg.parse_depth), _w, _isnav, _owner);
             }
 
             case O_DOT: {
                 auto dr = resolve_dot(_lhs, _w.state);
+                if (_owner) *_owner = dr.slot_owner;
                 if (!_isnav && dr.kind == TerminalKind::T_Slot && dr.parent) {
                     auto& sv = *dr.parent;
                     if (sv.is<anyptr>()) {
@@ -2142,14 +2147,17 @@ namespace alx {
                 }
                 variant* v = nullptr;
                 op_enum obj_op = static_cast<op_enum>(obj_load[0].to<OPTYPE>());
-                if (obj_op == O_LOAD)
+                if (obj_op == O_LOAD) {
                     v = _w.state.var_ptr(obj_load[1].to<std::string>());
-                else if (obj_op == O_ILOAD) {
+                    if (_owner) *_owner = _w.state.current;
+                } else if (obj_op == O_ILOAD) {
                     variant name_val = walker::eval_arg(obj_load[1], _w);
-                    if (name_val.is<std::string>())
+                    if (name_val.is<std::string>()) {
                         v = _w.state.var_ptr(name_val.to<std::string>());
+                        if (v && _owner) *_owner = _w.state.current;
+                    }
                 } else if (obj_op == O_INDEX || obj_op == O_DOT) {
-                    v = resolve_ptr(obj_load, _w);
+                    v = resolve_ptr(obj_load, _w, false, _owner);
                 }
                 if (!v) throw script_exception{error_type::NameError, std::string("Undefined")};
                 variant idx = walker::eval_arg(_lhs[2], _w);
@@ -2205,7 +2213,8 @@ namespace alx {
             std::string name = _name.to<std::string>();
             walker::check_name_conflict(_w, name);
             if (_w.state.frames.empty()) {
-                _w.state.current->m_store.store(name, std::move(_init_val));
+                variant* p = _w.state.current->m_store.store(name, std::move(_init_val));
+                bind_owner(*p, _w.state.current);
             } else {
                 _w.state.frames.back().store(name, std::move(_init_val));
             }
@@ -2219,6 +2228,7 @@ namespace alx {
             if (p->is<anyptr>() && anyptr_ex<call_able>::as(p->to<anyptr>()))
                 throw script_exception{error_type::NameError, std::string("Cannot assign to function: " + name)};
             *p = _val;
+            bind_owner(*p, _w.state.current);
         }
 
         void walker::assign_raw(walker& _w, const variant& _name, variant&& _val) {
@@ -2229,6 +2239,7 @@ namespace alx {
             if (p->is<anyptr>() && anyptr_ex<call_able>::as(p->to<anyptr>()))
                 throw script_exception{error_type::NameError, std::string("Cannot assign to function: " + name)};
             *p = std::move(_val);
+            bind_owner(*p, _w.state.current);
         }
 
         const varvec* walker::find_def(walker& _w, const std::string& _name) {

@@ -5,7 +5,10 @@
 set -e
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
-BIN_DIR="$SCRIPT_DIR/../../../bin"
+# ALX_TEST_BIN_DIR lets the same suite run against another build tree (e.g. an ASan one), but the link
+# fixtures under example/Scpt/test/bin are shared by every build tree: rebuild them from the target
+# tree before running, or a non-ASan Scpt will load ASan .so files and every link test fails
+BIN_DIR="${ALX_TEST_BIN_DIR:-$SCRIPT_DIR/../../../bin}"
 ALEXIS="$BIN_DIR/Scpt"
 DEMO_DIR="$SCRIPT_DIR/demo"
 COVER_DIR="$SCRIPT_DIR/cover"
@@ -62,15 +65,27 @@ DEMO_FLAGS[batch13_resource.axc]="--max-vecfill 10"
 
 for f in "${DEMO_FILES[@]}"; do
     flags="${DEMO_FLAGS[$f]}"
-    output=$("$ALEXIS" $flags "$f" 2>&1) || true
+    # a crash prints nothing, so silence alone is not a pass: the exit code has to be checked too
+    set +e
+    output=$("$ALEXIS" $flags "$f" 2>&1); ec=$?
+    set -e
+    if [ $ec -ne 0 ]; then
+        fail "$f (exit=$ec)" "$output"; failed=$((failed + 1)); continue
+    fi
     [ -n "$output" ] && { fail "$f" "$output"; failed=$((failed + 1)); }
 done
 
 # .axp round-trip
 tmp_axp=$(mktemp /tmp/alexis_test_XXXXXX.axp)
 if compile_out=$("$ALEXIS" -o "$tmp_axp" -c batch1_types_conv.axc 2>&1); then
-    axp_out=$("$ALEXIS" -x "$tmp_axp" 2>&1) || true
-    [ -n "$axp_out" ] && { fail ".axp round-trip" "$axp_out"; failed=$((failed + 1)); }
+    set +e
+    axp_out=$("$ALEXIS" -x "$tmp_axp" 2>&1); ec=$?
+    set -e
+    if [ $ec -ne 0 ]; then
+        fail ".axp round-trip (exit=$ec)" "$axp_out"; failed=$((failed + 1))
+    elif [ -n "$axp_out" ]; then
+        fail ".axp round-trip" "$axp_out"; failed=$((failed + 1))
+    fi
 else
     fail ".axp compile" ""; failed=$((failed + 1))
 fi

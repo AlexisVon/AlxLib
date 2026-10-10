@@ -42,7 +42,7 @@ namespace alx {
                        const std::string& _file_path,
                        const std::list<std::string>& _search_paths,
                        size_t _max_nest,
-                       const std::unordered_set<std::string>* _ext_table,
+                       const std::unordered_map<std::string, native_func>* _ext_table,
                        const std::unordered_map<std::string, variant>* _def_table,
                        compile_result* _embed_out,
                        const std::string& _embed_etype,
@@ -231,7 +231,7 @@ namespace alx {
 
         varvec parser::parse(const bytes_view& _source, const std::string& _file_path,
                              const std::list<std::string>& _search_paths,
-                             const std::unordered_set<std::string>* _ext_table,
+                             const std::unordered_map<std::string, native_func>* _ext_table,
                              const std::unordered_map<std::string, variant>* _def_table,
                              const size_t _max_nest, bool _debug,
                              const alx::signal<const compile_error&>* _on_error) {
@@ -244,7 +244,7 @@ namespace alx {
 
         varvec parser::parse_body(const bytes_view& _source, const std::string& _file_path,
                                   const std::list<std::string>& _search_paths,
-                                  const std::unordered_set<std::string>* _ext_table,
+                                  const std::unordered_map<std::string, native_func>* _ext_table,
                                   const std::unordered_map<std::string, variant>* _def_table,
                                   bool _debug) {
             token_list tl;

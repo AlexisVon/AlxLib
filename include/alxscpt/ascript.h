@@ -180,6 +180,11 @@ namespace alx {
          */
         struct engine_config {
 
+            /// Identity stamped into every compiled product; an empty one with vtype 0 leaves the gate off
+            std::string etype;
+            /// Extend-support level stamped into a product; a product newer than this is refused on the way in
+            uint_64 vtype = 0;
+
             /// Raise OverflowError instead of wrapping, on integer overflow
             bool overflow_check = false;
             /// Parse-time: insert position markers. Exec-time: record them and fire debug events
@@ -548,34 +553,12 @@ namespace alx {
             /// True when $name is a registered definition
             virtual bool fid_define(const std::string& _name) const = 0;
 
-            /**
-             * \brief Set the compatibility tag stamped into every compiled product
-             *
-             * exec() refuses a product whose tag differs from the engine's, so the two ends of a
-             * tag have to agree exactly; a product with no tag is refused just the same once the
-             * engine has one. Change or drop an extension and the tag has to change with it.
-             *
-             * \param _type Tag to stamp; empty together with vtype 0 leaves the gate off
-             */
-            virtual void set_etype(const std::string& _type) = 0;
-            /// The tag as stamped; empty on an engine that never set one
-            virtual const std::string& etype() const = 0;
-            /**
-             * \brief Set the numeric counter stamped into every compiled product
-             *
-             * Checked one way on the way back in: a product whose counter is greater than the
-             * engine's is refused as too new, an older one is accepted, so 0 accepts nothing that
-             * carries a counter. Bump it when an extension is added; use the tag when one changes
-             * meaning.
-             *
-             * \param _ver Counter to stamp and to accept up to
-             */
-            virtual void set_vtype(uint_64 _ver) = 0;
-            /// The counter as stamped; 0 on an engine that never set one
-            virtual uint_64 vtype() const = 0;
-
             /// The engine's live configuration, valid for as long as the engine is
             virtual const engine_config& config() const = 0;
+            /// Compatibility tag stamped into every compiled product; a mismatch is refused at exec
+            virtual void set_etype(const std::string& _type) = 0;
+            /// Extension counter stamped into every compiled product; a higher one is refused at exec
+            virtual void set_vtype(uint_64 _ver) = 0;
             /// Frames allowed before StackError; 0 = unlimited
             virtual void set_max_stack(size_t _n) = 0;
             /// Syntax nesting one parse may reach; 0 = unlimited

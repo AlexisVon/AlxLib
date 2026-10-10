@@ -39,6 +39,8 @@ The engine ships with **no IO and no extension functions**: `print`, file access
 
 ```cpp
 alx::script::engine_config cfg;
+cfg.etype       = "";          // compatibility tag stamped into every product (see §7)
+cfg.vtype       = 0;           // extension counter stamped into every product, 0 = gate off
 cfg.max_stack   = 1024;        // live frames allowed, 0 = unlimited
 cfg.max_vecfill = 0;           // elements one vec/lst fill may produce, 0 = unlimited
 cfg.parse_depth = 1024;        // syntax nesting depth of one parse, 0 = unlimited
@@ -197,11 +199,11 @@ A host constant read as `$name` (**no parentheses**). It shares the `$` namespac
 
 ## 7. Version gate
 
+`etype` / `vtype` are the first two fields of `engine_config`: read them back through `config()`, set them at creation or with the two setters below the `config()` accessor.
+
 ```cpp
 void set_etype(const std::string& _type);   // engine major version (a string)
-const std::string& etype() const;
 void set_vtype(uint_64 _ver);               // version of the supported extension set (a number)
-uint_64 vtype() const;
 ```
 
 - A compiled product carries the etype/vtype of its compile; the check on the way in is **always on** (it cannot be turned off). A plain engine that set neither skips it.
@@ -297,7 +299,7 @@ bool running() const;        // true while an exec() is running (call() does not
 void set_interrupt();        // ask for an interrupt (callable from any thread)
 ```
 
-The interrupt is **cooperative**: once the request is raised it takes effect at the next checkpoint of the execution flow (the run comes back as `InterruptedError`). The checkpoints are governed by `set_hook`'s `_interval`, but **the flag is looked at on every checkpoint** — an interval of 0 only turns `exec` events off, `set_interrupt()` still works.
+The interrupt is **cooperative**: once the request is raised it takes effect at the next checkpoint of the execution flow (the run comes back as `InterruptedError`). Every entry that runs a walk reports it the same way — `exec` and `call` alike. The checkpoints are governed by `set_hook`'s `_interval`, but **the flag is looked at on every checkpoint** — an interval of 0 only turns `exec` events off, `set_interrupt()` still works.
 
 ---
 

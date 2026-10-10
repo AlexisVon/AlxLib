@@ -17,7 +17,6 @@
 #include <functional>
 #include <list>
 #include <string>
-#include <unordered_set>
 #include <vector>
 
 namespace alx {
@@ -28,7 +27,6 @@ namespace alx {
             friend struct NestGuard;
 
         public:
-
             // Non-null _ext_table/_def_table enable compile-time name checks (null = host extensions
             // unknown, so $name without parens stays a runtime O_ECONST); _max_nest 0 = no depth limit.
             // _embed_out non-null selects embed mode: import is resolved and recursed here, link/env error.
@@ -37,7 +35,7 @@ namespace alx {
                    const std::string& _file_path = std::string(),
                    const std::list<std::string>& _search_paths = {},
                    size_t _max_nest = 1024,
-                   const std::unordered_set<std::string>* _ext_table = nullptr,
+                   const std::unordered_map<std::string, native_func>* _ext_table = nullptr,
                    const std::unordered_map<std::string, variant>* _def_table = nullptr,
                    compile_result* _embed_out = nullptr,
                    const std::string& _embed_etype = std::string(),
@@ -52,7 +50,7 @@ namespace alx {
 
             static varvec parse(const bytes_view& _source, const std::string& _file_path = std::string(),
                                 const std::list<std::string>& _search_paths = {},
-                                const std::unordered_set<std::string>* _ext_table = nullptr,
+                                const std::unordered_map<std::string, native_func>* _ext_table = nullptr,
                                 const std::unordered_map<std::string, variant>* _def_table = nullptr,
                                 size_t _max_nest = 1024,
                                 bool _debug = false,
@@ -60,7 +58,7 @@ namespace alx {
 
             static varvec parse_body(const bytes_view& _source, const std::string& _file_path = std::string(),
                                      const std::list<std::string>& _search_paths = {},
-                                     const std::unordered_set<std::string>* _ext_table = nullptr,
+                                     const std::unordered_map<std::string, native_func>* _ext_table = nullptr,
                                      const std::unordered_map<std::string, variant>* _def_table = nullptr,
                                      bool _debug = false);
 
@@ -84,7 +82,7 @@ namespace alx {
 
             // Enclosing def names; parse_return_stmt turns "return <this def>(...)" into O_TCALL (TCO).
             std::vector<std::string> m_func_stack;
-            const std::unordered_set<std::string>* m_ext_table = nullptr;
+            const std::unordered_map<std::string, native_func>* m_ext_table = nullptr;
             const std::unordered_map<std::string, variant>* m_def_table = nullptr;
             compile_result* m_embed_out = nullptr;
             // Circular-import chain: null on the root parser, shared by the nested parsers it spawns.

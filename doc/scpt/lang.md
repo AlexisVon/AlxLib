@@ -861,7 +861,7 @@ Rules:
 The host may pre-register version constants, which a script can read directly:
 
 ```js
-$vtype;   // extension support set (same as engine::vtype())
+$vtype;   // extension support set (same as engine::config().vtype)
 $etype;   // engine version string
 ```
 
@@ -2077,8 +2077,8 @@ eng->get_csys().connect([](uint_64 tid, const std::string& s) {
 
 | Method | Description |
 |------|------|
-| `set_etype(s)` / `etype()` | engine type (string), stamped in when an .axp is compiled and always checked before execution |
-| `set_vtype(n)` / `vtype()` | engine version (uint_64), the extension support level, stamped in when an .axp is compiled |
+| `set_etype(s)` | engine type (string), stamped in when an .axp is compiled and always checked before execution; read back as `config().etype` |
+| `set_vtype(n)` | engine version (uint_64), the extension support level, stamped in when an .axp is compiled; read back as `config().vtype` |
 
 ### Control and hooks
 

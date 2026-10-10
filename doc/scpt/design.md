@@ -990,23 +990,17 @@ variant walker::walk_tree(const varvec& _tree) {
 
 - **Load gates (the import/link events)**: `ref_fly_import`/`ref_fly_link` fire the event after the path is resolved and before the cache/pool check (`info = the resolved absolute path`; **an embedded module passes the gate as well**, with the module identifier as info). **A rejection is an interrupt (the 2026-08-06 unified firewall semantics)**: a hook returning false sets `m_interrupted` + `InterruptedError` (uncatchable), and the op_import/op_link failure branch short-circuits on InterruptedError (without throwing)
 
-- **The exec verdict** (a normal return and the 3 catch paths all check the flag first — an in-flight op's throw must not mask an interrupt):
+- **The entry verdict — one shared ladder (2026-10-09)**: every engine entry that runs a walk (`exec` and `call` alike — the engine is one bounded, interruptible execution) hands its body to a single private helper that owns the whole exit: the 5 catch arms and the interrupt precedence. Each arm checks the flag before anything else (an in-flight op's throw must not mask an interrupt), and so does the normal return — a walk stopped at a checkpoint returns normally, and the flag is what decides. The flag is therefore cleared on every exit, and a duplicated ladder is exactly what let `call` miss all six checks (a truncated value with `NoError`, plus the stale flag poisoning the next exec):
 
 ```cpp
-try {
-    res.value = m_w.walk_forest(...);
-} catch (const script_exception& _e) {
-    if (m_w.m_interrupted) {                        // the exception path checks the flag first too
-        m_w.reset();                                // clear frames + root stores (impl dtors → refs returned)
-        res.error = error_type::InterruptedError;
-        res.value = variant("execution interrupted");
-        on_cerr(...);
-        return res;
-    }
-    m_w.reset();
-    ... // the existing exception handling (the std::exception / ... catches are isomorphic -- all check the flag first)
+result run_walk(t0, walk_entry _walk, void* _ud) {   // one copy, the entries only supply the body
+    try { res.value = _walk(*this, _ud); }
+    catch (const script_exception& _e) { if (m_w.m_interrupted) return interrupt_result(t0); ... }
+    catch (const std::bad_alloc&)      { if (m_w.m_interrupted) return interrupt_result(t0); ... }
+    // std::length_error / std::exception / ... are isomorphic -- all check the flag first
+    if (m_w.m_interrupted) return interrupt_result(t0);   // the normal return path too
+    ...
 }
-if (m_w.m_interrupted) { ... }                      // the normal return path, isomorphic
 ```
 
 - **run_init_walk is isomorphic**: a normal return plus the 3 catch paths check the flag first → `_err = InterruptedError` → the standard failure path marks it bad + records _err (a half-initialised template never enters the pool)
@@ -1016,7 +1010,7 @@ if (m_w.m_interrupted) { ... }                      // the normal return path, i
 
 1. **try cannot catch it (it cannot be swallowed; exec events only)**: the flag short-circuits — a catch body itself goes through walk_tree → the same short circuit; even catching an in-flight op's throw does not survive it (null safety below). **A hook = a hard firewall (unified 2026-08-06): any event returning false is an interrupt** — the exec checkpoints and the import/link gates alike give an uncatchable InterruptedError, with the reason in `m_interrupt_desc` (written by the hook); there is no "catchable rejection", so a script cannot get around the firewall
 2. **An interrupt = bad (not a false success)**: `run_init_walk` returns false → the standard failure path marks it bad
-3. **An interrupt is not an error — it dies silently**: the interrupt itself never throws; an in-flight op may throw on a null (the op's normal handling of an illegal operand), and the exec/run_init_walk exits cover that with InterruptedError — a script try/catch cannot survive even when it catches it. **The exit coverage is the precondition for a complete interrupt report**: if one exit missed the flag check, an in-flight throw would mislabel the fly ImportError (wrapped by run_init_walk's catch). **The reason stays at this engine's exit**: when run_init_walk is interrupted, `_err.info = m_interrupt_desc` → recorded with the bad fly → carried out by the exec exit in result/on_cerr (there is no cross-engine propagation segment)
+3. **An interrupt is not an error — it dies silently**: the interrupt itself never throws; an in-flight op may throw on a null (the op's normal handling of an illegal operand), and the exec/call/run_init_walk exits cover that with InterruptedError — a script try/catch cannot survive even when it catches it. **The exit coverage is the precondition for a complete interrupt report**: if one exit missed the flag check, an in-flight throw would mislabel the fly ImportError (wrapped by run_init_walk's catch). **The reason stays at this engine's exit**: when run_init_walk is interrupted, `_err.info = m_interrupt_desc` → recorded with the bad fly → carried out by the exec exit in result/on_cerr (there is no cross-engine propagation segment)
 4. **Self-healing**: an interrupted fly = bad (unfinished) → the holder releases it → refs hit zero → the fly leaves the pool → the next import initialises it fully again. The bad lifetime = the fly lifetime
 
 **Known limits**:
@@ -1243,14 +1237,10 @@ public:
     virtual variant get_define(const string& name) const = 0;
     virtual bool fid_define(const string& name) const = 0;
 
-    // ── Engine type & version ─────────────────────────────────
-    virtual void set_etype(const string& type) = 0;
-    virtual const string& etype() const = 0;
-    virtual void set_vtype(uint_64 ver) = 0;
-    virtual uint_64 vtype() const = 0;
-
     // ── Configuration ─────────────────────────────────────────
     virtual const engine_config& config() const = 0;
+    virtual void set_etype(const string& type) = 0;     // etype / vtype are the first two config fields
+    virtual void set_vtype(uint_64 ver) = 0;
     virtual void set_max_stack(size_t n) = 0;
     virtual void set_parse_depth(size_t n) = 0;
     virtual void set_overflow_check(bool on) = 0;

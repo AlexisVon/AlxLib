@@ -116,8 +116,8 @@ TEST(gt_ascript_engine, Reset) {
 
 TEST(gt_ascript_engine, EngineTypeDefault) {
     engine* eng = engine::create();
-    EXPECT_EQ(eng->etype(), "");
-    EXPECT_EQ(eng->vtype(), 0u);
+    EXPECT_EQ(eng->config().etype, "");
+    EXPECT_EQ(eng->config().vtype, 0u);
     delete eng;
 }
 
@@ -125,8 +125,8 @@ TEST(gt_ascript_engine, EngineTypeSetGet) {
     engine* eng = engine::create();
     eng->set_etype("myapp");
     eng->set_vtype(42);
-    EXPECT_EQ(eng->etype(), "myapp");
-    EXPECT_EQ(eng->vtype(), 42u);
+    EXPECT_EQ(eng->config().etype, "myapp");
+    EXPECT_EQ(eng->config().vtype, 42u);
     delete eng;
 }
 
@@ -2627,6 +2627,27 @@ TEST(gt_ascript_engine, Call_Counter) {
     EXPECT_EQ(r2.value.to<int_64>(), 2);
     auto r3 = eng->call("inc", {});
     EXPECT_EQ(r3.value.to<int_64>(), 3);
+    delete eng;
+}
+
+TEST(gt_ascript_engine, Call_Interruptible) {
+    // call is an engine entry like exec: a bounded, interruptible run
+    auto* eng = engine::create();
+    eng->exec(alx::bytes_view(alx::bytes("def spin() { var i = 0; while (1) { i = i + 1; } }")), "");
+
+    hook_rec rec;
+    rec.budget = 500;
+    eng->set_hook(test_hook, &rec, 100);
+    auto res = eng->call("spin", {});
+    EXPECT_EQ(res.error, error_type::InterruptedError) << res.value.to<std::string>();
+    EXPECT_EQ(res.value.to<std::string>(), "execution interrupted — budget exhausted");
+    EXPECT_TRUE(rec.interrupted);
+
+    // the flag is cleared on the way out: the next entry is not poisoned by a stale interrupt
+    eng->set_hook(nullptr, nullptr, 0);
+    auto r2 = eng->exec(alx::bytes_view(alx::bytes("1 + 1;")), "");
+    EXPECT_EQ(r2.error, error_type::NoError);
+    EXPECT_EQ(r2.value.to<int_64>(), 2);
     delete eng;
 }
 

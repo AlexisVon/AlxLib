@@ -51,45 +51,39 @@ namespace alx {
             bool set_extend(const std::string& _name, native_func _handler) override {
                 if (alx::script::is_reserved_name(_name)) return false;
                 if (m_define.find(_name) != m_define.end()) return false;
-                m_ext[_name] = _handler;
-                m_ext_names.insert(_name);
+                m_extend[_name] = _handler;
                 return true;
             }
             void del_extend(const std::string& _name) override {
-                m_ext.erase(_name);
-                m_ext_names.erase(_name);
+                m_extend.erase(_name);
             }
             native_func get_extend(const std::string& _name) const override {
-                auto it = m_ext.find(_name);
-                return it != m_ext.end() ? it->second : nullptr;
+                auto it = m_extend.find(_name);
+                return it != m_extend.end() ? it->second : nullptr;
             }
             bool fid_extend(const std::string& _name) const override {
-                return m_ext_names.find(_name) != m_ext_names.end();
+                return m_extend.find(_name) != m_extend.end();
             }
 
             bool set_define(const std::string& _name, const variant& _value) override {
                 if (alx::script::is_reserved_name(_name)) return false;
-                if (m_ext.find(_name) != m_ext.end()) return false;
+                if (m_extend.find(_name) != m_extend.end()) return false;
                 m_define[_name] = _value;
-                m_define_names.insert(_name);
                 return true;
             }
             void del_define(const std::string& _name) override {
                 m_define.erase(_name);
-                m_define_names.erase(_name);
             }
             variant get_define(const std::string& _name) const override {
                 auto it = m_define.find(_name);
                 return it != m_define.end() ? it->second : variant();
             }
             bool fid_define(const std::string& _name) const override {
-                return m_define_names.find(_name) != m_define_names.end();
+                return m_define.find(_name) != m_define.end();
             }
 
-            void set_etype(const std::string& _type) override { m_etype = _type; }
-            const std::string& etype() const override { return m_etype; }
-            void set_vtype(uint_64 _ver) override { m_vtype = _ver; }
-            uint_64 vtype() const override { return m_vtype; }
+            void set_etype(const std::string& _type) override { m_cfg.etype = _type; }
+            void set_vtype(uint_64 _ver) override { m_cfg.vtype = _ver; }
 
             variant* load(const std::string& _name,
                           bool _auto_create = false) override {
@@ -109,58 +103,18 @@ namespace alx {
                     return {variant("not a def function: " + _name), 0, error_type::NameError};
 
                 auto t0 = std::chrono::steady_clock::now();
-                result res;
-                try {
-                    varvec tree;
-                    tree.push_back(variant(OPTYPE(O_CALL)));
-                    tree.push_back(variant(_name));
-                    for (const auto& a : _args) {
-                        varvec leaf;
-                        leaf.push_back(variant(a));
-                        tree.push_back(variant(std::move(leaf)));
-                    }
-                    if (!m_w.state.current) m_w.state.current = &m_w.m_root;
-                    res.value = walker::invoke_def(
-                        m_w.state.current, *ca->m_def, _name, tree, m_w);
-                } catch (const script_exception& e) {
-                    std::string trace;
-                    try {
-                        trace = walker::walk_state_trace(m_w);
-                    } catch (...) {
-                    }
-                    m_w.reset();
-                    std::string msg = strutil::format("Uncaught: [%1] %2",
-                                                      error_type_name(e.type), e.info);
-                    if (!trace.empty()) msg += "\n" + trace;
-                    on_cerr(msg);
-                    res.value = e.info;
-                    res.error = e.type;
-                } catch (const std::bad_alloc&) {
-                    m_w.reset();
-                    on_cerr("MemoryError: out of memory");
-                    res.value = variant(std::string("out of memory"));
-                    res.error = error_type::MemoryError;
-                } catch (const std::length_error& e) {
-                    m_w.reset();
-                    on_cerr("MemoryError: " + std::string(e.what()));
-                    res.value = variant(std::string(e.what()));
-                    res.error = error_type::MemoryError;
-                } catch (const std::exception& e) {
-                    m_w.reset();
-                    std::string msg = "NativeError: " + std::string(e.what());
-                    on_cerr(msg);
-                    res.value = variant(std::string(e.what()));
-                    res.error = error_type::NativeError;
-                } catch (...) {
-                    m_w.reset();
-                    on_cerr("NativeError: unknown");
-                    res.error = error_type::NativeError;
+                call_walk cw;
+                cw.ca = ca;
+                cw.name = _name;
+                cw.tree.push_back(variant(OPTYPE(O_CALL)));
+                cw.tree.push_back(variant(_name));
+                for (const auto& a : _args) {
+                    varvec leaf;
+                    leaf.push_back(variant(a));
+                    cw.tree.push_back(variant(std::move(leaf)));
                 }
-                res.elapsed_us = static_cast<int_64>(
-                    std::chrono::duration_cast<std::chrono::microseconds>(
-                        std::chrono::steady_clock::now() - t0)
-                        .count());
-                return res;
+                if (!m_w.state.current) m_w.state.current = &m_w.m_root;
+                return run_walk(t0, walk_entry_call, &cw);
             }
 
             result exec(const bytes_view& _data,
@@ -232,58 +186,7 @@ namespace alx {
                 m_w.m_root_asts.push_back(std::move(ast));
                 m_w.state.root = &m_w.m_root;
                 m_w.state.current = &m_w.m_root;
-                try {
-                    res.value = m_w.walk_forest(m_w.m_root_asts.back());
-                } catch (const script_exception& _e) {
-
-                    // an interrupt outranks the error, and reset() below clears the flag
-                    if (m_w.m_interrupted) return interrupt_result(t0);
-
-                    std::string trace;
-                    try {
-                        trace = walker::walk_state_trace(m_w);
-                    } catch (...) {
-                    }
-                    m_w.reset();
-                    std::string msg = strutil::format("Uncaught: [%1] %2",
-                                                      error_type_name(_e.type),
-                                                      _e.info);
-                    if (!trace.empty()) msg += "\n" + trace;
-                    on_cerr(msg);
-                    res.value = _e.info;
-                    res.error = _e.type;
-                } catch (const std::bad_alloc&) {
-                    if (m_w.m_interrupted) return interrupt_result(t0);
-                    m_w.reset();
-                    on_cerr("MemoryError: out of memory");
-                    res.value = variant(std::string("out of memory"));
-                    res.error = error_type::MemoryError;
-                } catch (const std::length_error& _e) {
-                    if (m_w.m_interrupted) return interrupt_result(t0);
-                    m_w.reset();
-                    on_cerr("MemoryError: " + std::string(_e.what()));
-                    res.value = variant(std::string(_e.what()));
-                    res.error = error_type::MemoryError;
-                } catch (const std::exception& _e) {
-                    if (m_w.m_interrupted) return interrupt_result(t0);
-                    m_w.reset();
-                    std::string msg = "NativeError: " + std::string(_e.what());
-                    on_cerr(msg);
-                    res.value = variant(std::string(_e.what()));
-                    res.error = error_type::NativeError;
-                } catch (...) {
-                    if (m_w.m_interrupted) return interrupt_result(t0);
-                    m_w.reset();
-                    on_cerr("NativeError: unknown");
-                    res.error = error_type::NativeError;
-                }
-                // a walk stopped at a checkpoint returns normally, so the flag decides here too
-                if (m_w.m_interrupted) return interrupt_result(t0);
-                res.elapsed_us = static_cast<int_64>(
-                    std::chrono::duration_cast<std::chrono::microseconds>(
-                        std::chrono::steady_clock::now() - t0)
-                        .count());
-                return res;
+                return run_walk(t0, walk_entry_forest, nullptr);
             }
 
             bytes compile(const bytes_view& _data,
@@ -296,7 +199,7 @@ namespace alx {
                 if (!_embed) collect_deps(ast, result);
 
                 const std::string& main_file = m_src_file.empty() ? _home_dir : m_src_file;
-                return make_compile_binary(main_file, ast, m_etype, m_vtype, result, _cmps,
+                return make_compile_binary(main_file, ast, m_cfg.etype, m_cfg.vtype, result, _cmps,
                                            _hint);
             }
 
@@ -341,8 +244,8 @@ namespace alx {
                 const std::string& parse_path = m_src_file.empty() ? _file_path : m_src_file;
                 token_list tl;
                 tl.tokenize(_src, &on_cmpl, parse_path);
-                parser p(tl, &on_cmpl, parse_path, m_cfg.search_paths, m_w.m_cfg.parse_depth, &m_ext_names, &m_define,
-                         _embed_out, m_etype, m_vtype, m_cfg.debug_enable);
+                parser p(tl, &on_cmpl, parse_path, m_cfg.search_paths, m_w.m_cfg.parse_depth, &m_extend, &m_define,
+                         _embed_out, m_cfg.etype, m_cfg.vtype, m_cfg.debug_enable);
                 varvec ast = p.parse();
                 // an empty AST is the failure sentinel: the parser recovers and reports via on_cmpl
                 if (p.has_error()) return {};
@@ -350,6 +253,79 @@ namespace alx {
             }
 
         private:
+            /// A walk body run_walk drives; _ud carries the entry's own context
+            using walk_entry = variant (*)(engine_impl&, void*);
+
+            /// call()'s context for its entry
+            struct call_walk {
+                call_able* ca = nullptr;
+                std::string name;
+                varvec tree;
+            };
+
+            /// The shared failure ladder of every engine entry: an interrupt outranks whatever the
+            /// walk raised, and a walk stopped at a checkpoint (a normal return) reports through the
+            /// same exit — so a run is interruptible wherever it was entered
+            result run_walk(const std::chrono::steady_clock::time_point& _t0, walk_entry _walk, void* _ud) {
+                result res;
+                try {
+                    res.value = _walk(*this, _ud);
+                } catch (const script_exception& _e) {
+                    if (m_w.m_interrupted) return interrupt_result(_t0);
+                    std::string trace;
+                    try {
+                        trace = walker::walk_state_trace(m_w);
+                    } catch (...) {
+                    }
+                    m_w.reset();
+                    std::string msg = strutil::format("Uncaught: [%1] %2",
+                                                      error_type_name(_e.type), _e.info);
+                    if (!trace.empty()) msg += "\n" + trace;
+                    on_cerr(msg);
+                    res.value = _e.info;
+                    res.error = _e.type;
+                } catch (const std::bad_alloc&) {
+                    if (m_w.m_interrupted) return interrupt_result(_t0);
+                    m_w.reset();
+                    on_cerr("MemoryError: out of memory");
+                    res.value = variant(std::string("out of memory"));
+                    res.error = error_type::MemoryError;
+                } catch (const std::length_error& _e) {
+                    if (m_w.m_interrupted) return interrupt_result(_t0);
+                    m_w.reset();
+                    on_cerr("MemoryError: " + std::string(_e.what()));
+                    res.value = variant(std::string(_e.what()));
+                    res.error = error_type::MemoryError;
+                } catch (const std::exception& _e) {
+                    if (m_w.m_interrupted) return interrupt_result(_t0);
+                    m_w.reset();
+                    std::string msg = "NativeError: " + std::string(_e.what());
+                    on_cerr(msg);
+                    res.value = variant(std::string(_e.what()));
+                    res.error = error_type::NativeError;
+                } catch (...) {
+                    if (m_w.m_interrupted) return interrupt_result(_t0);
+                    m_w.reset();
+                    on_cerr("NativeError: unknown");
+                    res.error = error_type::NativeError;
+                }
+                if (m_w.m_interrupted) return interrupt_result(_t0);
+                res.elapsed_us = static_cast<int_64>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - _t0)
+                        .count());
+                return res;
+            }
+
+            static variant walk_entry_forest(engine_impl& _e, void*) {
+                return _e.m_w.walk_forest(_e.m_w.m_root_asts.back());
+            }
+
+            static variant walk_entry_call(engine_impl& _e, void* _ud) {
+                auto& c = *static_cast<call_walk*>(_ud);
+                return walker::invoke_def(_e.m_w.state.current, *c.ca->m_def, c.name, c.tree, _e.m_w);
+            }
+
             result interrupt_result(const std::chrono::steady_clock::time_point& _t0) {
                 // the hook's reject reason, written through hook_info::desc; reset() clears it
                 std::string desc = m_w.m_interrupt_desc;
@@ -369,17 +345,17 @@ namespace alx {
 
             std::string check_version(const varmap& _vm) const {
 
-                if (m_etype.empty() && m_vtype == 0) return {};
+                if (m_cfg.etype.empty() && m_cfg.vtype == 0) return {};
 
                 std::string axp_type = _vm.value("etype").to<std::string>("");
                 uint_64 axp_ver = _vm.value("vtype").to<uint_64>(0);
 
-                if (axp_type != m_etype)
-                    return "engine type mismatch: expected '" + m_etype + "', got '" + axp_type + "'";
+                if (axp_type != m_cfg.etype)
+                    return "engine type mismatch: expected '" + m_cfg.etype + "', got '" + axp_type + "'";
 
-                if (axp_ver > m_vtype)
+                if (axp_ver > m_cfg.vtype)
                     return "version too new: axp v" + std::to_string(axp_ver) +
-                           ", engine v" + std::to_string(m_vtype);
+                           ", engine v" + std::to_string(m_cfg.vtype);
 
                 return {};
             }
@@ -389,14 +365,8 @@ namespace alx {
             walker m_w;
             varmap m_compiled_vm;
 
-            std::unordered_map<std::string, native_func> m_ext;
-            std::unordered_set<std::string> m_ext_names;
-
+            std::unordered_map<std::string, native_func> m_extend;
             std::unordered_map<std::string, variant> m_define;
-            std::unordered_set<std::string> m_define_names;
-
-            std::string m_etype;
-            uint_64 m_vtype = 0;
 
             std::atomic<bool> m_running{false};
 

@@ -23,7 +23,7 @@ static varvec parse_src(const char* src) {
     return p.parse();
 }
 
-static varvec parse_src_ext(const char* src, const std::unordered_set<std::string>& ext) {
+static varvec parse_src_ext(const char* src, const std::unordered_map<std::string, native_func>& ext) {
     alx::bytes b(src);
     token_list tl;
     tl.tokenize(alx::bytes_view(b));
@@ -31,7 +31,7 @@ static varvec parse_src_ext(const char* src, const std::unordered_set<std::strin
     return p.parse();
 }
 
-static bool parse_ext_has_error(const char* src, const std::unordered_set<std::string>& ext) {
+static bool parse_ext_has_error(const char* src, const std::unordered_map<std::string, native_func>& ext) {
     alx::bytes b(src);
     token_list tl;
     tl.tokenize(alx::bytes_view(b));
@@ -1004,7 +1004,7 @@ TEST(gt_ascript_parse, SliceParse_SingleIndex) {
 }
 
 TEST(gt_ascript_parse, Excall_Parse) {
-    std::unordered_set<std::string> ext = {"foo"};
+    std::unordered_map<std::string, native_func> ext = {{"foo", nullptr}};
     auto ast = parse_src_ext("$foo(1, 2);", ext);
     ASSERT_GE(ast.size(), 2u);
     auto& node = ast[1].to<varvec>();
@@ -1015,7 +1015,7 @@ TEST(gt_ascript_parse, Excall_Parse) {
 }
 
 TEST(gt_ascript_parse, Excall_NoArgs) {
-    std::unordered_set<std::string> ext = {"foo"};
+    std::unordered_map<std::string, native_func> ext = {{"foo", nullptr}};
     auto ast = parse_src_ext("$foo();", ext);
     ASSERT_GE(ast.size(), 2u);
     auto& node = ast[1].to<varvec>();
@@ -1026,7 +1026,7 @@ TEST(gt_ascript_parse, Excall_NoArgs) {
 
 TEST(gt_ascript_parse, Excall_Undefined) {
 
-    std::unordered_set<std::string> ext;
+    std::unordered_map<std::string, native_func> ext;
     EXPECT_TRUE(parse_ext_has_error("$foo(1);", ext));
 }
 
@@ -1041,7 +1041,7 @@ TEST(gt_ascript_parse, Excall_NullTable) {
 }
 
 TEST(gt_ascript_parse, Excall_InExpr) {
-    std::unordered_set<std::string> ext = {"foo"};
+    std::unordered_map<std::string, native_func> ext = {{"foo", nullptr}};
     auto ast = parse_src_ext("1 + $foo(x);", ext);
     ASSERT_GE(ast.size(), 2u);
     auto& add = ast[1].to<varvec>();

@@ -323,7 +323,7 @@ Only the read-only part can be shared across threads: the compiled result (`pcre
 
 One measured number along the way: were it changed to "build a fresh match block per call" to open up same-object concurrency, the cost would be **+30 ns per call** (+52~63% on a small pattern and a short subject), and it would **still not settle the hook's ownership** -- that needs the hook turned into a per-call argument, which is an interface-generation change. So this is not done.
 
-**The library adds no lock and does no detection** (the same stance as `process_ctrl`: one instance does not run concurrently, across instances concurrency is free): the consequences of a concurrent call are the caller's to bear. All of this is written down in the header, in `api.md` §15 and in `notice.md`.
+**The library adds no lock and does no detection** (the same stance as `process_ctrl`: one instance does not run concurrently, across instances concurrency is free): the consequences of a concurrent call are the caller's to bear. All of this is written down in the header, in `api.md` §14 and in `notice.md`.
 
 ## 13. Revision log (behaviour changes that touch the design)
 

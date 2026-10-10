@@ -5,6 +5,7 @@ set(ALXBASE_SOURCES
     ${CMAKE_SOURCE_DIR}/source/alxbase/aaes.cpp
     ${CMAKE_SOURCE_DIR}/source/alxbase/abytes.cpp
     ${CMAKE_SOURCE_DIR}/source/alxbase/acsv.cpp
+    ${CMAKE_SOURCE_DIR}/source/alxbase/adatetime.cpp
     ${CMAKE_SOURCE_DIR}/source/alxbase/ajson.cpp
     ${CMAKE_SOURCE_DIR}/source/alxbase/aregex_ex.cpp
     ${CMAKE_SOURCE_DIR}/source/alxbase/astring.cpp

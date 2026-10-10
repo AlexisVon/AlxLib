@@ -18,6 +18,7 @@
     <ClInclude Include="..\..\include\alxbase\abytes.h" />
     <ClInclude Include="..\..\include\alxbase\afactory.h" />
     <ClInclude Include="..\..\include\alxbase\acsv.h" />
+    <ClInclude Include="..\..\include\alxbase\adatetime.h" />
     <ClInclude Include="..\..\include\alxbase\ajson.h" />
     <ClInclude Include="..\..\include\alxbase\aobject.h" />
     <ClInclude Include="..\..\include\alxbase\arefcount.h" />
@@ -38,6 +39,7 @@
     <ClCompile Include="..\..\source\alxbase\aaes.cpp" />
     <ClCompile Include="..\..\source\alxbase\abytes.cpp" />
     <ClCompile Include="..\..\source\alxbase\acsv.cpp" />
+    <ClCompile Include="..\..\source\alxbase\adatetime.cpp" />
     <ClCompile Include="..\..\source\alxbase\ajson.cpp" />
     <ClCompile Include="..\..\source\alxbase\aregex_ex.cpp" />
     <ClCompile Include="..\..\source\alxbase\astring.cpp" />

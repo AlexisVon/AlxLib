@@ -594,7 +594,7 @@ re.get_pattern();
 
 Construction and copying are `noexcept` (a failed compile does not throw; `is_valid()` is the gate).
 
-**The cost is unbounded, so it serves trusted input only**: `std::regex` has neither a step limit nor a callback point, and a perfectly legal pattern can still blow up on backtracking -- 30 `a`s against `(a+)+b` measured 165 s, doubling with every extra input character, and no time window can be inserted inside this call. When the pattern or the input comes from outside (a script, a proxy, a network), switch to alxcore's `regex_pcre2` (a step limit plus interruptible callouts; see `doc/core/api.md` §16).
+**The cost is unbounded, so it serves trusted input only**: `std::regex` has neither a step limit nor a callback point, and a perfectly legal pattern can still blow up on backtracking -- 30 `a`s against `(a+)+b` measured 165 s, doubling with every extra input character, and no time window can be inserted inside this call. When the pattern or the input comes from outside (a script, a proxy, a network), switch to alxcore's `regex_pcre2` (a step limit plus interruptible callouts; see `doc/core/api.md` §14).
 
 ### 10.2 `anyptr` (`aanyptr.h`)
 
@@ -685,5 +685,19 @@ The two exits have different jobs, and each has a reason to exist:
 The two describe one digest, and the conversion between them is pinned by `bytedigest_matches_hexdigest_word_order` (22 algorithms checked one by one against the published vectors, both exits verified).
 
 Built-in types: `NO_CHECK`, `CRC_32`, `CRC_32C`, `SHA_1`, `SHA_256` (created by enum or by name).
+
+---
+
+## 13. Time (`adatetime.h`)
+
+```cpp
+alx::datetime now = alx::datetime::current();
+alx::datetime t(2026, 9, 11, 12, 30, 0);
+now.to_string();
+now.add_seconds(60);  now.add_milliseconds(500);  now.add_microseconds(1);
+alx::datetime timer;  timer.start();  timer.elapsed_ms();   // timing
+```
+
+`datetime` is based on `system_clock` (the wall clock, the same source as `to_time_t` / file times), `start()` takes the reference point again, and `elapsed_ms()` returns the milliseconds since it -- the typical use is timing between two points. Note that the wall clock can **jump** under NTP or a manual adjustment; for a strictly monotonic duration use `std::chrono::steady_clock` instead.
 
 ---

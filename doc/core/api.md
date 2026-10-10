@@ -1,6 +1,6 @@
 # alxcore — API Manual
 
-`alxcore` is the **middle layer** of AlxLib: file and stream, compression, archive, image, database, thread pool and thread-safe containers, logger, fiber, cache, platform adaptation layer, time and regex. It depends on `alxbase` and is depended on by `alxcomm` / `alxscpt`.
+`alxcore` is the **middle layer** of AlxLib: file and stream, compression, archive, image, database, thread pool and thread-safe containers, logger, fiber, cache, platform adaptation layer and regex. It depends on `alxbase` and is depended on by `alxcomm` / `alxscpt`.
 
 - Header directory: `include/alxcore/`
 - Library: `libalxcore.so` (or the merged static library `alxlib.a`)
@@ -26,7 +26,7 @@ alx::file_info info("/tmp/a.txt");
 info.is_exist();  info.is_dir();  info.is_link();  info.is_valid();
 info.path();  info.name();  info.suffix();  info.size();
 info.time_ct();  info.time_la();  info.time_lw();
-alx::file_info::conver_file_time(info.time_lw());     // → datetime
+alx::file_info::conver_file_time(info.time_lw());     // → datetime (now in alxbase, see doc/base/api.md §13)
 
 info.get_parent();                                     // the containing directory's file_info
 info.get_child("*.txt");                               // entry list (wildcards accepted)
@@ -452,21 +452,7 @@ Killing and reaping:
 
 ---
 
-## 14. Time (`adatetime.h`)
-
-```cpp
-alx::datetime now = alx::datetime::current();
-alx::datetime t(2026, 9, 11, 12, 30, 0);
-now.to_string();
-now.add_seconds(60);  now.add_milliseconds(500);  now.add_microseconds(1);
-alx::datetime timer;  timer.start();  timer.elapsed_ms();   // timing
-```
-
-`datetime` is based on `system_clock` (the wall clock, the same source as `to_time_t` / file times), `start()` takes the reference point again, and `elapsed_ms()` returns the milliseconds since it -- the typical use is timing between two points. Note that the wall clock can **jump** under NTP or a manual adjustment; for a strictly monotonic duration use `std::chrono::steady_clock` instead.
-
----
-
-## 15. Regex (`aregex_pcre2.h`)
+## 14. Regex (`aregex_pcre2.h`)
 
 A regex on the PCRE2 backend: **a single match has a ceiling, and the host can stop it mid-flight**. A different animal from base's `regex_ex` (`std::regex`, with no bound on its cost); pick between them by whether the input is trustworthy:
 

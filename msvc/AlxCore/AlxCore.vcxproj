@@ -13,7 +13,6 @@
   <ItemGroup>
     <ClInclude Include="..\..\include\alxcore\acache.h" />
     <ClInclude Include="..\..\include\alxcore\acompress.h" />
-    <ClInclude Include="..\..\include\alxcore\adatetime.h" />
     <ClInclude Include="..\..\include\alxcore\afiber.h" />
     <ClInclude Include="..\..\include\alxcore\afile.h" />
     <ClInclude Include="..\..\include\alxcore\afpacker.h" />
@@ -30,7 +29,6 @@
   <ItemGroup>
     <ClCompile Include="..\..\source\alxcore\acache.cpp" />
     <ClCompile Include="..\..\source\alxcore\acompress.cpp" />
-    <ClCompile Include="..\..\source\alxcore\adatetime.cpp" />
     <ClCompile Include="..\..\source\alxcore\afiber.cpp" />
     <ClCompile Include="..\..\source\alxcore\afile.cpp" />
     <ClCompile Include="..\..\source\alxcore\afpacker.cpp" />

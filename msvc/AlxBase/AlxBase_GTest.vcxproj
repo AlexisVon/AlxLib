@@ -15,6 +15,7 @@
     <ClCompile Include="..\..\gtest\alxbase\src\gt_aaes.cpp" />
     <ClCompile Include="..\..\gtest\alxbase\src\gt_abytes.cpp" />
     <ClCompile Include="..\..\gtest\alxbase\src\gt_acsv.cpp" />
+    <ClCompile Include="..\..\gtest\alxbase\src\gt_adatetime.cpp" />
     <ClCompile Include="..\..\gtest\alxbase\src\gt_ajson.cpp" />
     <ClCompile Include="..\..\gtest\alxbase\src\gt_aregex_ex.cpp" />
     <ClCompile Include="..\..\gtest\alxbase\src\gt_astring.cpp" />

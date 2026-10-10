@@ -3,7 +3,6 @@
 set(ALXCORE_SOURCES
     ${CMAKE_SOURCE_DIR}/source/alxcore/afile.cpp
     ${CMAKE_SOURCE_DIR}/source/alxcore/acompress.cpp
-    ${CMAKE_SOURCE_DIR}/source/alxcore/adatetime.cpp
     ${CMAKE_SOURCE_DIR}/source/alxcore/athreadpool.cpp
     ${CMAKE_SOURCE_DIR}/source/alxcore/afiber.cpp
     ${CMAKE_SOURCE_DIR}/source/alxcore/astream_ex.cpp

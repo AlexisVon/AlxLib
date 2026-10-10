@@ -1011,174 +1011,14 @@ namespace alx {
             }
         }
 
-        static bool is_pure_read(const varvec& _n) {
-            // empty (the recovery sentinel) and [null] are impure: never deref a failed node
-            if (_n.empty()) return false;
-            if (!_n[0].is<OPTYPE>()) return !_n[0].null();
-            switch (static_cast<op_enum>(_n[0].to<OPTYPE>())) {
-            case O_LOAD:
-                return true;
-            case O_ILOAD:
-                return _n.size() > 1 && (!_n[1].is_vec() || is_pure_read(_n[1].to<varvec>()));
-            case O_DOT:
-                for (size_t i = 1; i < _n.size(); i++) {
-                    if (_n[i].null()) return false;
-                    if (_n[i].is_vec() && !is_pure_read(_n[i].to<varvec>())) return false;
-                }
-                return true;
-            case O_INDEX:
-                if (_n.size() < 3 || !_n[1].is_vec() || !_n[2].is_vec()) return false;
-                return is_pure_read(_n[1].to<varvec>()) && is_pure_read(_n[2].to<varvec>());
-            case O_SLICE:
-            case O_TERNARY:
-            case O_UPLUS:
-            case O_UMINUS:
-            case O_NOT:
-            case O_BIT_NEG:
-            case O_ADD:
-            case O_SUB:
-            case O_MUL:
-            case O_DIV:
-            case O_MOD:
-            case O_LSHIFT:
-            case O_RSHIFT:
-            case O_BIT_AND:
-            case O_BIT_OR:
-            case O_BIT_XOR:
-            case O_EQ:
-            case O_NE:
-            case O_LT:
-            case O_GT:
-            case O_LE:
-            case O_GE:
-            case O_AND:
-            case O_OR:
-            case O_INT:
-            case O_FLOAT:
-            case O_STRING:
-            case O_BOOL:
-            case O_VEC:
-            case O_MAP:
-            case O_LST:
-            case O_HERE:
-            case O_TYPE:
-            case O_ECONST: {
-                for (size_t i = 1; i < _n.size(); i++)
-                    if (_n[i].is_vec() && !is_pure_read(_n[i].to<varvec>())) return false;
-                return true;
-            }
-            // default-deny: calls, comma, unpack, del, inc/dec and stores are all impure
-            default:
-                return false;
-            }
-        }
-
-        static bool is_ass_target(const varvec& _n) {
-            if (_n.empty() || !_n[0].is<OPTYPE>()) return false;
-            switch (static_cast<op_enum>(_n[0].to<OPTYPE>())) {
-            case O_LOAD: return true;
-            case O_DOT: return is_pure_read(_n);
-            default: return false;
-            }
-        }
-
-        static bool ast_equal(const varvec& _a, const varvec& _b) {
-            if (_a.size() != _b.size()) return false;
-            for (size_t i = 0; i < _a.size(); i++) {
-                const variant& x = _a[i];
-                const variant& y = _b[i];
-                if (x.is<varvec>() && y.is<varvec>()) {
-                    if (!ast_equal(x.to<varvec>(), y.to<varvec>())) return false;
-                } else if (x.null() || y.null()) {
-                    if (x.null() != y.null()) return false;
-                } else if (x.is<std::string>() || y.is<std::string>()) {
-                    if (!x.is<std::string>() || !y.is<std::string>()) return false;
-                    if (x.to<std::string>() != y.to<std::string>()) return false;
-                } else if (x.is<bool>() || y.is<bool>()) {
-                    if (!x.is<bool>() || !y.is<bool>() || x.to<bool>() != y.to<bool>()) return false;
-                } else if (x.is_number() && y.is_number()) {
-                    if (x.to<double>() != y.to<double>()) return false;
-                } else return false;
-            }
-            return true;
-        }
-
-        static op_enum ass_op_for(op_enum _op) {
-            switch (_op) {
-            case O_ADD: return O_ASS_ADD;
-            case O_SUB: return O_ASS_SUB;
-            case O_MUL: return O_ASS_MUL;
-            case O_DIV: return O_ASS_DIV;
-            case O_MOD: return O_ASS_MOD;
-            case O_LSHIFT: return O_ASS_LSHIFT;
-            case O_RSHIFT: return O_ASS_RSHIFT;
-            case O_BIT_AND: return O_ASS_BIT_AND;
-            case O_BIT_OR: return O_ASS_BIT_OR;
-            case O_BIT_XOR: return O_ASS_BIT_XOR;
-            default: return O_ENUMSIZE;
-            }
-        }
-
-        static varvec pure_store(varvec _store) {
-            if (_store.size() < 3 || !_store[1].is_vec() || !_store[2].is_vec()) return _store;
-            const varvec& target = _store[1].to<varvec>();
-            const varvec& rhs = _store[2].to<varvec>();
-            if (!is_ass_target(target) || rhs.size() < 3 || !rhs[0].is<OPTYPE>()) return _store;
-            op_enum ass_op = ass_op_for(static_cast<op_enum>(rhs[0].to<OPTYPE>()));
-            if (ass_op == O_ENUMSIZE) return _store;
-            if (!rhs[1].is_vec() || !rhs[2].is_vec()) return _store;
-            if (rhs[2].to<varvec>().empty()) return _store;
-            if (!ast_equal(target, rhs[1].to<varvec>())) return _store;
-            if (!is_pure_read(rhs[2].to<varvec>())) return _store;
-            varvec v;
-            v.push_back(variant(OPTYPE(ass_op)));
-            v.push_back(std::move(_store[1]));
-            v.push_back(std::move(_store[2].to<varvec>()[2]));
-            return v;
-        }
-
-        static bool target_has_null_index(const varvec& _target) {
-            if (_target.empty() || !_target[0].is<OPTYPE>()) return false;
-            switch (static_cast<op_enum>(_target[0].to<OPTYPE>())) {
-            case O_INDEX:
-                if (_target.size() >= 3 && _target[2].is_vec()) {
-                    const varvec& idx = _target[2].to<varvec>();
-                    if (idx.size() == 1 && idx[0].null()) return true;
-                }
-                return _target.size() >= 2 && _target[1].is_vec() &&
-                       target_has_null_index(_target[1].to<varvec>());
-            case O_DOT:
-                return _target.size() >= 2 && _target[1].is_vec() &&
-                       target_has_null_index(_target[1].to<varvec>());
-            default:
-                return false;
-            }
-        }
-
-        static const char* assign_target_error(const varvec& _t) {
-            if (!_t.empty() && _t[0].is<OPTYPE>()) {
-                switch (static_cast<op_enum>(_t[0].to<OPTYPE>())) {
-                case O_LOAD:
-                case O_ILOAD:
-                case O_DOT:
-                case O_INDEX:
-                case O_SLICE:
-                    return nullptr;
-                default: break;
-                }
-            }
-            return "assignment target must be a variable, member access, or index expression";
-        }
-
         varvec parser::parse_assign() {
             NestGuard ng(*this);
             if (!ng.ok) return {};
             varvec left = parse_ternary();
 
             if (match(T_ASS)) {
-                if (const char* e = assign_target_error(left)) error(e);
                 varvec rhs = parse_assign();
-                return pure_store(make_node(O_STORE, {variant(std::move(left)), variant(std::move(rhs))}));
+                return make_node(O_STORE, {variant(std::move(left)), variant(std::move(rhs))});
             }
 
             static const struct {
@@ -1186,25 +1026,20 @@ namespace alx {
                 op_enum op;
                 const char* txt;
             } assign_ops[] = {
-                {T_ASS_ADD, O_ADD, "+="},
-                {T_ASS_MINUS, O_SUB, "-="},
-                {T_ASS_MUL, O_MUL, "*="},
-                {T_ASS_DIV, O_DIV, "/="},
-                {T_ASS_MOD, O_MOD, "%="},
-                {T_ASS_LSHIFT, O_LSHIFT, "<<="},
-                {T_ASS_RSHIFT, O_RSHIFT, ">>="},
-                {T_ASS_BIT_AND, O_BIT_AND, "&="},
-                {T_ASS_BIT_OR, O_BIT_OR, "|="},
-                {T_ASS_BIT_XOR, O_BIT_XOR, "^="},
+                {T_ASS_ADD, O_ASS_ADD, "+="},
+                {T_ASS_MINUS, O_ASS_SUB, "-="},
+                {T_ASS_MUL, O_ASS_MUL, "*="},
+                {T_ASS_DIV, O_ASS_DIV, "/="},
+                {T_ASS_MOD, O_ASS_MOD, "%="},
+                {T_ASS_LSHIFT, O_ASS_LSHIFT, "<<="},
+                {T_ASS_RSHIFT, O_ASS_RSHIFT, ">>="},
+                {T_ASS_BIT_AND, O_ASS_BIT_AND, "&="},
+                {T_ASS_BIT_OR, O_ASS_BIT_OR, "|="},
+                {T_ASS_BIT_XOR, O_ASS_BIT_XOR, "^="},
             };
 
             for (auto& op : assign_ops) {
                 if (match(op.tok)) {
-                    if (const char* e = assign_target_error(left)) error(e);
-                    // [null] is append on write and the length on read, so a = a op b cannot stand in
-                    if (target_has_null_index(left))
-                        error("compound assignment on append index [null] is not supported");
-
                     // these tokens cannot start an expression: report here, do not let it cascade
                     switch (peek()) {
                     case T_SEMICOLON:
@@ -1219,10 +1054,7 @@ namespace alx {
                     default: break;
                     }
                     varvec rhs = parse_assign();
-                    // left lands here twice: when pure_store declines, an index in it runs twice
-                    varvec target = left;
-                    return pure_store(make_node(O_STORE, {variant(std::move(target)),
-                                                          variant(make_binary(op.op, left, rhs))}));
+                    return make_node(op.op, {variant(std::move(left)), variant(std::move(rhs))});
                 }
             }
 
@@ -1387,14 +1219,10 @@ namespace alx {
             if (check(T_DELETE)) {
                 advance();
                 varvec target = parse_suffix();
-                if (target.size() >= 1 && target[0].is<OPTYPE>()) {
-                    op_enum head = static_cast<op_enum>(target[0].to<OPTYPE>());
-                    if (head == O_LOAD) return make_node(O_DEL, {variant(target[1].to<std::string>())});
-                    if (head == O_ILOAD || head == O_DOT || head == O_INDEX)
-                        return make_node(O_DEL, {variant(std::move(target))});
-                }
-                error("delete target must be a variable, member access, or index expression");
-                return varvec();
+                if (target.size() >= 1 && target[0].is<OPTYPE>() &&
+                    static_cast<op_enum>(target[0].to<OPTYPE>()) == O_LOAD)
+                    return make_node(O_DEL, {variant(target[1].to<std::string>())});
+                return make_node(O_DEL, {variant(std::move(target))});
             }
 
             varvec left = parse_primary();
@@ -1984,20 +1812,21 @@ namespace alx {
                 }
                 goto treat_as_op_call;
             }
-            treat_as_op_call: {
+            treat_as_op_call:
+                {
 
-                std::string name = text().to_string();
-                advance();
-                if (!check(T_LP))
-                    error("'" + name + "' is a op function, cannot be used as a variable or value");
-                varvec v;
-                op_enum o = O_NOP;
-                if (name == "vec") o = O_VEC;
-                else if (name == "map") o = O_MAP;
-                else if (name == "lst") o = O_LST;
-                v.push_back(variant(OPTYPE(o)));
-                return v;
-            }
+                    std::string name = text().to_string();
+                    advance();
+                    if (!check(T_LP))
+                        error("'" + name + "' is a op function, cannot be used as a variable or value");
+                    varvec v;
+                    op_enum o = O_NOP;
+                    if (name == "vec") o = O_VEC;
+                    else if (name == "map") o = O_MAP;
+                    else if (name == "lst") o = O_LST;
+                    v.push_back(variant(OPTYPE(o)));
+                    return v;
+                }
             case T_NAME: {
                 bytes_view name = text();
                 advance();

@@ -147,8 +147,9 @@ namespace alx {
         public:
             // _isnav (navigation, for indirect loads): an unresolved path yields nullptr instead of throwing
             // _owner receives the entity that owns the resolved slot, for the binding sites to stamp on a handle value
+            // _rmw: the caller reads and writes back the same slot, so an append index ([null]) is not a usable target
             static variant* resolve_ptr(const varvec& _lhs, walker& _w, bool _isnav = false,
-                                        impl_import** _owner = nullptr);
+                                        impl_import** _owner = nullptr, bool _rmw = false);
             static void store_raw(walker& _w, const variant& _name, variant&& _init_val);
             static void assign_raw(walker& _w, const variant& _name, const variant& _val);
             static void assign_raw(walker& _w, const variant& _name, variant&& _val);

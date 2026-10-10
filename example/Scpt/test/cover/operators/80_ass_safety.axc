@@ -1,4 +1,4 @@
-// 80: ass opcode (purity-pass) safety — dangling ptr / error parity / values
+// 80: ass opcode (native, RHS-first) safety — dangling ptr / error parity / values
 
 var passed; passed = 0;
 var failed; failed = 0;
@@ -20,7 +20,7 @@ try { fn_prot += "x"; } catch (e) { c2 = (e.what == "TypeError"); }
 assert_true(c2, "f += string -> TypeError (arith on call_able)");
 assert_eq(fn_prot(), 1, "function intact after blocked +=");
 
-// --- 3. type errors match desugar form (same message path) ---
+// --- 3. type errors match the explicit form (same message path) ---
 var c3; c3 = false;
 try { var s; s = "x"; s += 1; } catch (e) { c3 = (e.what == "TypeError"); }
 assert_true(c3, "string += int -> TypeError");
@@ -92,7 +92,7 @@ var m14; m14 = map{"n": 100};
 m14.n -= 40; m14.n %= 7; m14.n *= 3; m14.n /= 2;
 assert_eq(m14.n, 6, "m.n -= %= *= /= chain");
 
-// --- 15. null literal rhs (desugar fallback keeps parity) ---
+// --- 15. null literal rhs ---
 var c15; c15 = false;
 try { var n15; n15 = 5; n15 += null; } catch (e) { c15 = (e.what == "TypeError"); }
 assert_true(c15, "n += null -> TypeError");

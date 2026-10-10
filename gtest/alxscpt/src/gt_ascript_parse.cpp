@@ -519,9 +519,8 @@ TEST(gt_ascript_parse, AssBitXor) {
 TEST(gt_ascript_parse, AssPlainSameShape) {
     auto ast = parse_src("x = x + 1;");
     auto& a = ast[1].to<varvec>();
-    EXPECT_TRUE(head_is(a, O_ASS_ADD));
-    EXPECT_TRUE(head_is(a[1].to<varvec>(), O_LOAD));
-    EXPECT_EQ(a[1].to<varvec>()[1].to<std::string>(), "x");
+    EXPECT_TRUE(head_is(a, O_STORE));
+    EXPECT_TRUE(head_is(a[2].to<varvec>(), O_ADD));
 }
 
 TEST(gt_ascript_parse, AssPlainReversedOperand) {
@@ -531,12 +530,14 @@ TEST(gt_ascript_parse, AssPlainReversedOperand) {
 
 TEST(gt_ascript_parse, AssIndexTarget) {
     auto ast = parse_src("x[0] += 1;");
-    EXPECT_TRUE(head_is(ast[1].to<varvec>(), O_STORE));
+    auto& a = ast[1].to<varvec>();
+    EXPECT_TRUE(head_is(a, O_ASS_ADD));
+    EXPECT_TRUE(head_is(a[1].to<varvec>(), O_INDEX));
 }
 
 TEST(gt_ascript_parse, AssImpureRhs) {
     auto ast = parse_src("x += foo();");
-    EXPECT_TRUE(head_is(ast[1].to<varvec>(), O_STORE));
+    EXPECT_TRUE(head_is(ast[1].to<varvec>(), O_ASS_ADD));
 }
 
 TEST(gt_ascript_parse, AssPureBinaryRhs) {
@@ -764,14 +765,11 @@ TEST(gt_ascript_parse, AssChain) {
     auto ast = parse_src("a += b += 2;");
 
     auto& outer = ast[1].to<varvec>();
-    EXPECT_TRUE(head_is(outer, O_STORE));
+    EXPECT_TRUE(head_is(outer, O_ASS_ADD));
     EXPECT_TRUE(head_is(outer[1].to<varvec>(), O_LOAD));
     EXPECT_EQ(outer[1].to<varvec>()[1].to<std::string>(), "a");
 
-    auto& add = outer[2].to<varvec>();
-    EXPECT_TRUE(head_is(add, O_ADD));
-    EXPECT_TRUE(head_is(add[1].to<varvec>(), O_LOAD));
-    auto& inner = add[2].to<varvec>();
+    auto& inner = outer[2].to<varvec>();
     EXPECT_TRUE(head_is(inner, O_ASS_ADD));
     EXPECT_TRUE(head_is(inner[1].to<varvec>(), O_LOAD));
     EXPECT_EQ(inner[1].to<varvec>()[1].to<std::string>(), "b");
@@ -1304,13 +1302,13 @@ static parse_out parse_full(const char* src) {
     return out;
 }
 
-TEST(gt_ascript_parse, AssignTarget_Rejected) {
+TEST(gt_ascript_parse, AssignTarget_NotCheckedAtParse) {
 
-    const char* bad[] = {"1 = 2;", "\"abc\" = 1;", "[1,2] = 3;", "1 += 1;", "(1) = 2;"};
-    for (const char* src : bad) {
+    // not an lvalue, but the parse leaves the judgement to the run-time resolve_ptr
+    const char* deferred[] = {"1 = 2;", "\"abc\" = 1;", "[1,2] = 3;", "1 += 1;", "(1) = 2;"};
+    for (const char* src : deferred) {
         auto out = parse_full(src);
-        ASSERT_GE(out.errors.size(), 1u) << src;
-        EXPECT_NE(out.errors[0].msg.find("assignment target"), std::string::npos) << src;
+        EXPECT_EQ(out.errors.size(), 0u) << src;
     }
 
     EXPECT_EQ(parse_full("var v = [1,2,3]; v[1,3] = 99;").errors.size(), 0u);
@@ -1318,6 +1316,7 @@ TEST(gt_ascript_parse, AssignTarget_Rejected) {
     EXPECT_EQ(parse_full("var x = 1; x = 2;").errors.size(), 0u);
     EXPECT_EQ(parse_full("var v = [1]; v[0] = 2;").errors.size(), 0u);
     EXPECT_EQ(parse_full("var a = 0; a += 1; a++;").errors.size(), 0u);
+    EXPECT_EQ(parse_full("var v = [1,2]; v[null] += 1;").errors.size(), 0u);
 }
 
 TEST(gt_ascript_parse, MissingOperand_ReportedAtOperator) {

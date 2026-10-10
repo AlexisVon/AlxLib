@@ -52,7 +52,7 @@ v[null] = 100;
 assert_eq(v[-1], 100, "vec[null] write = push_back");
 assert_eq(v[null], 4, "vec size now 4");
 
-// compound assign on append index [null] rejected at parse (desugar would push twice);
+// compound assign on the append index [null] is a run-time TypeError;
 // explicit form: push 0, then += on back
 var v2; v2 = [10, 20];
 v2[null] = 0;

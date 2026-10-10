@@ -121,11 +121,11 @@ var wt5; wt5 = false;
 try { var n; n = 10.5; n %= 2; } catch (e) { wt5 = true; }
 assert_true(wt5, "float %= throws TypeError");
 
-// --- desugar semantics: read-before-call, RHS may modify target ---
+// --- RHS first, then the target is resolved once and written back (C++17 order) ---
 var mr; mr = 1;
 def mod_f() { mr = 100; return 5; }
 mr += mod_f();
-assert_eq(mr, 6, "x += f() where f modifies x → old + ret (read first)");
+assert_eq(mr, 105, "x += f() where f modifies x → new + ret (RHS first)");
 
 // --- RHS grows frame store (vector reallocation pressure) ---
 var grow; grow = 0;
@@ -154,7 +154,7 @@ var wt7; wt7 = false;
 try { zz_missing2++; } catch (e) { wt7 = true; }
 assert_true(wt7, "x++ on undefined → NameError");
 
-// --- plain assignment isomorphic shape: a = a op b → same opcode ---
+// --- plain assignment: a = a op b is a plain store (never collapsed) ---
 var pa; pa = 10;
 pa = pa + 5;
 assert_eq(pa, 15, "a = a + b (plain)");
@@ -169,11 +169,11 @@ var dv; dv = [map{"x": 0}, map{"x": 0}];
 dv[1].x += 5;
 assert_eq(dv[1].x, 5, "arr[i].x += n");
 
-// --- impure rhs falls back to desugar: a += @(f()) keeps read-first ---
+// --- indirect call RHS: same RHS-first order ---
 var ir; ir = 1;
 def impure_f() { ir = 100; return 7; }
 ir += @("impure_f")();
-assert_eq(ir, 8, "a += @(f()) → desugar read-first (old + ret)");
+assert_eq(ir, 107, "a += @(f()) → new + ret (RHS first)");
 
 if (failed > 0) {
     $print("\n=== FAIL: 79_compound_assign ===\n");

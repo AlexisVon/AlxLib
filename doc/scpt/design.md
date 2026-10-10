@@ -106,7 +106,7 @@ example/Scpt/                      — CLI + base.so
 
 ## 3. Syntax & AST
 
-> **AST node types are stored as `op_enum` (`uint_8`).** `varvec[0]` is a `variant(uint_8)` (e.g. `O_IMPORT`). All 89 op_enum values are defined in `source/alxscpt/script/ascript_enum.h` (the compound assignments `O_ASS_*` are a restricted form: built only when the purification pass fires, every other shape stays desugared).
+> **AST node types are stored as `op_enum` (`uint_8`).** `varvec[0]` is a `variant(uint_8)` (e.g. `O_IMPORT`). All 89 op_enum values are defined in `source/alxscpt/script/ascript_enum.h` (the compound assignments `O_ASS_*` are one opcode per operator, emitted directly by the compound-assignment parse path).
 
 **Literals**: `"string"` / `'string'` (escaped; the complementary `"` and `'` reduce escaping), `` `raw string` `` (no escapes, may span lines). The lexer emits `T_STRING_LITERAL` / `T_BACKTICK_STRING`; the parser produces a `variant(string)` leaf node either way.
 
@@ -391,7 +391,7 @@ Every later segment has its context switch direction decided by the state machin
 
 #### resolve_ptr
 
-`resolve_ptr(lhs, w)` resolves an LHS AST uniformly into a writable `variant*`:
+`resolve_ptr(lhs, w, isnav = false, owner = nullptr, rmw = false)` resolves an LHS AST uniformly into a writable `variant*`:
 
 ```
 - O_LOAD:       state.var_ptr(name)
@@ -399,6 +399,8 @@ Every later segment has its context switch direction decided by the state machin
 - O_DOT:        resolve_dot → dr.get(false) (link data raises TypeError)
 - O_INDEX:      the original binary index logic
 ```
+
+`rmw = true` (the 10 compound assignments and the 4 inc/dec handlers) rejects an append index `[null]`: its read is a size and its write a push, so it is not a place that can be read-modified-written.
 
 ### 3.2c Variable access (var_map)
 
@@ -417,7 +419,7 @@ delete a.b.c    → [O_DEL, [O_DOT, ...]]            // dot chain
 delete a[key]   → [O_DEL, [O_INDEX, ...]]          // index
 ```
 
-**Walker**: `op_del` dispatches on the target's shape to `del_name` / `del_dot` / `del_index`.
+**Walker**: `op_del` dispatches on the target's shape to `del_name` / `del_dot` / `del_index`; any other shape (a literal, a call result, a slice) throws `TypeError`.
 
 | Path | Condition | Behaviour |
 |------|------|------|
@@ -567,7 +569,7 @@ walk_state {
 eval the inner expression to a string → simple name: var_ptr → return the value
                                          complex name: iload_parse_expr hands it to the parser → walk the AST
                                          namespace: TypeError
-delete takes no second hop; it only takes the name string.
+delete resolves a complex name the same way: iload_parse_expr → del_dot / del_index (a direct `delete` and its `@()` form behave alike).
 ```
 
 **O_ICALL semantics:**
@@ -1347,7 +1349,8 @@ public:
 | 32 | **expression nest guard** | NestGuard at the entry of `parse_list_lit`/`parse_dict_lit`/`parse_paren` |
 | 39 | **Integer overflow guard** | the 6 stoll sites in parse_primary are wrapped in try/catch; an overflow → error → has_error() |
 | 40 | **Compound assignment is chained** | the RHS goes through `parse_assign()` (not `parse_ternary()`), right-associative |
-| 41 | **Compound assignment = sugar + a restricted opcode** | `a op= b` is expanded during parse into `a = a op b` (O_STORE + the binary op) and then goes through the **purification pass** (`pure_store`): when the target is a simple load / a pure dot chain and the rhs is a pure read (whitelist: no call/write/[null] push) → rewritten to `O_ASS_OP(target, rhs)` (one var_ptr + one dispatch). Every other shape stays desugared (an index expression in the RHS evaluates twice; a `[null]` append index is a compile error). The pure-read constraint removes the "pointer taken across RHS evaluation" class of dangling |
+| 41 | **Compound assignment = a native opcode, RHS first** | `a op= b` parses straight into `O_ASS_OP(target, rhs)`; at run time the **rhs evaluates first**, then the target is resolved **once** and read, then the write-back — the C++17 `E1 op= E2` order (P0145R3: the right operand is sequenced before the left), identical to `=`'s own order. The expand-then-maybe-collapse sugar (parse to `a = a op b`, then a `pure_store` purification pass) was deleted 2026-10-09: the re-collapse recognized only pure shapes, so `v[i] += x` always stayed expanded — the index ran twice, and with a stateful index (`a[f()] += v`) the read and the write landed on different elements, a silent wrong answer no test caught. RHS-first removes the whole "pointer taken across RHS evaluation" class structurally (nothing runs between resolve and write-back), so no parse-time gate is needed; the lvalue check — `[null]` included, it cannot be read-modified-written — is a run-time one in `resolve_ptr` (the 10 compound assignments and inc/dec call it with `_rmw = true`); `=` is always `O_STORE` (no collapse of `a = a + b`) |
+| 42 | **The delete target check is a run-time one too** | the parser emits `O_DEL` for any suffix operand; `op_del` judges the shape at run time — a variable / member access / index expression / `@()` path deletes, anything else (a literal, a call result, a slice) reports `TypeError` (`delete target must be a variable, member access, or index expression`). A plain name that does not exist still deletes silently with `false` — the shape layer and the existence layer do not mix. The assignment side moved its target checks to run time in the same batch (2026-10-09) |
 
 ### 6.6 Built-in functions & optimisation
 

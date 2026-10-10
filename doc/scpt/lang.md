@@ -462,13 +462,13 @@ v1 += v2;    // v1 = v1 + v2  (vec/lst concat)
 m1 += m2;    // m1 = m1 + m2  (map merge, right overwrites)
 ```
 
-**Assignment target**: must be a variable, a member access, an index expression or an `@()` dynamic path (the same rule as the `delete` target); any other shape (a literal, an arbitrary expression, a host constant folded out of `$name`) is a compile error. Slice targets are the exception — the grammar lets them through and the run time reports `TypeError` (see §6.4); whether an `@()` path is writable is likewise decided at **run time**, and an illegal one reports `TypeError`.
+**Assignment target**: must be a variable, a member access, an index expression or an `@()` dynamic path. The shape check is a **run-time** one (the lvalue check in the resolver, shared by `=` and the compound assignments): a literal, an arbitrary expression, a host constant folded out of `$name` or a slice reports `TypeError` at run time (see §6.4); a name that is missing, or names a function binding or an `import`/`link` namespace, reports `NameError` (on the `@()` path a namespace reports `TypeError`).
 
 **Compound assignment semantics:**
 
-- `x += f()` ≡ `x = x + f()`: the read of `x` happens **before** the call to `f()` (read first, then call; any modification `f()` makes to `x` is overwritten by the write-back).
-- **Purification optimisation**: `a += b` / `a = a + b` (target a simple variable or a pure member chain, rhs a pure read expression) compiles to a single `O_ASS_*` opcode — the target is resolved once. Shapes with side effects (function calls and the like) stay expanded as `a = a op b`: the LHS index expression is evaluated twice, so in `v[expr()] += 1` the call `expr()` happens twice.
-- **Compound assignment on `[null]` (the append index) is a compile error**: both reading and writing the append index carries a push side effect. Write it explicitly: `v[null] = 0; v[-1] += x;`.
+- **The RHS evaluates first, then the target is resolved once**: in `x += f()` the call to `f()` runs before `x` is read, so whatever `f()` does to `x` is what the read sees (`x = 1`; `f()` sets it to 100 and returns 5 → `x` becomes 105). This is the C++17 order for `E1 op= E2` (P0145R3: the right operand is sequenced before the left), the same order `=` uses.
+- **The target is resolved exactly once**: `a[f()] += v` calls `f()` once (the explicit `a[f()] = a[f()] + v` calls it twice) and writes back the slot it read.
+- **Compound assignment (and `++`/`--`) on `[null]` (the append index) is a run-time `TypeError`**: its read is the size and its write is a push — not the same place, so it cannot be read-modified-written. Write it explicitly: `v[null] = 0; v[-1] += x;`.
 
 ## 6.3 [] indexing
 
@@ -485,10 +485,10 @@ m1 += m2;    // m1 = m1 + m2  (map merge, right overwrites)
 |------|------|-----|------|--------|-----------|
 | vec | read | ✅ | ✅ | ✅ size | ✅ |
 | vec | write | ✅ | ✅ | ✅ push | ✅ |
-| vec | compound assignment | ✅ | ✅ | ❌ compile error | ✅ |
+| vec | compound assignment | ✅ | ✅ | ❌ run-time TypeError | ✅ |
 | lst | read | ✅ front | ✅ back | ✅ size | ✅ O(n) |
 | lst | write | ✅ overwrite front | ✅ overwrite back | ✅ push | ✅ O(n) |
-| lst | compound assignment | ✅ | ✅ | ❌ compile error | ✅ O(n) |
+| lst | compound assignment | ✅ | ✅ | ❌ run-time TypeError | ✅ O(n) |
 | string | read | ✅ | ✅ back | ✅ size (byte count) | ✅ |
 | map | read | — | — | ✅ size (key count) | ✅ string key only |
 
@@ -1583,7 +1583,7 @@ A positional dot only walks the entity tree. The nav segment stops once it lands
 ## 13.4 delete
 
 `delete` is a right-associative prefix expression at the same level as `@` — both are consumed by the same suffix-parsing layer, so it binds **tighter** than `!` / `~` / `+` / `-` (`delete -x` is a syntax error). It returns `bool`. Its operand is a suffix expression, so `delete a[0]` is `delete (a[0])`.
-It can be used in an expression context: `var r = delete x; r;` — `r` is `true` (the deletion happened) or `false` (a silent no-op).
+It can be used in an expression context: `var r = delete x; r;` — `r` is `true` (the deletion happened) or `false` (a silent no-op). The operand must be a variable, a member access, an index expression or an `@()` dynamic path; any other shape — a literal, a call result, a slice — reports `TypeError` at run time.
 
 ### Variable / function / module deletion
 
@@ -1595,7 +1595,7 @@ delete alias;         // delete an import / link alias (module top layer)
 
 - **execution layer**: only the module top layer — no frame pushed, i.e. the root script's top level and an imported module's top level — deletes from the entity's `m_store`; any frame (function / TCO / block / loop / eval / try) deletes its own variables only and returns `false` for anything outside it
 - **loop head**: the for-init declarations and the foreach iteration variable cannot be deleted from the body (`delete i` → `false`, the loop goes on); a body variable is deletable as usual
-- silent failure: a name that does not exist → returns `false`, no exception
+- silent failure: a name that does not exist → returns `false`, no exception; the `@()` name expression itself must evaluate (a missing `x` in `delete @x` is a `NameError`)
 - after a deletion the name can be declared again — once it is out of every namespace, `var`/`def`/`link` all create it normally
 - **cross-module delete**: another module's variable cannot be deleted → throws `NameError`
 - defensive use: `delete .init;` is safe before a declaration

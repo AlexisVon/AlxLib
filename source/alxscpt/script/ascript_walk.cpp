@@ -404,27 +404,22 @@ namespace alx {
                               ? _w.walk_tree(_tree[2].to<varvec>())
                               : variant();
 
-            if (lhs[0].is<OPTYPE>()) {
-                op_enum head = static_cast<op_enum>(lhs[0].to<OPTYPE>());
-                if (head == O_LOAD) {
+            if (lhs[0].is<OPTYPE>() &&
+                static_cast<op_enum>(lhs[0].to<OPTYPE>()) == O_LOAD) {
 
-                    // val was moved into the slot, so the result has to be read back from it
-                    walker::assign_raw(_w, lhs[1], std::move(val));
-                    variant* stored = _w.state.var_ptr(lhs[1].to<std::string>());
-                    return nullptr != stored ? *stored : variant();
-                }
-                {
-                    impl_import* owner = _w.state.current;
-                    variant* p = resolve_ptr(lhs, _w, false, &owner);
-                    if (p) {
-                        *p = std::move(val);
-                        bind_owner(*p, owner);
-                        return *p;
-                    }
-                }
-                return val;
+                // val was moved into the slot, so the result has to be read back from it
+                walker::assign_raw(_w, lhs[1], std::move(val));
+                variant* stored = _w.state.var_ptr(lhs[1].to<std::string>());
+                return nullptr != stored ? *stored : variant();
             }
 
+            impl_import* owner = _w.state.current;
+            variant* p = resolve_ptr(lhs, _w, false, &owner);
+            if (p) {
+                *p = std::move(val);
+                bind_owner(*p, owner);
+                return *p;
+            }
             return val;
         }
 
@@ -1379,7 +1374,7 @@ namespace alx {
         }
 
         variant walker::op_pre_inc(const varvec& _tree, walker& _w) {
-            variant* p_ = resolve_ptr(_tree[1].to<varvec>(), _w);
+            variant* p_ = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
             if (!p_)
                 throw script_exception{error_type::TypeError, std::string("not an lvalue")};
             int_64 old = to_int_strict(*p_);
@@ -1391,7 +1386,7 @@ namespace alx {
         }
 
         variant walker::op_pre_dec(const varvec& _tree, walker& _w) {
-            variant* p_ = resolve_ptr(_tree[1].to<varvec>(), _w);
+            variant* p_ = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
             if (!p_)
                 throw script_exception{error_type::TypeError, std::string("not an lvalue")};
             int_64 old = to_int_strict(*p_);
@@ -1403,7 +1398,7 @@ namespace alx {
         }
 
         variant walker::op_post_inc(const varvec& _tree, walker& _w) {
-            variant* p_ = resolve_ptr(_tree[1].to<varvec>(), _w);
+            variant* p_ = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
             if (!p_)
                 throw script_exception{error_type::TypeError, std::string("not an lvalue")};
             int_64 old = to_int_strict(*p_);
@@ -1414,7 +1409,7 @@ namespace alx {
         }
 
         variant walker::op_post_dec(const varvec& _tree, walker& _w) {
-            variant* p_ = resolve_ptr(_tree[1].to<varvec>(), _w);
+            variant* p_ = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
             if (!p_)
                 throw script_exception{error_type::TypeError, std::string("not an lvalue")};
             int_64 old = to_int_strict(*p_);
@@ -1815,13 +1810,16 @@ namespace alx {
                 return variant(del_name(target, _w));
 
             auto& subtree = target.to<varvec>();
-            auto head = static_cast<op_enum>(subtree[0].to<OPTYPE>());
-            switch (head) {
-            case O_ILOAD: return variant(del_name(target, _w));
-            case O_DOT: return variant(del_dot(subtree, _w));
-            case O_INDEX: return variant(del_index(subtree, _w));
-            default: return variant(false);
+            if (!subtree.empty() && subtree[0].is<OPTYPE>()) {
+                switch (static_cast<op_enum>(subtree[0].to<OPTYPE>())) {
+                case O_ILOAD: return variant(del_name(target, _w));
+                case O_DOT: return variant(del_dot(subtree, _w));
+                case O_INDEX: return variant(del_index(subtree, _w));
+                default: break;
+                }
             }
+            throw script_exception{error_type::TypeError,
+                                   std::string("delete target must be a variable, member access, or index expression")};
         }
 
         variant walker::op_excall(const varvec& _tree, walker& _w) {
@@ -1837,9 +1835,9 @@ namespace alx {
         }
 
         variant walker::op_ass_add(const varvec& _tree, walker& _w) {
-            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w);
-            if (!p) return variant();
             variant b = walker::eval_arg(_tree[2], _w);
+            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            if (!p) return variant();
 
             switch (type_pair(*p, b)) {
             case type_pair<int_64, int_64>(): {
@@ -1847,8 +1845,9 @@ namespace alx {
                 if (_w.m_cfg.overflow_check && ((ib > 0 && ia > max_int_64 - ib) ||
                                                 (ib < 0 && ia < min_int_64 - ib)))
                     throw script_exception{error_type::OverflowError, std::string("Integer addition overflow")};
-                ass_write(_w, p, variant(wrap_add(ia, ib)));
-                return variant(wrap_add(ia, ib));
+                int_64 r = wrap_add(ia, ib);
+                ass_write(_w, p, variant(r));
+                return variant(r);
             }
             case type_pair<int_64, double>():
             case type_pair<double, int_64>():
@@ -1890,28 +1889,30 @@ namespace alx {
         }
 
         variant walker::op_ass_sub(const varvec& _tree, walker& _w) {
-            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w);
-            if (!p) return variant();
             variant b = walker::eval_arg(_tree[2], _w);
+            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            if (!p) return variant();
             if (p->is<int_64>() && b.is<int_64>()) {
                 int_64 ia = p->to<int_64>(), ib = b.to<int_64>();
                 if (_w.m_cfg.overflow_check && ((ib < 0 && ia > max_int_64 + ib) ||
                                                 (ib > 0 && ia < min_int_64 + ib)))
                     throw script_exception{error_type::OverflowError, std::string("Integer subtraction overflow")};
-                ass_write(_w, p, variant(wrap_sub(ia, ib)));
-                return variant(wrap_sub(ia, ib));
+                int_64 r = wrap_sub(ia, ib);
+                ass_write(_w, p, variant(r));
+                return variant(r);
             }
             if (p->is_number() && b.is_number()) {
-                ass_write(_w, p, variant(p->to_number() - b.to_number()));
-                return variant(p->to_number() - b.to_number());
+                variant r(p->to_number() - b.to_number());
+                ass_write(_w, p, variant(r));
+                return r;
             }
             throw script_exception{error_type::TypeError, std::string("Expected numbers for -")};
         }
 
         variant walker::op_ass_mul(const varvec& _tree, walker& _w) {
-            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w);
-            if (!p) return variant();
             variant b = walker::eval_arg(_tree[2], _w);
+            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            if (!p) return variant();
             if (p->is<int_64>() && b.is<int_64>()) {
                 int_64 ia = p->to<int_64>(), ib = b.to<int_64>();
                 bool overflow = false;
@@ -1924,101 +1925,111 @@ namespace alx {
                 }
                 if (_w.m_cfg.overflow_check && overflow)
                     throw script_exception{error_type::OverflowError, std::string("Integer multiplication overflow")};
-                ass_write(_w, p, variant(wrap_mul(ia, ib)));
-                return variant(wrap_mul(ia, ib));
+                int_64 r = wrap_mul(ia, ib);
+                ass_write(_w, p, variant(r));
+                return variant(r);
             }
             if (p->is_number() && b.is_number()) {
-                ass_write(_w, p, variant(p->to_number() * b.to_number()));
-                return variant(p->to_number() * b.to_number());
+                variant r(p->to_number() * b.to_number());
+                ass_write(_w, p, variant(r));
+                return r;
             }
             throw script_exception{error_type::TypeError, std::string("Expected numbers for *")};
         }
 
         variant walker::op_ass_div(const varvec& _tree, walker& _w) {
-            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w);
-            if (!p) return variant();
             variant b = walker::eval_arg(_tree[2], _w);
+            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            if (!p) return variant();
             if (p->is<int_64>() && b.is<int_64>()) {
                 int_64 ia = p->to<int_64>(), ib = b.to<int_64>();
                 if (ib == 0) throw script_exception{error_type::DivZeroError, std::string("Division by zero")};
                 if (ib == -1 && ia == min_int_64)
                     throw script_exception{error_type::DivOverflowError, std::string("Integer division overflow")};
-                ass_write(_w, p, variant(ia / ib));
-                return variant(ia / ib);
+                int_64 r = ia / ib;
+                ass_write(_w, p, variant(r));
+                return variant(r);
             }
             if (p->is_number() && b.is_number()) {
                 double db = b.to_number();
                 if (db == 0.0) throw script_exception{error_type::DivZeroError, std::string("Division by zero")};
-                ass_write(_w, p, variant(p->to_number() / db));
-                return variant(p->to_number() / db);
+                variant r(p->to_number() / db);
+                ass_write(_w, p, variant(r));
+                return r;
             }
             throw script_exception{error_type::TypeError, std::string("Expected numbers for /")};
         }
 
         variant walker::op_ass_mod(const varvec& _tree, walker& _w) {
-            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w);
-            if (!p) return variant();
             variant b = walker::eval_arg(_tree[2], _w);
+            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            if (!p) return variant();
             int_64 ai = to_int_strict(*p);
             int_64 bi = to_int_strict(b);
             if (bi == 0) throw script_exception{error_type::DivZeroError, std::string("Modulo by zero")};
             if (bi == -1 && ai == min_int_64)
                 throw script_exception{error_type::DivOverflowError, std::string("Integer modulo overflow")};
-            ass_write(_w, p, variant(ai % bi));
-            return variant(ai % bi);
+            int_64 r = ai % bi;
+            ass_write(_w, p, variant(r));
+            return variant(r);
         }
 
         variant walker::op_ass_lshift(const varvec& _tree, walker& _w) {
-            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w);
-            if (!p) return variant();
             variant b = walker::eval_arg(_tree[2], _w);
+            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            if (!p) return variant();
             int_64 a = to_int_strict(*p);
             int_64 sb = to_int_strict(b);
             if (_w.m_cfg.overflow_check && (sb < 0 || sb >= 64))
                 throw script_exception{error_type::ShiftError, std::string("Shift count out of range")};
             if (_w.m_cfg.overflow_check && (a < 0))
                 throw script_exception{error_type::ShiftError, std::string("Left shift of negative value")};
-            ass_write(_w, p, variant(wrap_shl(a, sb)));
-            return variant(wrap_shl(a, sb));
+            int_64 r = wrap_shl(a, sb);
+            ass_write(_w, p, variant(r));
+            return variant(r);
         }
 
         variant walker::op_ass_rshift(const varvec& _tree, walker& _w) {
-            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w);
-            if (!p) return variant();
             variant b = walker::eval_arg(_tree[2], _w);
+            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            if (!p) return variant();
             int_64 a = to_int_strict(*p);
             int_64 sb = to_int_strict(b);
             if (_w.m_cfg.overflow_check && (sb < 0 || sb >= 64))
                 throw script_exception{error_type::ShiftError, std::string("Shift count out of range")};
-            ass_write(_w, p, variant(wrap_shr(a, sb)));
-            return variant(wrap_shr(a, sb));
+            int_64 r = wrap_shr(a, sb);
+            ass_write(_w, p, variant(r));
+            return variant(r);
         }
 
         variant walker::op_ass_bit_and(const varvec& _tree, walker& _w) {
-            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w);
-            if (!p) return variant();
             variant b = walker::eval_arg(_tree[2], _w);
+            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            if (!p) return variant();
             int_64 a = to_int_strict(*p), bb = to_int_strict(b);
-            ass_write(_w, p, variant(a & bb));
-            return variant(a & bb);
+            int_64 r = a & bb;
+            ass_write(_w, p, variant(r));
+            return variant(r);
         }
 
         variant walker::op_ass_bit_or(const varvec& _tree, walker& _w) {
-            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w);
-            if (!p) return variant();
             variant b = walker::eval_arg(_tree[2], _w);
+            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            if (!p) return variant();
             int_64 a = to_int_strict(*p), bb = to_int_strict(b);
-            ass_write(_w, p, variant(a | bb));
-            return variant(a | bb);
+            int_64 r = a | bb;
+            ass_write(_w, p, variant(r));
+            return variant(r);
         }
 
         variant walker::op_ass_bit_xor(const varvec& _tree, walker& _w) {
-            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w);
-            if (!p) return variant();
             variant b = walker::eval_arg(_tree[2], _w);
+            variant* p = resolve_ptr(_tree[1].to<varvec>(), _w, false, nullptr, true);
+            if (!p) return variant();
             int_64 a = to_int_strict(*p), bb = to_int_strict(b);
-            ass_write(_w, p, variant(a ^ bb));
-            return variant(a ^ bb);
+            int_64 r = a ^ bb;
+            ass_write(_w, p, variant(r));
+            return variant(r);
         }
 
         variant walker::op_econst(const varvec& _tree, walker& _w) {
@@ -2036,7 +2047,8 @@ namespace alx {
         static const char* const s_not_a_target =
             "assignment target must be a variable, member access, or index expression";
 
-        variant* walker::resolve_ptr(const varvec& _lhs, walker& _w, bool _isnav, impl_import** _owner) {
+        variant* walker::resolve_ptr(const varvec& _lhs, walker& _w, bool _isnav, impl_import** _owner,
+                                     bool _rmw) {
             if (_lhs.empty()) return nullptr;
             if (!_lhs[0].is<OPTYPE>()) {
                 if (!_isnav)
@@ -2073,11 +2085,20 @@ namespace alx {
                     variant* p = _w.state.var_ptr(path);
                     if (!p && !_isnav)
                         throw script_exception{error_type::NameError,
-                                               std::string("Undefined variable: ") + path};
+                                               std::string("Undefined: ") + path};
+                    if (p && p->is<anyptr>()) {
+                        const anyptr& ap = p->to<anyptr>();
+                        if (anyptr_ex<impl_link>::as(ap))
+                            throw script_exception{error_type::TypeError,
+                                                   std::string("link namespace cannot be read as variable")};
+                        if (anyptr_ex<impl_import>::as(ap))
+                            throw script_exception{error_type::TypeError,
+                                                   std::string("import namespace cannot be read as variable")};
+                    }
                     if (p && _owner) *_owner = _w.state.current;
                     return p;
                 }
-                return resolve_ptr(walker::iload_parse_expr(path, _w.m_cfg.parse_depth), _w, _isnav, _owner);
+                return resolve_ptr(walker::iload_parse_expr(path, _w.m_cfg.parse_depth), _w, _isnav, _owner, _rmw);
             }
 
             case O_DOT: {
@@ -2096,6 +2117,10 @@ namespace alx {
                 // a chain that entered a link's data resolves inside it at any depth: never a script target
                 if (!_isnav && dr.link_owner && dr.kind == TerminalKind::T_Variant)
                     throw script_exception{error_type::TypeError, std::string("cannot write to link module variable")};
+                // a null key would append inside get(): reject it before the push for a read-modify-write
+                if (_rmw && dr.kind == TerminalKind::T_Variant && dr.parent && dr.key.null())
+                    throw script_exception{error_type::TypeError,
+                                           std::string("append index [null] is not a valid target for read-modify-write")};
                 variant* p = dr.get(false);
                 if (p) {
 
@@ -2131,7 +2156,7 @@ namespace alx {
                 }
                 if (dr.key.is<std::string>())
                     throw script_exception{error_type::NameError, std::string("Undefined: " + dr.key.to<std::string>())};
-                throw script_exception{error_type::NameError, std::string("Undefined")};
+                throw script_exception{error_type::TypeError, std::string(s_not_a_target)};
             }
 
             case O_SLICE:
@@ -2150,21 +2175,32 @@ namespace alx {
                 if (obj_op == O_LOAD) {
                     v = _w.state.var_ptr(obj_load[1].to<std::string>());
                     if (_owner) *_owner = _w.state.current;
+                    if (!v)
+                        throw script_exception{error_type::NameError,
+                                               std::string("Undefined: ") + obj_load[1].to<std::string>()};
                 } else if (obj_op == O_ILOAD) {
                     variant name_val = walker::eval_arg(obj_load[1], _w);
-                    if (name_val.is<std::string>()) {
-                        v = _w.state.var_ptr(name_val.to<std::string>());
-                        if (v && _owner) *_owner = _w.state.current;
-                    }
+                    if (!name_val.is<std::string>())
+                        throw script_exception{error_type::TypeError,
+                                               std::string("Indirect load: variable did not evaluate to a string")};
+                    const std::string& path = name_val.to<std::string>();
+                    v = _w.state.var_ptr(path);
+                    if (v && _owner) *_owner = _w.state.current;
+                    if (!v)
+                        throw script_exception{error_type::NameError, std::string("Undefined: ") + path};
                 } else if (obj_op == O_INDEX || obj_op == O_DOT) {
-                    v = resolve_ptr(obj_load, _w, false, _owner);
+                    v = resolve_ptr(obj_load, _w, false, _owner, _rmw);
                 }
-                if (!v) throw script_exception{error_type::NameError, std::string("Undefined")};
+                // a literal, a call result or any other temporary is an rvalue: never a container to write into
+                if (!v) throw script_exception{error_type::TypeError, std::string("cannot assign to an rvalue")};
                 variant idx = walker::eval_arg(_lhs[2], _w);
 
                 if (v->is<varvec>()) {
                     varvec& vec = v->as<varvec>();
                     if (idx.null()) {
+                        if (_rmw)
+                            throw script_exception{error_type::TypeError,
+                                                   std::string("append index [null] is not a valid target for read-modify-write")};
                         vec.push_back(variant(static_cast<int_64>(0)));
                         return &vec.back();
                     }
@@ -2177,6 +2213,9 @@ namespace alx {
                 if (v->is<varlst>()) {
                     varlst& lst = v->as<varlst>();
                     if (idx.null()) {
+                        if (_rmw)
+                            throw script_exception{error_type::TypeError,
+                                                   std::string("append index [null] is not a valid target for read-modify-write")};
                         lst.push_back(variant(static_cast<int_64>(0)));
                         return &lst.back();
                     }
@@ -2220,13 +2259,22 @@ namespace alx {
             }
         }
 
+        // a function binding and a link/import namespace are not assignable names
+        static void assign_name_guard(const variant& _p, const std::string& _name) {
+            if (!_p.is<anyptr>()) return;
+            const anyptr& ap = _p.to<anyptr>();
+            if (anyptr_ex<call_able>::as(ap))
+                throw script_exception{error_type::NameError, std::string("Cannot assign to function: " + _name)};
+            if (anyptr_ex<impl_link>::as(ap) || anyptr_ex<impl_import>::as(ap))
+                throw script_exception{error_type::NameError, std::string("Cannot assign to namespace: " + _name)};
+        }
+
         void walker::assign_raw(walker& _w, const variant& _name, const variant& _val) {
             std::string name = _name.to<std::string>();
             variant* p = _w.state.var_ptr(name);
-            if (!p) throw script_exception{error_type::NameError, std::string("Undefined variable: " + name)};
+            if (!p) throw script_exception{error_type::NameError, std::string("Undefined: " + name)};
 
-            if (p->is<anyptr>() && anyptr_ex<call_able>::as(p->to<anyptr>()))
-                throw script_exception{error_type::NameError, std::string("Cannot assign to function: " + name)};
+            assign_name_guard(*p, name);
             *p = _val;
             bind_owner(*p, _w.state.current);
         }
@@ -2234,10 +2282,9 @@ namespace alx {
         void walker::assign_raw(walker& _w, const variant& _name, variant&& _val) {
             std::string name = _name.to<std::string>();
             variant* p = _w.state.var_ptr(name);
-            if (!p) throw script_exception{error_type::NameError, std::string("Undefined variable: " + name)};
+            if (!p) throw script_exception{error_type::NameError, std::string("Undefined: " + name)};
 
-            if (p->is<anyptr>() && anyptr_ex<call_able>::as(p->to<anyptr>()))
-                throw script_exception{error_type::NameError, std::string("Cannot assign to function: " + name)};
+            assign_name_guard(*p, name);
             *p = std::move(_val);
             bind_owner(*p, _w.state.current);
         }
@@ -2616,9 +2663,14 @@ namespace alx {
 
                 if (!walker::is_simple_name(name)) {
                     auto expr = walker::iload_parse_expr(name, _w.m_cfg.parse_depth);
-                    if (expr.size() >= 1 && expr[0].is<OPTYPE>() &&
-                        static_cast<op_enum>(expr[0].to<OPTYPE>()) == O_DOT)
-                        return del_dot(expr, _w);
+                    if (expr.size() >= 1 && expr[0].is<OPTYPE>()) {
+                        switch (static_cast<op_enum>(expr[0].to<OPTYPE>())) {
+                        case O_ILOAD: return del_name(expr, _w);
+                        case O_DOT: return del_dot(expr, _w);
+                        case O_INDEX: return del_index(expr, _w);
+                        default: break;
+                        }
+                    }
                 }
             }
 

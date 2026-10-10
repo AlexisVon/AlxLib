@@ -138,7 +138,7 @@ namespace alx {
             // [O_DEBUG, row, col, ofst] -- not an instruction: no s_ops entry, dispatched before the hook checkpoint
             O_DEBUG,
 
-            // Bound for the s_ops table; ass_op_for also returns it to mean "not a compound op"
+            // Bound for the s_ops table
             O_ENUMSIZE
         };
 

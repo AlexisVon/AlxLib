@@ -3186,6 +3186,121 @@ TEST(gt_ascript_walk, Slot_CompoundAssign_IndexSlot) {
     EXPECT_EQ(v.to<int_64>(), 15);
 }
 
+TEST(gt_ascript_walk, CompoundIndexOnce) {
+    // `a[f()] += v` is a single call; the explicit form calls f twice
+    EXPECT_EQ(exec_src("var n = 0; def f() { n = n + 1; return 0; } var a = [1, 2]; a[f()] += 10; n;")
+                  .to<int_64>(),
+              1);
+    EXPECT_EQ(exec_src("var a = [1, 2]; def f() { return 0; } a[f()] += 10; a[0];").to<int_64>(), 11);
+}
+
+TEST(gt_ascript_walk, Compound_RhsBeforeTarget) {
+    // the RHS runs first, then the target is resolved once: a function that modifies the target feeds the new value
+    EXPECT_EQ(exec_src("var x = 1; def f() { x = 100; return 5; } x += f(); x;").to<int_64>(), 105);
+    // a delete in the RHS is caught by the re-resolve instead of writing a dead slot
+    auto r = exec_src_catch("var x = 1; x += (delete x) ? 1 : 0;");
+    EXPECT_EQ(r.first, error_type::NameError);
+}
+
+TEST(gt_ascript_walk, Compound_RhsGrowsStore) {
+    // the RHS grows the store (frame reallocation) and the container: resolve comes after, so nothing dangles
+    EXPECT_EQ(exec_src("var gi = 0; def grow_f() { var p1; var p2; var p3; var p4; var p5;"
+                       " p1 = 1; p2 = 1; p3 = 1; p4 = 1; p5 = 1; return p1 + p2 + p3 + p4 + p5; }"
+                       " var it = 0; while (it < 500) { it = it + 1; gi += grow_f(); } gi;")
+                  .to<int_64>(),
+              2500);
+    EXPECT_EQ(exec_src("var gv = [1, 2, 3]; def grow_v() { gv[null] = 99; return 10; }"
+                       " gv[0] += grow_v(); gv[0];")
+                  .to<int_64>(),
+              11);
+}
+
+TEST(gt_ascript_walk, AssignTarget_Rejected) {
+    // the lvalue check lives in resolve_ptr: `=` and the compound assignments both report at run time
+    const char* bad[] = {"1 = 2;", "\"abc\" = 1;", "[1,2] = 3;", "1 += 1;", "(1) = 2;"};
+    for (const char* src : bad) {
+        auto r = exec_src_catch(src);
+        EXPECT_EQ(r.first, error_type::TypeError) << src;
+    }
+}
+
+TEST(gt_ascript_walk, NullIndex_ReadModifyWriteRejected) {
+    const char* bad[] = {"var v = [1,2]; v[null] += 1;", "var v = [1,2]; v[null]++;",
+                         "var v = [1,2]; ++v[null];", "var v = [1,2]; v[null] -= 1;"};
+    for (const char* src : bad) {
+        auto r = exec_src_catch(src);
+        EXPECT_EQ(r.first, error_type::TypeError) << src;
+    }
+    // a plain write keeps the append semantics
+    auto v = exec_src("var v = [1,2]; v[null] = 9; v;");
+    ASSERT_TRUE(v.is<varvec>());
+    EXPECT_EQ(v.to<varvec>().size(), 3u);
+    EXPECT_EQ(v.to<varvec>()[2].to<int_64>(), 9);
+    // the rejection must not have pushed anything
+    auto v2 = exec_src("var v = [1,2]; try { v[null] += 1; } catch (e) {} v[null];");
+    EXPECT_EQ(v2.to<int_64>(), 2);
+}
+
+TEST(gt_ascript_walk, NullIndex_DotChainRejected) {
+    // a dot-chain null key would append inside the resolver: rejected before the push, no side effect
+    auto v = exec_src("var o = map{\"v\": [1,2]}; var caught = false;"
+                      " try { o.v[null] += 1; } catch (e) { caught = true; }"
+                      " [caught, o.v[null]];");
+    ASSERT_TRUE(v.is<varvec>());
+    EXPECT_TRUE(v.to<varvec>()[0].to<bool>());
+    EXPECT_EQ(v.to<varvec>()[1].to<int_64>(), 2);
+}
+
+TEST(gt_ascript_walk, Namespace_AssignRejected) {
+    std::string tmp = "/tmp/alx_ns_assign.axc";
+    {
+        std::ofstream ofs(tmp);
+        ofs << "var z = 7;" << std::endl;
+    }
+    std::string pre = "import \"" + tmp + "\" as m; ";
+    auto r1 = exec_src_catch((pre + "m = 1;").c_str());
+    EXPECT_EQ(r1.first, error_type::NameError);
+    auto r2 = exec_src_catch((pre + "@(\"m\") = 1;").c_str());
+    EXPECT_EQ(r2.first, error_type::TypeError);
+    auto r3 = exec_src_catch((pre + "m += 1;").c_str());
+    EXPECT_EQ(r3.first, error_type::TypeError);
+    std::remove(tmp.c_str());
+}
+
+TEST(gt_ascript_walk, RvalueTarget_Rejected) {
+    const char* bad[] = {"[1,2,3][0] = 2;", "def f() { return 1; } f()[0] = 2;"};
+    for (const char* src : bad) {
+        auto r = exec_src_catch(src);
+        ASSERT_EQ(r.first, error_type::TypeError) << src;
+        EXPECT_EQ(r.second.to<std::string>(), "cannot assign to an rvalue") << src;
+    }
+    // a missing root name keeps its name in the message
+    auto r2 = exec_src_catch("zz_missing[0] = 2;");
+    ASSERT_EQ(r2.first, error_type::NameError);
+    EXPECT_EQ(r2.second.to<std::string>(), "Undefined: zz_missing");
+}
+
+TEST(gt_ascript_walk, DeleteTarget_RejectedAtRunTime) {
+    const char* bad[] = {"delete 5;", "def f() { return 1; } delete f();"};
+    for (const char* src : bad) {
+        auto r = exec_src_catch(src);
+        ASSERT_EQ(r.first, error_type::TypeError) << src;
+        EXPECT_EQ(r.second.to<std::string>(),
+                  "delete target must be a variable, member access, or index expression")
+            << src;
+    }
+    // a missing name still deletes silently (and the script actually ran); a normal path still deletes
+    EXPECT_EQ(exec_src("var r = delete nosuch; 1 + (r ? 100 : 0);").to<int_64>(), 1);
+    EXPECT_EQ(exec_src("var v = [1,2]; var r = delete v[0]; r;").to<bool>(), true);
+}
+
+TEST(gt_ascript_walk, DeleteIndirectPath) {
+    // `delete @("path")` resolves the path like a direct delete: dot and index both
+    EXPECT_EQ(exec_src("var v = [1,2,3]; delete @(\"v[0]\"); v[0];").to<int_64>(), 2);
+    EXPECT_EQ(exec_src("var m = map{\"a\": 1}; var r = delete @(\"m.a\"); r;").to<bool>(), true);
+    EXPECT_EQ(exec_src("var v = [1,2,3]; var r = delete @(\"v[9]\"); r;").to<bool>(), false);
+}
+
 TEST(gt_ascript_walk, Slot_DeleteIndex_ContainerSlot) {
     auto v = exec_src("def f() { var v = [0,1,2]; delete v[-1]; return v; } f();");
     EXPECT_TRUE(v.is<varvec>());

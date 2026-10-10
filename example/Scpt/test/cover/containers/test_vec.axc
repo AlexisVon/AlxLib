@@ -23,7 +23,7 @@ $print("after push: a[null]=%1, a[-1]=%2\n", a[null], a[-1]);
 a[0] += 1; a[-1] *= 2;
 $print("after compound: a[0]=%1, a[-1]=%2\n", a[0], a[-1]);
 
-// --- null compound push 0 (append-index compound rejected at parse) ---
+// --- null compound push 0 (append-index compound rejected at run time) ---
 a[null] = 0;
 a[-1] += 10;
 $print("after null compound push+assign: a[-1]=%1, a[null]=%2\n", a[-1], a[null]);

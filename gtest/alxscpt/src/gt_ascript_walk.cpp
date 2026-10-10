@@ -1177,6 +1177,158 @@ TEST(gt_ascript_walk, DeleteNonExistingVar) {
     EXPECT_EQ(v.to<int_64>(), 42);
 }
 
+TEST(gt_ascript_walk, DeleteModuleVarFromFunction) {
+
+    auto v = exec_src_no_frame(
+        "var x; x = 1;"
+        "def f() { return delete x; }"
+        "[f(), x];");
+    auto& vec = v.to<varvec>();
+    EXPECT_FALSE(vec[0].to<bool>());
+    EXPECT_EQ(vec[1].to<int_64>(), 1);
+}
+
+TEST(gt_ascript_walk, DeleteDefFromFunction) {
+
+    auto v = exec_src_no_frame(
+        "def g() { return 1; }"
+        "def f() { return delete g; }"
+        "[f(), g()];");
+    auto& vec = v.to<varvec>();
+    EXPECT_FALSE(vec[0].to<bool>());
+    EXPECT_EQ(vec[1].to<int_64>(), 1);
+}
+
+TEST(gt_ascript_walk, DeleteFrameVarInFunction) {
+
+    auto v = exec_src_no_frame(
+        "def f() { var t; t = 1; return delete t; }"
+        "f();");
+    EXPECT_TRUE(v.to<bool>());
+}
+
+TEST(gt_ascript_walk, DeleteFrameVarThenRead) {
+
+    auto [etype, eval] = exec_src_no_frame_catch(
+        "def f() { var t; t = 1; delete t; return t; }"
+        "f();");
+    EXPECT_EQ(etype, error_type::NameError);
+}
+
+TEST(gt_ascript_walk, DeleteOuterFrameVar) {
+
+    auto v = exec_src_no_frame(
+        "def g() { var y; y = 5;"
+        "  def h() { return delete y; }"
+        "  return [h(), y];"
+        "}"
+        "g();");
+    auto& vec = v.to<varvec>();
+    EXPECT_FALSE(vec[0].to<bool>());
+    EXPECT_EQ(vec[1].to<int_64>(), 5);
+}
+
+TEST(gt_ascript_walk, DeleteModuleVarFromBlock) {
+
+    auto v = exec_src_no_frame(
+        "var x; x = 1;"
+        "var r; r = true;"
+        "{ r = delete x; }"
+        "[r, x];");
+    auto& vec = v.to<varvec>();
+    EXPECT_FALSE(vec[0].to<bool>());
+    EXPECT_EQ(vec[1].to<int_64>(), 1);
+}
+
+TEST(gt_ascript_walk, DeleteBlockVar) {
+
+    auto v = exec_src_no_frame(
+        "var r; r = false;"
+        "{ var b; b = 2; r = delete b; }"
+        "r;");
+    EXPECT_TRUE(v.to<bool>());
+}
+
+TEST(gt_ascript_walk, DeleteModuleVarFromEvalFrame) {
+
+    auto v = exec_src_no_frame(
+        "var x; x = 1;"
+        "eval(\"delete x;\");"
+        "x;");
+    EXPECT_EQ(v.to<int_64>(), 1);
+}
+
+TEST(gt_ascript_walk, DeleteEvalFrameVar) {
+
+    auto v = exec_src_no_frame("eval(\"var y; y = 2; delete y;\");");
+    EXPECT_TRUE(v.to<bool>());
+}
+
+TEST(gt_ascript_walk, DeleteModuleVarFromTryFrame) {
+
+    auto v = exec_src_no_frame(
+        "var x; x = 1;"
+        "var r; r = true;"
+        "try { r = delete x; } catch (e) {}"
+        "[r, x];");
+    auto& vec = v.to<varvec>();
+    EXPECT_FALSE(vec[0].to<bool>());
+    EXPECT_EQ(vec[1].to<int_64>(), 1);
+}
+
+TEST(gt_ascript_walk, DeleteIndirectInFunction) {
+
+    auto v = exec_src_no_frame(
+        "def f() { var t; t = 3; return delete @(\"t\"); }"
+        "f();");
+    EXPECT_TRUE(v.to<bool>());
+}
+
+TEST(gt_ascript_walk, DeleteTcoFrameVar) {
+
+    auto v = exec_src_no_frame(
+        "def f(n) { var t; t = n;"
+        "  if (n > 0) { return f(n - 1); }"
+        "  return delete t;"
+        "}"
+        "f(3);");
+    EXPECT_TRUE(v.to<bool>());
+}
+
+TEST(gt_ascript_walk, DeleteInImportedModuleLayers) {
+
+    std::string tmp = "/tmp/alx_del_import_layers.axc";
+    {
+        std::ofstream ofs(tmp);
+        ofs << "var z = 7;" << std::endl;
+        ofs << "var top = delete z;" << std::endl;
+        ofs << "def h() { var t; t = 1; return delete t; }" << std::endl;
+        ofs << "var z2 = 7;" << std::endl;
+        ofs << "def k() { return delete z2; }" << std::endl;
+    }
+    std::string code = "import \"" + tmp + "\" as m; [m.top, m.h(), m.k(), m.z2];";
+    auto v = exec_src_no_frame(code.c_str());
+    std::remove(tmp.c_str());
+    auto& vec = v.to<varvec>();
+    EXPECT_TRUE(vec[0].to<bool>());
+    EXPECT_TRUE(vec[1].to<bool>());
+    EXPECT_FALSE(vec[2].to<bool>());
+    EXPECT_EQ(vec[3].to<int_64>(), 7);
+}
+
+TEST(gt_ascript_walk, DeleteAcrossModuleBoundary) {
+
+    std::string tmp = "/tmp/alx_del_import_boundary.axc";
+    {
+        std::ofstream ofs(tmp);
+        ofs << "var z = 7;" << std::endl;
+    }
+    std::string code = "import \"" + tmp + "\" as m; delete m.z;";
+    auto [etype, eval] = exec_src_no_frame_catch(code.c_str());
+    std::remove(tmp.c_str());
+    EXPECT_EQ(etype, error_type::NameError);
+}
+
 TEST(gt_ascript_walk, DeleteVecFullRange) {
 
     auto v = exec_src_no_frame("var vv; vv = [10,20,30]; delete vv[0]; vv;");

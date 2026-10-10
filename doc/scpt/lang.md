@@ -902,7 +902,7 @@ def outer() {
 - **Argument evaluation semantics (values taken at the end, uniformly)**: the argument expressions are evaluated left to right (so the side-effect order is determined); the value of a variable argument is read **once every argument expression has been evaluated** — an assignment/rewrite of an earlier variable argument by a later argument expression is visible to the callee. In `f(x, x = 5)` the `x` is passed as `5`; in `f(count, next_count())` the `count` is passed as its post-call value. Script functions and link native functions behave identically
 - tail call optimisation (TCO): when `return f(args)` has `f` as the current function's name, the current frame is reused automatically — no new frame, no depth limit (does not apply when the name is locally shadowed, see §9.2.1)
 - indirect calls use the `@` prefix syntax, see §10
-- `delete funcName` removes a function definition (within the current module)
+- `delete funcName` removes a function definition (the current module, top layer only — from a frame it returns `false`)
 
 ### 9.2.1 Tail recursion
 
@@ -1302,8 +1302,9 @@ b.y.name();
   - `delete link.area_namespace` → ✅ allowed (removes the whole area registration)
   - `delete link.func` → ❌ TypeError (a callable is not an object, deletion forbidden)
   - `delete link.area.func` → ❌ TypeError (a callable is not an object, deletion forbidden)
-  - `delete link.data_var` → ❌ TypeError (link data is shielded from scripts)
-  - reading `link.data_var` / writing `link.data_var = val` → ❌ TypeError (link data is shielded from scripts)
+  - `delete link.data_var` → ❌ TypeError (link data is shielded from scripts — any depth, same as reading / writing)
+  - reading `link.data_var` / writing `link.data_var = val` → ❌ TypeError (link data is shielded from scripts, elements and nested keys at any depth alike: `link.data[0]`, `link.data.k`, direct / `@()` / nav forms)
+  - writing an existing area native, `link.area.func = val` → ❌ NameError (`Cannot assign to function: <name>`) — the native table holds the registration, not a writable slot; a missing key still says `Undefined`
 - `@` reflection behaves exactly like the direct syntax: `delete @("b.x")` ≡ `delete b.x`
 
 ## 12.3 Writing a new link library
@@ -1587,12 +1588,12 @@ It can be used in an expression context: `var r = delete x; r;` — `r` is `true
 ### Variable / function / module deletion
 
 ```js
-delete x;             // delete a variable (the current entity or scope frame)
-delete func_name;     // delete a function definition (the current module)
+delete x;             // delete a variable of the current layer
+delete func_name;     // delete a function definition (module top layer)
 delete alias;         // delete an import / link alias
 ```
 
-- **is_root()**: a module-level delete goes to the entity's `m_store`; a non-root one goes to the current scope frame
+- **execution layer**: only the module top layer — no frame pushed, i.e. the root script's top level and an imported module's top level — deletes from the entity's `m_store`; any frame (function / TCO / block / loop / eval / try) deletes its own variables only and returns `false` for anything outside it
 - silent failure: a name that does not exist → returns `false`, no exception
 - after a deletion the name can be declared again — once it is out of every namespace, `var`/`def`/`link` all create it normally
 - **cross-module delete**: another module's variable cannot be deleted → throws `NameError`
@@ -1625,8 +1626,7 @@ A link module's internal data is **completely shielded** from a script. An area 
 | area instance | `delete b.inst` / `delete @("b.inst")` | ✅ deletion allowed (anyptr destructor → host object destroyed) |
 | area namespace | `delete b.fs` | ✅ deletion allowed (same as an instance) |
 | link/area function | `delete ts.set` / `delete b.fs.open` | ❌ TypeError (a callable is not an object, deletion forbidden) |
-| link data variable | `delete ts.data_x` | ❌ TypeError (link data is shielded) |
-| area data variable | `delete b.at_f` | ❌ TypeError (not an object, not a callable) |
+| link data variable | `delete ts.data_x` | ❌ TypeError (link data is shielded, at any depth) |
 | positional dot | `delete .ts.data_x` | ❌ TypeError (same as an ordinary dot) |
 | @ reflection | `delete @("ts.data_x")` | ❌ TypeError (@ matches the direct syntax) |
 

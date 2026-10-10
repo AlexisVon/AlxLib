@@ -1525,6 +1525,11 @@ namespace alx {
         variant walker::op_dot(const varvec& _tree, walker& _w) {
             auto r = resolve_dot(_tree, _w.state);
 
+            // data reached through a link is invisible at any depth, not only at the link's own slot
+            if (r.link_owner && r.kind == TerminalKind::T_Variant)
+                throw script_exception{error_type::TypeError,
+                                       std::string("link namespace cannot be read as variable")};
+
             if (r.key.null() && r.kind == TerminalKind::T_Variant && r.parent) {
                 if (r.parent->is<varvec>()) {
                     alx::varvec dummy;
@@ -2083,8 +2088,19 @@ namespace alx {
                             throw script_exception{error_type::TypeError, std::string("cannot write to import module variable")};
                     }
                 }
+                // a chain that entered a link's data resolves inside it at any depth: never a script target
+                if (!_isnav && dr.link_owner && dr.kind == TerminalKind::T_Variant)
+                    throw script_exception{error_type::TypeError, std::string("cannot write to link module variable")};
                 variant* p = dr.get(false);
-                if (p) return p;
+                if (p) {
+
+                    // an existing area native names a registered function, not a writable slot
+                    if (!_isnav && dr.parent_kind == ParentKind::Area)
+                        throw script_exception{error_type::NameError,
+                                               std::string("Cannot assign to function: " +
+                                                           (dr.key.is<std::string>() ? dr.key.to<std::string>() : std::string()))};
+                    return p;
+                }
                 if (dr.kind == TerminalKind::T_Variant && dr.parent) {
                     if (dr.key.null()) {
 
@@ -2595,18 +2611,16 @@ namespace alx {
                 }
             }
 
-            if (_w.state.is_root()) {
+            // the module store is reachable from the module top layer only: a frame deletes its own vars only
+            if (_w.state.frames.empty()) {
 
                 if (_w.state.current->m_store.contain(name)) {
                     _w.state.current->m_store.remove(name);
                     return true;
                 }
                 return false;
-            } else {
-
-                if (_w.state.frames.empty()) return false;
-                return _w.state.frames.back().remove(name);
             }
+            return _w.state.frames.back().remove(name);
         }
 
         bool walker::del_dot(const varvec& _tree, walker& _w) {
@@ -2625,6 +2639,12 @@ namespace alx {
             std::string kstr = r.key.is<std::string>() ? r.key.to<std::string>() : std::string();
             bool ok = false;
 
+            // any terminal reached through link data is data: undeletable whatever it holds or how deep it sits
+            if (r.link_owner && r.parent_kind != ParentKind::Area)
+                throw script_exception{error_type::TypeError,
+                                       std::string("cannot delete link data variable") +
+                                           (kstr.empty() ? std::string() : ": " + kstr)};
+
             switch (r.parent_kind) {
             case ParentKind::Frame:
 
@@ -2640,10 +2660,10 @@ namespace alx {
                 if (r.parent)
                     throw script_exception{error_type::TypeError,
                                            std::string("Type does not support delete ." + kstr)};
-                if (r.slot_owner != _w.state.current || !_w.state.is_root())
+                if (r.slot_owner != _w.state.current)
                     throw script_exception{error_type::NameError,
                                            std::string("cannot delete across module boundary")};
-                if (r.slot_owner->m_store.contain(kstr)) {
+                if (_w.state.frames.empty() && r.slot_owner->m_store.contain(kstr)) {
                     r.slot_owner->m_store.remove(kstr);
                     ok = true;
                 }
@@ -2713,10 +2733,10 @@ namespace alx {
             }
 
             if (!ok && r.kind == TerminalKind::T_Slot && !r.parent && r.slot_owner && r.key.is<std::string>()) {
-                if (r.slot_owner != _w.state.current || !_w.state.is_root())
+                if (r.slot_owner != _w.state.current)
                     throw script_exception{error_type::NameError,
                                            std::string("cannot delete across module boundary")};
-                if (r.slot_owner->m_store.contain(kstr)) {
+                if (_w.state.frames.empty() && r.slot_owner->m_store.contain(kstr)) {
                     r.slot_owner->m_store.remove(kstr);
                     ok = true;
                 }

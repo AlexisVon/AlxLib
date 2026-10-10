@@ -448,8 +448,6 @@ namespace alx {
 
             src_pos top_pos;
 
-            bool is_root() const { return current == root_entity; }
-
             bool break_flag = false;
             bool cont_flag = false;
             bool ret_flag = false;

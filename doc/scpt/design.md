@@ -156,7 +156,7 @@ Prefixed:    ..a.b         → all locate segments — pure entity navigation, t
 
 A dedicated evaluation of computed-value dot cascades (`f().x.y`) (2026-08-06): O_INDEX already covers it equivalently → pure syntactic sugar; the write/delete paths are semantically empty for a temporary (a temporary dies as soon as it is written, and the script has no reference semantics) → it should be a runtime TypeError. The one non-equivalent case = a named navigation whose chain head returns an entity (`get_mod().func()` — O_INDEX can only index a container, it cannot navigate an anyptr\<impl_import\>) — a function dynamically returning a module reference is rare, and opening a bridge for it is not worth it. The navigation-segment family as it stands: the locating kinds (a name / `..` parent / `::` root / `.` current module) plus the `.()` bridge as the only special case — the parse layer forces the bridge to be chain-terminal (the message in ascript_parse.cpp is `bridge .(...) requires a nav prefix (. .. ::)`; the postfix loop breaks after the bridge, so nothing can follow it), and a mid-chain call `a.b().x` is refused just the same.
 
-At runtime `resolve_dot()` walks the chain: an OPTYPE marker drives the entity jump (O_PARENT/O_ROOT/O_CURRENT), while a string/int switches among the T_Variant/T_Slot/T_Callable states. After N-1 steps the terminal key is left in `dot_resolved::key` and the caller dispatches it itself. link/area data is completely shielded from the script (read/write/delete → TypeError).
+At runtime `resolve_dot()` walks the chain: an OPTYPE marker drives the entity jump (O_PARENT/O_ROOT/O_CURRENT), while a string/int switches among the T_Variant/T_Slot/T_Callable states. After N-1 steps the terminal key is left in `dot_resolved::key` and the caller dispatches it itself. link/area data is completely shielded from the script (read/write/delete → TypeError); the shield sits on the resolved terminal — `dot_resolved::link_owner` marks a chain that entered a link's data — so an element or nested key is refused exactly like the link's own slot.
 
 The parser flattens the whole chain into `[O_DOT, elem...]` — no `O_INDEX` sub-vector, no `O_BRIDGE` marker:
 
@@ -421,8 +421,8 @@ delete a[key]   → [O_DEL, [O_INDEX, ...]]          // index
 
 | Path | Condition | Behaviour |
 |------|------|------|
-| `del_name` | `is_root()` | entity `m_store.remove()` |
-| `del_name` | `!is_root()` | the current `scope_frame::remove()` |
+| `del_name` | `frames.empty()` (the module top layer) | entity `m_store.remove()` |
+| `del_name` | any frame | the current `scope_frame::remove()` |
 | `del_name` | not found | returns `false` (silent) |
 | `del_index` | a valid vec/lst index | shift-delete, returns `true` (O(n)) |
 | `del_index` | vec/lst out of bounds / map key absent | returns `false` |
@@ -430,12 +430,12 @@ delete a[key]   → [O_DEL, [O_INDEX, ...]]          // index
 | `del_dot` | Frame/Entity/Map/Vec/Lst | dispatched through `resolve_dot` + `ParentKind` |
 | `del_dot` | an area instance/namespace under a link (a non-callable anyptr) | deleted (the anyptr destructor destroys the host object), returns `true` |
 | `del_dot` | a link/area function (callable) | raises `TypeError` |
-| `del_dot` | a link/area data variable | raises `TypeError` |
+| `del_dot` | a chain that entered link data (`dot_resolved::link_owner`) | raises `TypeError` at any depth |
 | `del_dot` | a cross-module entity variable | raises `NameError` |
 
 **`ParentKind`** — a new enum plus a `parent` pointer in `dot_resolved`, filled during navigation by `step::ent`/`step::link`/`step::field`. `del_dot` switches on `parent_kind` directly and no longer guesses where the terminal came from.
 
-**`is_root()`** — new in `walk_state`: `current == root_entity`. `root_entity` is set to the root entity in `walker::reset()`, and to itself when a sub-module is walked for import.
+**Delete layering** — the module store is reached only from the module top layer, which the walker reads as `frames.empty()`: the root script and every imported module's top level run in their own walker with no frame pushed, while a function / TCO / block / loop / eval / try frame pushes one. `root_entity` (the old `is_root()` test, now gone) is set to the root entity in `walker::reset()` and to itself when a sub-module is walked for import; it is read by the position/trace mapping.
 
 ### 3.3 Flyweight module structure (fly_import / fly_link / impl_import / impl_link)
 
@@ -1323,7 +1323,7 @@ public:
 |---|------|------|
 | 8 | **Chain access lookup order** | the unified path: frame var_map → the entity/link data_store (m_map → m_data[idx]) → dispatch on the variant's type (anyptr→entity/link/area/callable, otherwise→the variable's value). `resolve_dot` handles it internally through step::ent/step::link/step::field, and the terminal key is dispatched by `dot_resolved::get` / `invoke_dot` / `resolve_ptr` on kind. link data is completely shielded from the script |
 | 9 | **Cross-module access** | variables: an existing one can be read and written, but none can be created or deleted (a cross-module delete raises NameError). Container values: deletable after a bridge (what is deleted is the value, not the variable). An area instance/namespace under a link is deletable (destroying the host object), while a function/data variable is blocked → TypeError |
-| 9b | **link data shielding** | `impl_link::m_store` is invisible to the script. Reading / writing / deleting `link.data_var` → TypeError. `delete link.func` / `delete link.area.func` → TypeError (a callable is not an object and cannot be deleted); `delete link.area` (a namespace) / `delete link.inst` (an instance) → allowed (the anyptr destructor destroys the host object) |
+| 9b | **link data shielding** | `impl_link::m_store` is invisible to the script. Reading / writing / deleting `link.data_var` → TypeError, the whole slot and everything below it alike (`link.data[0]`, `link.data.k`). Writing an existing area native (`link.area.func = val`) → NameError — the native table holds the registration, not a writable slot. `delete link.func` / `delete link.area.func` → TypeError (a callable is not an object and cannot be deleted); `delete link.area` (a namespace) / `delete link.inst` (an instance) → allowed (the anyptr destructor destroys the host object) |
 | 20 | **Index semantics** | vec/lst: `[0..size-1]`/`[-1]`/`[null]`, at O(n) cost. string likewise (`[-1]` the last char, `[null]` the byte length), read-only. map: a string key; a non-string key (null and numbers included) → TypeError (2026-08-10 fixed the op_map literal; 2026-09-18 filled in op_index read/write, resolve_ptr, del_map and del_dot — it used to silently become a `""` key, and the write path even created a real `""` entry). **The `[null]` rule (2026-09-18)**: at the terminal, a read = size, uniformly across the four containers vec/lst/string/map; a write = append for vec/lst only, and TypeError otherwise. **A dot chain and a standalone index are synonymous** (`o.s[0]` ≡ `s[0]`) |
 | 21 | **null inside a dot chain** | a missing terminal key is the caller's decision (`get(true)` returns null / `get(false)` creates it / `resolve_ptr` raises NameError). A missing intermediate segment → KeyError (step::field) or NameError (step::ent) |
 | 7 | **Name conflict detection** | check_name_conflict is called before every `var`/`def`/`link`/`import` declaration. It checks everything and raises on everything, with no priority |

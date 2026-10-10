@@ -50,7 +50,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${ALXLIB_BIN_PATH})
 # SONAME is major.minor -- so a release that changed any module refuses to load beside
 # an older one instead of failing somewhere at run time.
 set(ALXLIB_VERSION_MAJOR 1 CACHE STRING "Library major version")
-set(ALXLIB_VERSION_MINOR 1 CACHE STRING "Library minor version")
+set(ALXLIB_VERSION_MINOR 2 CACHE STRING "Library minor version")
 set(ALXLIB_VERSION_PATCH 0 CACHE STRING "Library patch version")
 
 set(ALXLIB_VERSION "${ALXLIB_VERSION_MAJOR}.${ALXLIB_VERSION_MINOR}.${ALXLIB_VERSION_PATCH}")

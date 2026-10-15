@@ -1750,6 +1750,13 @@ Version ALXLIB 1.1.0 → 1.2.0.
 
 Version ALXLIB 1.2.0 → 1.2.2.
 
+**Migration log (2026-10-15, version 1.2.3: `create(cfg)` installs the hook it carries)**:
+
+- **The config-carried hook now fires (2026-10-15)**: an `engine_config` with `hook_fn_ptr` / `hook_ud` / `hook_interval` set was copied into the engine and handed back by `config()` but never reached the walker — only `set_hook()` stored the three atomics the walk consults, so a host handing a hook to `create(cfg)` got a silent no-op (an AScript `$thd_create` child inheriting its parent's config inherited the hole). The walker now seeds its hook atomics from the config at construction; `set_hook` keeps its own store, and everything a `set_hook`-installed hook did is unchanged.
+- **Migration note**: no opcode or AST change, so **vtype is untouched and .axp products need no recompilation**; the library version moves 1.2.2 → 1.2.3 — a patch, no symbol changed its home, so the SONAME **stays `.so.1.2`**.
+
+Version ALXLIB 1.2.2 → 1.2.3.
+
 ### 10.2 Syntax
 
 `$foo(args)` → `T_DOLLAR` + `T_NAME` (the value is the bare name `foo`) + the `O_EXCALL` opcode.

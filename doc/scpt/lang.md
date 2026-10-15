@@ -79,8 +79,8 @@ The `$xxx` extension mechanism: the `$` prefix namespace is a lexical-level hard
 | 12 | `+` `-` | left |
 | 13 | `*` `/` `%` | left |
 | 14 | `++` `--` `!` `~` `+` `-` (unary) | right |
-| 15 | `++` `--` `.` `[]` `()` (postfix) | left |
-| 16 | `@` `delete` (prefix) | right |
+| 15 | `@` `delete` (prefix; the operand is a whole suffix chain) | `delete` right; `@` takes a primary (no bare `@@`) |
+| 16 | `++` `--` `.` `..` `[]` `()` (postfix) | left |
 
 <div style="page-break-after: always;"></div>
 
@@ -182,7 +182,7 @@ $print(b);                       // bytes(5)
 ```
 
 - Only `==` / `!=` byte-wise comparison is supported; every other operator → `TypeError`
-- `[]` indexing/assignment is not supported
+- `[]` reads/writes a byte value (int 0-255); `+=` / `++` on an element → `TypeError` (§6.3)
 - `type(b)` → `"bytes"`
 - `bool(bytes())` → false (empty), `bool(bytes("x"))` → true (non-empty); a non-string argument → `TypeError`
 - Supported encodings: `utf8` / `utf8bom` / `gbk` / `utf16` / `utf16le` / `utf16lebom` / `utf16be` / `utf16bebom` / `hex` / `base64`
@@ -205,7 +205,7 @@ $print(b);                       // bytes(5)
 - non-empty vec / map / lst → true, empty container → false
 - `null` → false
 
-> Design intent: numeric `0`=falsy is a cross-language consensus, so it is supported directly. string/bytes truthiness is uniformly a non-emptiness test, with no semantic ambiguity. `cov_bool` never throws.
+> Design intent: numeric `0`=falsy is a cross-language consensus, so it is supported directly. string/bytes truthiness is uniformly a non-emptiness test, with no semantic ambiguity. `cov_bool` never throws for the listed types (a link/import instance → `ConvError`).
 
 ## 3.9 Literal syntax
 
@@ -298,11 +298,11 @@ string(v)   // → string, failure ConvError. null→"". Basic type conversion; 
 string(int, base)   // int→string conversion in a base. base: 2/8/10/16. 2→0b, 8→0o, 16→0x prefix. 10 has no prefix.
 string(double, prec) // double→string precision control. prec=0→integer (%.0f), prec>0→N decimals (%.*f), prec<0→N significant digits (%.*g). Use this overload when the format must be controlled (these three paths do not trim trailing zeros, they keep a fixed format).
 string(fmt, args...)  // multiple args: the first is the format string (%1 %2 ...), returns the formatted result. %% emits a literal %
-bool(v)     // → bool, never throws
+bool(v)     // → bool; never throws (a link/import instance → ConvError)
 bytes(v)           // → bytes, raw copy (v must be a string); null→empty bytes
 bytes(v, enc)      // → bytes, encoding conversion (v must be a string)
 string(b)          // → string, raw copy (b must be bytes)
-string(b, enc)     // → string, decoding conversion (b must be bytes)
+string(b, enc)     // → string by encoding name (utf8/gbk decode; hex/base64 encode) (b must be bytes)
 // enc supported encodings (name folding rule in §3.7; case and separator words arbitrary):
 //   "utf8"          UTF-8
 //   "utf8bom"       UTF-8 + BOM
@@ -323,18 +323,18 @@ lst(v)      // → lst, failure ConvError; null→empty lst
 
 | Source \ Target | `int` | `float` | `bool` | `string` | `bytes` | `vec` | `map` | `lst` |
 |-----------|-------|---------|--------|----------|---------|-------|-------|-------|
-| **int** | itself | promote | ≠0 | to_string | ConvErr | [int] | ConvErr | [int] |
-| **float** | truncate | itself | ≠0.0 | %.6f, trailing zeros trimmed, one digit kept | ConvErr | [float] | ConvErr | [float] |
-| **bool** | 1/0 | 1.0/0.0 | itself | "true"/"false" | ConvErr | [bool] | ConvErr | [bool] |
-| **string** | stoll | stod | non-empty=T | itself | raw/enc | per-char | ConvErr | per-char |
-| **bytes** | ConvErr | ConvErr | non-empty=T | raw/enc | itself | ConvErr | ConvErr | ConvErr |
-| **vec** | s1_recur | s1_recur | !empty() | int→UTF-8 / str→join | ConvErr | itself | ConvErr | copy |
-| **map** | ConvErr | ConvErr | !empty() | ConvErr | ConvErr | ConvErr | itself | ConvErr |
-| **lst** | s1_recur | s1_recur | !empty() | int→UTF-8 / str→join | ConvErr | copy | ConvErr | itself |
+| **int** | itself | promote | ≠0 | to_string | TypeErr | [int] | ConvErr | [int] |
+| **float** | truncate | itself | ≠0.0 | %.6f, trailing zeros trimmed, one digit kept | TypeErr | [float] | ConvErr | [float] |
+| **bool** | 1/0 | 1.0/0.0 | itself | "true"/"false" | TypeErr | [bool] | ConvErr | [bool] |
+| **string** | strict int | strict float | non-empty=T | itself | raw/enc | per-char | ConvErr | per-char |
+| **bytes** | ConvErr | ConvErr | non-empty=T | raw/enc | TypeErr | ConvErr | ConvErr | ConvErr |
+| **vec** | s1_recur | s1_recur | !empty() | int→UTF-8 / str→join | TypeErr | itself | ConvErr | copy |
+| **map** | ConvErr | ConvErr | !empty() | ConvErr | TypeErr | ConvErr | itself | ConvErr |
+| **lst** | s1_recur | s1_recur | !empty() | int→UTF-8 / str→join | TypeErr | copy | ConvErr | itself |
 | **null** | 0 | 0.0 | false | "" | empty bytes | [] | {} | [] |
 
 - **UTF-8 encode/decode**: string→vec/lst decodes the UTF-8 bytes into Unicode code point integers (`vec("你好")` → `[20320, 22909]`). vec/lst→string: all-int encodes each int as a code point into UTF-8 bytes (`string([20320, 22909])` → `"你好"`); all-string concatenates. An invalid UTF-8 sequence or an illegal code point → `ConvError`
-- **bytes encode/decode**: `bytes(str)` raw copy, `bytes(str, enc)` encoding (hex/base64/GBK/UTF-8/UTF-16 and so on). `string(b)` raw copy, `string(b, enc)` decoding. The encoding-name folding rule is in §3.7; hex decoding is case-insensitive on input, encoding outputs lowercase
+- **bytes encode/decode**: `bytes(str)` raw copy, `bytes(str, enc)` encoding (hex/base64/GBK/UTF-8/UTF-16 and so on). `string(b)` raw copy, `string(b, enc)` conversion by encoding name (hex/base64 encode the bytes as text; utf8/GBK and so on decode them). The encoding-name folding rule is in §3.7; hex decoding is case-insensitive on input, encoding outputs lowercase
 - **s1_recur**: when size==1, recursively convert the single element
 - **cov_bool(string/bytes)**: non-empty = true, empty/null = false. Never throws
 - **null default value**: `int(null)→0`, `float(null)→0.0`, `string(null)→""`, `bool(null)→false`, `bytes(null)→empty bytes`, `vec(null)→[]`, `map(null)→{}`, `lst(null)→[]`. Every argument-less conversion (`int()`, `float()` etc.) likewise returns the type's default value
@@ -439,8 +439,7 @@ for (int i = 0, j = 1; ...) {}     // multiple declarations (same type)
 |---------------------|---------|---------|-------------------|----------------|
 | `var x` | NameError | NameError | NameError | OK (re-assignment) |
 | `def x` | NameError | NameError | NameError | NameError |
-| `link "..." as x` | NameError | NameError | NameError | NameError |
-| `x = 1` (assignment) | NameError | NameError | NameError | OK (re-assignment) |
+| `link "..." as x` | NameError | NameError | NameError | OK (discards the instance) |
 
 ## 6.2 Assignment and compound assignment
 
@@ -594,7 +593,7 @@ a + b    // int/float addition / string concat / container concat (map merge)
 a - b    // subtraction
 a * b    // multiplication
 a / b    // division (divide by zero → DivZeroError, INT64_MIN/-1 → DivOverflowError)
-a % b    // modulo (int only, divide by zero → DivZeroError)
+a % b    // modulo (int only, divide by zero → DivZeroError, INT64_MIN/-1 → DivOverflowError)
 ```
 
 ## 7.2 Comparison
@@ -605,8 +604,8 @@ a < b    a > b    a <= b   a >= b
 ```
 
 - int↔float are converted to a common type before comparing
-- the same type compares directly (string by lexicographic order)
-- `null`: only `==`/`!=` are supported (`null == null` → true, against anything else `==`/`!=` → false/true, no exception is thrown). It converts to each type's **default value** (`bool`→false, `int`/`float`→0, `string`→`""`, `bytes`→empty, container→empty); ordered comparison is not supported (`<` `>` `<=` `>=` throw `TypeError`)
+- the same type compares directly with `==`/`!=` (vec/lst/map element-wise, bytes byte-wise); ordered comparison (`<` `>` `<=` `>=`) covers int/float/string only, other types → `TypeError`
+- `null`: only `==`/`!=` are supported (`null == null` → true, against anything else `==`/`!=` → false/true, no exception is thrown) — no conversion happens in a comparison (`null == 0` / `null == ""` → false; it is the conversion functions that map null to the type's default value, §5.2); ordered comparison is not supported (`<` `>` `<=` `>=` throw `TypeError`)
 - across types (including string↔number) comparison is impossible → `TypeError`
 
 ## 7.3 Logical
@@ -628,7 +627,7 @@ a << b   // left shift
 a >> b   // right shift
 ```
 
-`int` only. Non-int → `TypeError`. Shift out of range → `ShiftError` (requires `overflow_check`).
+`int` only. Non-int → `TypeError`. Shift out of range, or a negative value left-shifted → `ShiftError` (requires `overflow_check`).
 
 ## 7.5 Concatenation and merge + +=
 
@@ -643,17 +642,17 @@ var b = [3, 4];
 var c = a + b;      // [1, 2, 3, 4] (new vec)
 a += b;             // a = [1, 2, 3, 4] (in-place)
 
-var l1 = {1, 2};
-var l2 = {3, 4};
-l1 += l2;           // l1 = {1, 2, 3, 4}
+var l1 = lst[1, 2];
+var l2 = lst[3, 4];
+l1 += l2;           // l1 = lst[1, 2, 3, 4]
 
 // map merge
-var m1 = {"a": 1};
-var m2 = {"b": 2};
-var m3 = m1 + m2;   // {"a": 1, "b": 2} (new map)
-m1 += m2;           // m1 = {"a": 1, "b": 2}
+var m1 = map{"a": 1};
+var m2 = map{"b": 2};
+var m3 = m1 + m2;   // map{"a": 1, "b": 2} (new map)
+m1 += m2;           // m1 = map{"a": 1, "b": 2}
 // duplicate key: the right side overwrites
-m1 += {"a": 99};    // m1 = {"a": 99, "b": 2}
+m1 += map{"a": 99}; // m1 = map{"a": 99, "b": 2}
 ```
 
 `+` / `+=` are allowed only between containers of the same type, otherwise `TypeError`. In a map merge the value of a duplicate key is overwritten by the right-hand side (rhs).
@@ -680,11 +679,11 @@ int only. Non-int → `TypeError`. Overflow → `OverflowError` (requires `overf
 **Evaluation order**: binary operators always evaluate left→right, and `++`/`--` write back to the variable immediately, so the behaviour is determined.
 
 ```js
-a = 0;
-a++ + ++a  // → 2  (post returns 0,a=1; pre returns 2,a=2; 0+2)
-++a + a++  // → 2  (pre returns 1,a=1; post returns 1,a=2; 1+1)
-a++ + a++  // → 1  (post returns 0,a=1; post returns 1,a=2; 0+1)
-++a + ++a  // → 3  (pre returns 1,a=1; pre returns 2,a=2; 1+2)
+var a;
+a = 0; a++ + ++a;  // → 2  (post returns 0,a=1; pre returns 2,a=2; 0+2)
+a = 0; ++a + a++;  // → 2  (pre returns 1,a=1; post returns 1,a=2; 1+1)
+a = 0; a++ + a++;  // → 1  (post returns 0,a=1; post returns 1,a=2; 0+1)
+a = 0; ++a + ++a;  // → 3  (pre returns 1,a=1; pre returns 2,a=2; 1+2)
 ```
 
 > Unlike C/C++, applying `++`/`--` to the same variable several times inside one expression is **not** undefined behaviour.
@@ -693,17 +692,17 @@ a++ + a++  // → 1  (post returns 0,a=1; post returns 1,a=2; 0+1)
 
 | Category | Operators | Operand requirements | Error |
 |------|--------|-----------|------|
-| arithmetic | `+` `-` `*` | int/float (int preferred, falls back to float) | `ConvError` |
-| arithmetic | `/` | as above + divide-by-zero check | `DivZeroError` |
-| arithmetic | `%` | int only + divide-by-zero check | `DivZeroError` |
-| comparison | all | null special case / same type / int↔float | `TypeError` |
+| arithmetic | `+` `-` `*` | int/float (int preferred, falls back to float) | `TypeError` |
+| arithmetic | `/` | as above + divide-by-zero check | `TypeError` `DivZeroError` `DivOverflowError` |
+| arithmetic | `%` | int only + divide-by-zero check | `TypeError` `DivZeroError` `DivOverflowError` |
+| comparison | all | null special case / same type / int↔float; ordered comparison (`<` `>` `<=` `>=`) int/float/string only | `TypeError` |
 | logical | `&&` `\|\|` `!` `?:` | bool / int / float (0 / 0.0 = falsy) | `TypeError` |
 | bitwise | `&` `\|` `^` `~` | int only | `TypeError` |
 | shift | `<<` `>>` | int only | `TypeError` |
 | concatenation | `+` | string+string / vec+vec / lst+lst / map+map | `TypeError` |
 | increment/decrement | `++` `--` | int only | `TypeError` |
 | arithmetic compound | `+=` `-=` `*=` `/=` | as arithmetic (int/float); `+=` additionally supports vec/lst concat and map merge | as arithmetic |
-| modulo compound | `%=` | int only + divide-by-zero check | `DivZeroError` `DivOverflowError` |
+| modulo compound | `%=` | int only + divide-by-zero check | `TypeError` `DivZeroError` `DivOverflowError` |
 | shift compound | `<<=` `>>=` | int only | `TypeError` |
 | bitwise compound | `&=` `\|=` `^=` | int only | `TypeError` |
 | bytes comparison | `==` `!=` | bytes byte-wise comparison of the same type | `TypeError` |
@@ -748,7 +747,7 @@ The loop pushes a frame implicitly; a `var` declared inside the loop does not le
 var v;
 for (v : arr) { $print("%1\n", v); }           // assign to an existing variable
 for (var v : arr) { $print("%1\n", v); }       // var declaration — v scoped to loop
-for (kv : map) { $print("%1: %2\n", kv.key, kv.value); }  // map → {key, value}
+for (var kv : m) { $print("%1: %2\n", kv.key, kv.value); }  // map → {key, value}
 ```
 
 Only vec / lst / map are iterable.
@@ -799,7 +798,7 @@ try {
 }
 ```
 
-- `throw expr` → `RuntimeError`, `e = map{"what": "RuntimeError", "info": expr}`. **The throw-container exception**: map/vec/lst cannot be converted to a string (`cov_string`), so `ConvError` is actually thrown — throw supports scalars/strings only
+- `throw expr` → `RuntimeError`, `e = map{"what": "RuntimeError", "info": expr}`. **The throw-container exception**: a map cannot be converted to a string (`cov_string`) → `ConvError` is actually thrown; a vec/lst converts by the UTF-8 rule (§5.2 — all-int encodes code points, all-string concatenates) and throws `RuntimeError` as usual, and only a mixed or invalid sequence → `ConvError`
 - an exception penetrates `def` boundaries and travels up the call stack
 - an uncaught exception terminates the script, prints the call stack automatically, and does not crash the host
 - **Declaration-time name conflicts**: a `var`/`def` name conflict inside a function body can be caught by `try/catch`, but try pushes an extra frame, so this is of little practical use. An `import/link as` name conflict is not catchable (the `as` grammar is confined to the top level and cannot be embedded in a `try` block). The recommended practice: `delete` proactively before declaring, to avoid the conflict.
@@ -819,18 +818,18 @@ def init(x, y) { ... }  // always succeeds, the engine will not stop it for a na
 | `TypeError` | `.` on a non-map, `[i]` on a non-container, comparison of mismatched types, etc. |
 | `ConvError` | a type conversion failed |
 | `DivZeroError` | `/` `%` with a zero divisor |
-| `DivOverflowError` | INT64_MIN / -1 |
+| `DivOverflowError` | INT64_MIN / -1 and INT64_MIN % -1 |
 | `OverflowError` | integer arithmetic overflow |
-| `ShiftError` | shift count out of range |
-| `IndexError` | vec/lst/string index out of bounds |
-| `KeyError` | map key absent, or a middle segment of a dot chain absent |
+| `ShiftError` | shift count out of range, or a negative value left-shifted (both under `overflow_check`) |
+| `IndexError` | vec/lst/string/bytes index out of bounds |
+| `KeyError` | `m["key"]` with the key absent, or a middle segment of a dot chain absent (the chain's last key reads null, §13.2) |
 | `ArgError` | a parameter with no default is missing |
 | `ImportError` | module not found / circular import / a link library that will not dlopen, etc. |
 | `LinkError` | a native call arrived outside any walk, i.e. from a load/unload entry point |
 | `StackError` | call frames exceeded `max_stack` |
 | `ResourceError` | a resource limit — a `max_vecfill` fill cap and other guard refusals |
 | `MemoryError` | allocation failure (the `bad_alloc` / `length_error` thrown by `bytes`, translated by the engine into a script-catchable error) |
-| `ParseError` | compile-time syntax/lexical error |
+| `ParseError` | syntax/lexical error — at compile time, or thrown at run time by `eval` / an indirect call (catchable) |
 | `VersionError` | the .axp version tag does not match the engine |
 | `NativeError` | a wrapped C++ native exception (resource errors are not in this class, see above) |
 | `NavError` | reverse navigation past the entity tree depth |
@@ -881,8 +880,8 @@ $print("%1 + %2 = %3", 1, 2, 3); // formatted (1-based)
 $print(42);                       // int → "42"
 $print(true);                     // bool → "true"
 $print(null);                     // null → "null"
-$print([1, 2]);                   // vec → []:2
-$print(map{"x": 1});             // map → {}:1
+$print([1, 2]);                   // vec → vec(2)
+$print(map{"x": 1});             // map → map(1)
 ```
 
 - one argument: output directly; a container shows its type tag + size
@@ -929,7 +928,7 @@ def outer() {
 - a parameter with no default that is not supplied → `ArgError`
 - **Argument evaluation semantics (the call order)**: the argument expressions are evaluated left to right (so the side-effect order is determined), the callee's path expressions run after them, and the callee's address is taken last — nothing runs script code between that and the invoke, so an argument that discards the callee's owner (`m.f(delete m)`) fails cleanly while the callee path resolves. The value of a variable argument is read **once every argument expression has been evaluated** — an assignment/rewrite of an earlier variable argument by a later argument expression is visible to the callee. In `f(x, x = 5)` the `x` is passed as `5`; in `f(count, next_count())` the `count` is passed as its post-call value. Script functions and link native functions behave identically
 - **a callable is not a value**: any copy of one is refused by the type itself (`TypeError: function cannot be read as a value`) — a binding, a container, an expression handed to a call, a script def's parameter, and `type()`'s argument alike; call it instead (directly, through `@`, or by the name it is held under). The one channel open is **by reference, not by copy**: a `$`/link native receives a bare-name argument as a slot pointer and takes a callable that way
-- a call target that evaluates to something that is not a callable → `NameError: not a function: <type>` (`type()` spells the type)
+- a call target that is a **value expression** evaluating to a non-callable → `NameError: not a function: <type>` (`type()` spells the type); a bare-name or dot-chain call that finds no function → `NameError: Undefined function: <name>`
 - tail call optimisation (TCO): when `return f(args)` has `f` as the current function's name, the current frame is reused automatically — no new frame, no depth limit (does not apply when the name is locally shadowed, see §9.2.1)
 - indirect calls use the `@` prefix syntax, see §10
 - `delete funcName` removes a function definition (the current module, top layer only — from a frame it returns `false`)
@@ -983,7 +982,7 @@ display(map{"age": 30, "name": "Alice"}[]);  // → name="Alice", age=30
 
 // map[] together with defaults: override only the parameters you need
 def greet(who, times) { return who + "x" + string(times); }
-greet(map{"times": 3}[], "?");  // who="?" (positional), times=3 (map)
+greet("?", map{"times": 3}[]);  // who="?" (positional), times=3 (map)
 ```
 
 Constraints:
@@ -1012,7 +1011,7 @@ p["file"]                   // absolute path of the source file; empty string wh
 
 ```js
 def assert(cond, mesg, pos) {
-    if (!(cond)) throw map{"what":"AssertError", "info":map{"mesg":mesg, "file":pos.file, "row":pos.row, "col":pos.col, "ofst":pos.ofst}};
+    if (!(cond)) throw "AssertError: " + mesg + " @ " + pos.file + ":" + string(pos.row) + ":" + string(pos.col);
 }
 assert(x > 10, "x too small: " + string(x), here());   // on failure it reports the assert call site
 ```
@@ -1050,7 +1049,7 @@ In a declaration position (`var`/`def`/`import as`/`link as`) `@` is **forbidden
 
 ### 10.1 Value reflection `@`
 
-Indirect operations on variables/functions that **already exist**: read, write, delete, call. The implementation and the opcodes name these *indirect* (`O_ILOAD`, `O_ICALL`) — "reflection" is only this section's word for the same mechanism, so a grep of the sources will not find it.
+Indirect operations on variables/functions that **already exist**: read, write, delete, call. The implementation and the opcodes name these *indirect* (`O_ILOAD`, `O_ICALL`); in the sources the same mechanism also shows up as `reflection_*` (`reflection_is_chain` / `check_reflection_chain`) and in the user-visible error `reflection is not a legal name or chain`.
 
 ```
 var x = "y";
@@ -1148,7 +1147,7 @@ eval(gen);                      // 10 — generated code generates code
 - **Errors**: a syntax error in the string → `ParseError`, catchable by try/catch, with the message `eval: syntax error at <row:col>: <msg>` (the position is inside the eval string, and only the first error is reported, no cascade); a run-time error inside the code follows the existing exception path
 - **Combined with `@`**: inside an eval string `@` can distribute dynamically (`eval("return @(fn)(21);")`)
 - **TCO**: self-recursion of a named function defined inside eval code is tail-recursive as usual; eval itself does not take part in tail recursion
-- **`here()`**: inside an eval string it returns the position within the string (`file` is empty); pass the call-site position explicitly when you need it: `eval(str, {"here": here()})`
+- **`here()`**: inside an eval string it returns the position within the string (`file` is empty); pass the call-site position explicitly as a named parameter: `eval(str, map{"pos": here()})` (do not name the key `here` — inside eval code it is a reserved word, readable only via `@("here")`)
 
 <div style="page-break-after: always;"></div>
 
@@ -1213,7 +1212,7 @@ q.init(1, 1);          // methods run against the copy's own store
 import "math.axc" as math;
 math.add(1, 2);       // calls math's add
 
-b.ex.slice(v, 0, 2);
+b.ex.size(v);
 ```
 
 ## 11.3 Scope rules
@@ -1232,7 +1231,7 @@ var paths = ["./mods"];
 env(paths);                       // a variable works too
 ```
 
-Path resolution (run time): an absolute path is looked up directly → the current module's env list in order (**before any `env()` call the list holds the module's own directory as an absolute path** — the root module's is its home directory, and a module leads with its own directory so nested imports resolve next to it; calling `env()` replaces the list; `env([])` empties it and `env()` with no argument does nothing) → the list the host set through `engine::set_search_paths` → fallback to CWD (CLI/cache mode with no script path). The module's own directory is the only implicit base; there is no other fallback. Paths are not canonicalized (no symlink resolution, no normalization of `..`/`.`), so a host that wants sandbox isolation should restrict the search paths.
+Path resolution (run time): an absolute path is looked up directly → the current module's env list in order (**before any `env()` call the list holds the module's own directory as an absolute path** — the root module's is its home directory, and a module leads with its own directory so nested imports resolve next to it; calling `env()` replaces the list; `env([])` empties it and `env()` with no argument does nothing) → the list the host set through `engine::set_search_paths` → an unconditional fallback to the process CWD. The module's own directory is the only implicit base; there is no other fallback. Paths are canonicalized (realpath: symlinks resolved, `..`/`.` normalized) — different spellings of one file share a single module instance. A host that wants sandbox isolation should restrict the search paths.
 
 ## 11.5 embed
 
@@ -1407,6 +1406,7 @@ str.upper("hi");  // "HI"
 // link/base/filesys.cpp — wrapping alx::file
 #include "afile.h"
 #include "ascript.h"
+using namespace alx;
 using namespace alx::script;
 
 // method function — obtains the C++ object through unwrap<T>()
@@ -1422,6 +1422,11 @@ static void fn_write(fwrap& args) {
     if (!f) args.raise("file: not initialized");
     const std::string& data = args[0].to<std::string>();
     args.freturn(f->write(data.data(), data.size()));
+}
+
+static void fn_close(fwrap& args) {
+    alx::file* f = args.unwrap<alx::file>();
+    if (f) f->close();
 }
 
 // factory function — creates an area instance at run time
@@ -1454,7 +1459,7 @@ extern "C" void alexis_script_load(fwrap& args) {
 
 `anyptr_ex<T>` provides type-safe access:
 - `make(T*)` → `anyptr` (automatic SFINAE: a copyable type gets a copier, a `noncopyable` subclass does not)
-- `as(const anyptr&)` → `T*` (checks the type through the deleter's address, returns `nullptr` on failure)
+- `as(const anyptr&)` → `T*` (checks the registered type id — the same `T` yields the same id across translation units — returns `nullptr` on failure)
 
 ### 12.5.3 Non-copyable types
 
@@ -1560,25 +1565,25 @@ m.a.b[null];        // read → 4 (size; string/map hold the same way)
 
 ## 13.3 Positional dot
 
-A dot chain prefixed with `..` / `::` / `.` states its starting entity explicitly. **The nav segment only walks the entity tree** — variables/functions/link/area are reachable only through the `.(...)` bridge. Without a bridge a prefixed dot chain just returns the entity itself (meaningless at the script layer, it returns void). Before the bridge is the nav segment (entity navigation), inside the bridge the access segment — a dot chain lookup starting from that entity.
+A dot chain prefixed with `..` / `::` / `.` states its starting point explicitly. The chain resolves through the entity tree and reaches ordinary members at its end: a variable, a function, a container's elements and a link's data all read and write without any bridge (`.math.mv` → 7, `.bm.a`, `.bv[0]`, `.math.add(1, 2)`, `..f(5)`). The `.(...)` bridge is an explicit **terminal** re-entry: inside the bridge, resolution starts from whatever the segment in front located (`.bm.(a)` reads the map's key `a`).
 
 | Prefix | Meaning | Example |
 |------|------|------|
 | `.`  | lock onto the current entity | `.a.b` (current → sub-entity a → variable b) |
 | `..` | the parent entity (stackable, usable mid-chain) | `..x`, `a..b`, `....x` |
-| `::` | the root entity (chain start only) | `::x`, `::a.b.(f)()` |
+| `::` | the root entity (chain start only) | `::x`, `::a.b.(c)` |
 
 ```
 .x               → current entity → x
 .a.b             → current → sub-entity a → sub-entity b or variable b
-.a.(f)(args)     → current → a → bridged function call (a bare `.(` with no prefix = parse error)
+.a.(b)           → current → a → bridge: look up b from there (the bridge is chain-terminal, nothing follows it)
 
 ..x              → parent entity → x
-..(f)(args)      → parent entity function call
+..f(args)        → parent entity function call (no bridge)
 ....x            → two levels up → x
 
 ::x              → root entity → x
-::a.b.(f)(args)  → root → sub a → sub b → bridge → function f
+::a.b.(c)        → root → sub a → sub b → bridge: look up c from there
 ```
 
 The root entity's base = the script's directory (with `exec(file_path)` the home_dir is the script's directory; `::`/`..` root navigation does not depend on CWD).
@@ -1592,11 +1597,11 @@ a....b           → enter a → two levels up → find b
 
 ### The `.(...)` bridge
 
-A positional dot only walks the entity tree. The nav segment stops once it lands on an entity. To continue from that entity looking for a sub-module, function or variable, use `.(...)` to **bridge** and append another dot chain. The part after the bridge is equivalent to a dot chain starting at that entity.
+The part in front of the bridge is the nav segment (navigation tokens and names); the bridge re-enters resolution from what that segment located, so a value's own keys and elements become reachable (`.bm.(a)`, `.bv.([0])`) and the bridge target takes assignment and `delete` (`.bm.(a) = 99`, `delete .bd.(x)`).
 
-**A bridge must carry a nav prefix**: when `.(` is present, the chain in front of it must be a nav chain starting with `.` / `..` / `::` — `.(b)`, `..a.(b)`, `::x.(b)` are legal; `a.(b)` (bridging straight off an ordinary name) is a compile error, use `a.b` for ordinary member access.
+**A bridge must carry a nav prefix and is chain-terminal**: the chain in front of `.(` must start with `.` / `..` / `::` — `..a.(b)`, `::x.(b)` are legal; `a.(b)` (bridging straight off an ordinary name) is a compile error (use `a.b` for ordinary member access), and a bare `.(b)` with no prefix is not a bridge at all — it parses as a call form and dies at run time with `NameError: empty function name`. Nothing may follow the bridge, a call included: `.a.(f)(args)` is a parse error — call through the chain directly (`.a.f(args)`), and chained bridges (`.a.(b).(c)`) are refused the same way.
 
-> A bridge is not enforced by the grammar — without `.(...)` a positional dot returns the entity itself, which shows up at the script layer as void and is of little practical use.
+> A bridge is not enforced by the grammar — the unbridged chain reads, calls and writes just as well; the bridge states the re-entry from the located value explicitly.
 
 ```
 ..a.b.c.(d.e)    → nav segment: parent→entity a→entity b→entity c → bridge: the dot chain d.e starting from c
@@ -1604,16 +1609,16 @@ A positional dot only walks the entity tree. The nav segment stops once it lands
 ```
 
 - `.(...)` accepts literals only (a string key / an int_64 index / null); expressions are not supported
-- `.(...)` appears at the chain's tail only, an empty `()` is illegal
-- before the bridge the nav segment only navigates entities, a non-entity → `NameError`
+- `.(...)` appears at the chain's tail only; an empty `()` is a no-op (the chain's value passes through)
+- the segment before the bridge may land on a value; bridging into a non-container → `TypeError`; a container located there takes reads, writes and `delete` inside the bridge
 
 ### Constraints
 
 - `..` and `.` are never adjacent (`...` is illegal)
 - `::` may not appear mid-chain
 - `..` may be repeated (`....` = two levels up)
-- a positional dot **does not enter container values automatically** — `[]` indexing is allowed only inside a `.(...)` bridge
-- **`[]` inside a dot chain accepts literals only** (integer, string, null, including `-N` constant folding). A variable index such as `a[i]` is not allowed — when the index must be computed at run time, build the path by string concatenation first and access it through `@(path)` reflection. The **comma form is the exception**: `o.v[1, 3]` builds a slice whose base is the chain, and its bounds may be any expression
+- `[]` on a positional chain works exactly as on an ordinary chain (`::math.mvv[0]`, `.bv[0]`)
+- **`[]` inside a dot chain accepts literals only** (integer, string, null, including `-N` constant folding) — a variable index in a chain (`d.a[i]`) is a compile error; when the index must be computed at run time, build the path by string concatenation first and access it through `@(path)` reflection. A bare `v[i]` is an ordinary index expression (not part of a chain) and takes any index. The **comma form is the exception**: `o.v[1, 3]` builds a slice whose base is the chain, and its bounds may be any expression
 - across modules, a **variable**: an existing variable may be read and written, not created or deleted (the import module rule)
 - across modules, a **container value**: after a bridge the container's keys are reachable
 - `..` beyond the tree depth → `NavError`
@@ -1648,8 +1653,8 @@ delete alias;         // delete an import / link alias (module top layer)
 
 | Type | Index | Behaviour | Cost |
 |------|------|------|------|
-| map | key present | erase → `true` | O(1) |
-| map | key absent | no-op → `false` | O(1) |
+| map | key present | erase → `true` | O(log n) |
+| map | key absent | no-op → `false` | O(log n) |
 | vec | `0 ~ size-1` / `-1` | remove the element, shift the rest → `true` | O(n) |
 | vec | out of bounds / empty vec | no-op → `false` | O(1) |
 | lst | `0 ~ size-1` / `-1` | remove the node → `true` | O(n) |
@@ -1703,7 +1708,7 @@ Scpt -c --embed f.axc       # self-contained compile (§11.5): link/env are erro
 
 **Suffix conventions**:
 
-- `.axc` source, `.axp` compiled product. The engine decides the kind from the content and does not insist on the suffix.
+- `.axc` source, `.axp` compiled product. For a top-level file the engine decides the kind from the content and does not insist on the suffix; on import an explicit `.axc` forces the source path (a compiled payload there → `ImportError`), while `.axp` and no suffix fall back to content sniffing.
 - **Suffix guessing**: when an import/link path does not state a suffix, the engine first looks it up without one, and only then guesses:
   - `import "foo"` → first `foo`, then `foo.axp`, finally `foo.axc`
   - `link "foo"` → first `foo`, then `foo.so` (Linux) / `foo.dll` (Windows) / `foo.dylib` (macOS)
@@ -1796,7 +1801,7 @@ res = eng->exec("/path/to/script.axc");
 
 // res: { value, elapsed_us, error }
 if (res.error == script::error_type::NoError) {
-    $print("%1\n", res.value.to<int_64>());
+    std::cout << res.value.to<int_64>() << "\n";
 }
 
 // settable at run time as well
@@ -1816,14 +1821,15 @@ The host attaches one callback through `set_hook`: resource control (interruptin
 ```cpp
 enum class hook_event { exec, import, link, trap, debug };
 // exec:        instruction checkpoint (info = checkpoints so far; false → interrupt, InterruptedError is uncatchable)
-// import/link: a load request (info = the resolved absolute path; false → refuse)
+// import/link: a load request (info = the resolved absolute path; a module embedded by -c --embed reports its internal `@<key>` name instead; false → refuse)
 // trap:        a script breakpoint (info = {here: position map, args?}; false → interrupt)
+// debug:       a statement boundary for position tracking (info empty; read wkdt_pos(); needs debug_enable)
 
 struct hook_info {
     hook_event type;
     variant info;           // event payload (see above)
     std::string* desc;      // reason for a refusal/interrupt: write *desc, the engine reads the last write
-    void* hkdt;             // host data passed through from set_hook (valid until the engine is touched)
+    void* hkdt;             // host data handed to set_hook, forwarded on every event; the engine never dereferences it — its lifetime is the host's (valid while installed)
     const void* wkdt;       // read-only execution view (valid during the callback only)
     uint_64 freq;           // checkpoint frequency: the engine fills in the current interval, the callback may change it (the only back channel)
 };
@@ -1864,11 +1870,16 @@ bool wkis_ent(const variant* _v) const;   // an import binding
 bool wkis_link(const variant* _v) const;  // a link binding
 bool wkis_func(const variant* _v) const;  // a function object
 bool wkis_area(const variant* _v) const;  // an area host
+// ── statement position (per statement; needs debug_enable) ──
+varmap wkdt_pos() const;                  // the statement being executed: {row, col, ofst, file}; row 0 = the position is unknown
+std::list<varmap> wkdt_fpos() const;      // the statement chain, innermost first: {row, col, ofst, file, func}, the top level last
 ```
 
 **Example** (a trap breakpoint printing the position + frame chain + locals):
 
 ```cpp
+static std::string cli_val(const variant& v);  // host helper: variant → printable string (see example/Scpt)
+
 static bool cli_hook(script::hook_info& info) {
     if (info.type != script::hook_event::trap) return true; // let the import/link gate through
     auto& m = info.info.to<varmap>();
@@ -1891,6 +1902,7 @@ Use a link module and register through `fwrap::bind` inside `alexis_script_load`
 ```cpp
 // link/myadd.cpp
 #include "ascript.h"
+using namespace alx;
 using namespace alx::script;
 
 static void my_add(fwrap& args) {
@@ -1947,7 +1959,7 @@ struct engine_config {
 };
 ```
 
-Every field is optional and persists across `reset()`. fwrap can read the current configuration through `wkconfig()`.
+Every field is optional and persists across `reset()`. fwrap reads the current configuration through `config()`.
 
 **IO redirection**: `pipe_in`/`pipe_out` are function pointers the engine never calls; it only stores the handles for the user to keep and redirect with:
 
@@ -1958,7 +1970,7 @@ using pipe_in = std::string (*)(void* _ud); // host -> engine input
 
 The user can set the IO pipes through `set_pipe()`, to redirect the IO of extension functions such as `$print`/`$input`.
 
-**exec / compile**: `exec(data, home_dir)` executes source or compiled bytes (recognised automatically); `compile(data, home_dir, cmps)` compiles to .axp (`cmps=true` compresses). The file-path overload extracts home_dir automatically. Both return `result{value, elapsed_us, error}` — for the `error` classes see the exception type table (§8.8).
+**exec / compile**: `exec(data, home_dir)` executes source or compiled bytes (recognised automatically); `compile(data, home_dir, cmps)` compiles to .axp (`cmps=true` compresses). The file-path overload extracts home_dir automatically. `exec` returns `result{value, elapsed_us, error}` (both overloads) — for the `error` classes see the exception type table (§8.8); `compile` returns the `.axp` bytes (empty on failure, details through `on_cmpl`).
 
 **call — C++ calling a script function**: `call(name, args)` looks up a script-defined def function in the root scope and calls it. `args` is a `varvec` (`std::vector<variant>`), and the return is a `result` (the same as exec's). def functions only — a native function is C++ already, so C++ can call it directly without going through the engine.
 
@@ -1982,12 +1994,14 @@ auto r2 = eng->call("inc", {});  // → 2
 eng->exec(bytes_view(bytes(
     "def sort_by_age(a, b) { return a[\"age\"] < b[\"age\"]; }")),
     "");
-std::sort(data.begin(), data.end(), [&](const variant& a, const variant& b) {
+std::vector<variant> rows = /* the host's own rows */;
+std::sort(rows.begin(), rows.end(), [&](const variant& a, const variant& b) {
     auto r = eng->call("sort_by_age", {a, b});
     return r.value.to<bool>();
 });
 
 // loops / batches: use exec and let the script drive the control flow
+// (hand the data to the script first — e.g. bind it via load(), or pass it as an argument)
 eng->exec(bytes_view(bytes(
     "for (x : data) { process(x); }")),
     "");
@@ -2000,7 +2014,7 @@ Design points:
 - **exception handling**: isomorphic to exec (`script_exception` → `std::exception` → `...`), and the exception path resets the walker
 - **callable between two execs**: once an exec has finished, `state.current` points at the root and frames is empty
 
-**Version gate**: before executing an .axp its compile-time version tag is **always checked** (this cannot be turned off):
+**Version gate**: before executing an .axp its compile-time version tag is checked (a default engine — no `set_etype`/`set_vtype` — leaves the gate off entirely; once either is set it cannot be turned off):
 
 - `etype` — the engine's major version identifier. It must match what `set_etype()` set, otherwise the product is refused (VersionError)
 - `vtype` — the extension support level. Host-registered `$xxx` extensions are conventionally **only added, never removed**: an old .axp always runs on a new engine; it is refused only when the .axp asks for a support level beyond the current engine's
@@ -2033,7 +2047,7 @@ eng->set_hook(my_hook, &host_state, 1000);  // one exec event per ~1000 checkpoi
 ```
 
 - **Deterministic timeout pattern**: the `info` of an exec event is the checkpoint sequence number (one per interval); comparing it against a budget and returning false when over → exec short-circuits at once and returns `InterruptedError` (`result.error`) — the same budget gives the same result, with no wall-clock jitter and no watchdog thread needed
-- **Load gating (a hard firewall)**: import/link fires an event for every load request (`info` = the resolved absolute path; embedded modules pass through the gate as well). **The hook is a firewall: any event returning false is an interrupt** — a gate refusal and a timeout interrupt are both `InterruptedError` (`result.value = "execution interrupted — <desc>"`) and uncatchable; a script has no way whatsoever around the firewall (there is no "catchable refusal")
+- **Load gating (a hard firewall)**: import/link fires an event for every load request (`info` = the resolved absolute path — for an embedded module its internal `@<key>` name; embedded modules pass through the gate as well). **The hook is a firewall: any event returning false is an interrupt** — a gate refusal and a timeout interrupt are both `InterruptedError` (`result.value = "execution interrupted — <desc>"`) and uncatchable; a script has no way whatsoever around the firewall (there is no "catchable refusal")
 - **An exec interrupt is uncatchable**: a script's `try/catch` cannot swallow an interrupt (the flag short-circuits, and the catch body short-circuits the same way); when the interrupt lands mid-expression, a throw from the in-flight op is likewise caught by the exit path and reported as InterruptedError
 - **The source is indistinguishable**: an interrupt may occur anywhere in this exec, or the host may have interrupted one module's init so that a later import fails with InterruptedError as well (a host retry can recover) — the script sees it identically either way, and there is no need or ability to tell them apart
 - **Callback constraints**: no engine API may be called inside the hook (the same red line as the event callbacks: read-only observation + return a bool); the `_ud` lifetime is the host's responsibility (it must be valid while installed)
@@ -2044,7 +2058,7 @@ eng->set_hook(my_hook, &host_state, 1000);  // one exec event per ~1000 checkpoi
 ```cpp
 eng->on_cerr.connect([](const std::string& s) { fprintf(stderr, "%s", s.c_str()); });
 eng->on_cmpl.connect([](const script::compile_error& e) {
-    printf("%u:%u: %s\n", e.row, e.col, e.msg.c_str());
+    printf("%u:%u: %s\n", (unsigned) e.loc.row, (unsigned) e.loc.col, e.msg.c_str());
 });
 // event signal: the resource layer (shared across engines), callbacks carry a thread id; the reference outlives the engine
 eng->get_csys().connect([](uint_64 tid, const std::string& s) {
@@ -2079,6 +2093,8 @@ eng->get_csys().connect([](uint_64 tid, const std::string& s) {
 | `set_overflow_check(on)` | integer overflow / shift checking (default false) |
 | `set_max_vecfill(n)` | vec fill count cap (default 0=unlimited) |
 | `set_search_paths(paths)` | global search paths (`std::list<string>`, persist across reset) |
+| `set_type_ex(fn, ud)` | host type-naming callback (`type_ex`): `type()` asks it for a value the script layer cannot name and uses the returned name as-is; null removes it |
+| `set_debug_enable(on)` | statement-by-statement position tracking: the parser inserts a marker per statement and the walker records positions and fires `hook_event::debug`; off by default (an already compiled product stays without positions and reports row 0) |
 
 ### Lifetime
 
@@ -2091,7 +2107,7 @@ eng->get_csys().connect([](uint_64 tid, const std::string& s) {
 
 | Method | Description |
 |------|------|
-| `set_extend(name, fn)` | register an extension function. Returns bool — false when the name collides with a script keyword/reserved word |
+| `set_extend(name, fn)` | register an extension function. Returns bool — false when the name collides with a script keyword/reserved word or with an existing static definition |
 | `del_extend(name)` | delete an extension function |
 | `get_extend(name)` | get the handler (`native_func`) |
 | `fid_extend(name)` | query whether an extension function exists (bool) |
@@ -2104,7 +2120,7 @@ eng->get_csys().connect([](uint_64 tid, const std::string& s) {
 
 | Method | Description |
 |------|------|
-| `set_etype(s)` | engine type (string), stamped in when an .axp is compiled and always checked before execution; read back as `config().etype` |
+| `set_etype(s)` | engine type (string), stamped in when an .axp is compiled and checked before execution once set (a default engine leaves the gate off); read back as `config().etype` |
 | `set_vtype(n)` | engine version (uint_64), the extension support level, stamped in when an .axp is compiled; read back as `config().vtype` |
 
 ### Control and hooks
@@ -2121,7 +2137,7 @@ eng->get_csys().connect([](uint_64 tid, const std::string& s) {
 | Signal | Callback signature | Description |
 |------|----------|------|
 | `on_cerr` | `void(const string& msg)` | run-time error messages (Uncaught / NativeError and so on) |
-| `on_cmpl` | `void(const compile_error& e)` | compile errors (msg, row, col) |
+| `on_cmpl` | `void(const compile_error& e)` | compile errors (`msg`, `loc.{path,row,col,index}`) |
 | `get_csys()` | `signal<uint_64, const string&>&` | the event signal reference (shared by the resource layer, callbacks carry the thread id tid): `ast load/unload`, `link load/unload`, `link error`, `env`. Its lifetime ≥ any engine |
 
 ### Static utilities

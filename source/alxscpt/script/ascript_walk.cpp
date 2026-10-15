@@ -152,7 +152,13 @@ namespace alx {
 
         op_table walker::s_ops = {};
 
-        walker::walker(const engine_config& _cfg) : m_cfg(_cfg) { init(); }
+        walker::walker(const engine_config& _cfg) : m_cfg(_cfg) {
+            // a hook carried in the config fires from the first exec; these are the atomics set_hook() maintains
+            m_hook.store(_cfg.hook_fn_ptr);
+            m_hook_ud.store(_cfg.hook_ud);
+            m_hook_interval.store(_cfg.hook_interval);
+            init();
+        }
         walker::~walker() = default;
 
         void walker::init() {

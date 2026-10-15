@@ -37,7 +37,7 @@ if (pi2 != 3.14159) { $print("FAIL T09.6 reflect"); throw("assert"); }
 $print("T09.6 @(\"$PI\") ok");
 
 // 7. version static definitions (registered by the example host): $vtype / $etype
-if ($vtype != 4) { $print("FAIL T09.7 vtype: ", $vtype); throw("assert"); } // + O_EVAL (2026-08-07)
+if ($vtype != 7) { $print("FAIL T09.7 vtype: ", $vtype); throw("assert"); } // mirrors set_vtype (O_TRAP); the host derives it from config()
 if ($etype != "example-0.1") { $print("FAIL T09.7 etype: ", $etype); throw("assert"); }
 $print("T09.7 $vtype/$etype: ", $vtype, " / ", $etype);
 

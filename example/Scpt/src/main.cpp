@@ -50,7 +50,7 @@ static void print_usage() {
         << "  -p path        Add search path for import/link\n"
         << "  --overflow-check  Enable integer overflow/shift checking\n"
         << "  --max-stack N     Set script frame depth limit (default 1024, 0=unlimited)\n"
-        << "  --max-vecfill N   Set max vec fill count (default 4096, 0=unlimited)\n"
+        << "  --max-vecfill N   Set max vec fill count (default 0=unlimited)\n"
         << "  --embed        Self-contained compile (with -c only; link/env forbidden,\n"
         << "                 unresolved import = error)\n"
         << "  -i             Interactive REPL mode\n"
@@ -211,15 +211,15 @@ static bool cli_hook(script::hook_info& info) {
 static std::string s_cli_version = "example-0.1";
 static std::list<std::string> s_cli_paths;
 
-static script::engine* make_engine(bool overflow_check = false, size_t max_stack = 0, size_t max_vecfill = 0) {
+static script::engine* make_engine(bool overflow_check = false, int_64 max_stack = -1, int_64 max_vecfill = -1) {
     auto* eng = script::engine::create();
     eng->set_etype(s_cli_version);
     eng->set_vtype(7);
 
     eng->set_hook(cli_hook, nullptr, 0);
     if (overflow_check) eng->set_overflow_check(true);
-    if (max_stack > 0) eng->set_max_stack(max_stack);
-    if (max_vecfill > 0) eng->set_max_vecfill(max_vecfill);
+    if (max_stack >= 0) eng->set_max_stack(static_cast<size_t>(max_stack));
+    if (max_vecfill >= 0) eng->set_max_vecfill(static_cast<size_t>(max_vecfill));
 
     std::list<std::string> paths;
     {
@@ -258,7 +258,7 @@ static script::engine* make_engine(bool overflow_check = false, size_t max_stack
 
     if (!eng->set_define("PI", variant(3.14159)))
         std::cerr << "warning: static definition registration failed: $PI\n";
-    if (!eng->set_define("vtype", variant(int_64(4))))
+    if (!eng->set_define("vtype", variant(int_64(eng->config().vtype))))
         std::cerr << "warning: static definition registration failed: $vtype\n";
     if (!eng->set_define("etype", variant(std::string(s_cli_version))))
         std::cerr << "warning: static definition registration failed: $etype\n";
@@ -342,8 +342,8 @@ int main(int _argc, char** _argv) {
     std::string inline_code, file_path, compile_out, exec_bin;
     bool json_dump = false, interactive = false, do_compile = false;
     bool overflow_check = false, embed_mode = false;
-    size_t max_stack = 0;
-    size_t max_vecfill = 0;
+    int_64 max_stack = -1;
+    int_64 max_vecfill = -1;
 
     for (int i = 1; i < _argc; i++) {
         if (std::strcmp(_argv[i], "-h") == 0) {
@@ -364,9 +364,9 @@ int main(int _argc, char** _argv) {
         else if (std::strcmp(_argv[i], "--overflow-check") == 0)
             overflow_check = true;
         else if (std::strcmp(_argv[i], "--max-stack") == 0 && i + 1 < _argc)
-            max_stack = static_cast<size_t>(std::stoull(_argv[++i]));
+            max_stack = static_cast<int_64>(std::stoull(_argv[++i]));
         else if (std::strcmp(_argv[i], "--max-vecfill") == 0 && i + 1 < _argc)
-            max_vecfill = static_cast<size_t>(std::stoull(_argv[++i]));
+            max_vecfill = static_cast<int_64>(std::stoull(_argv[++i]));
         else if (std::strcmp(_argv[i], "--embed") == 0)
             embed_mode = true;
         else if (std::strcmp(_argv[i], "-i") == 0)

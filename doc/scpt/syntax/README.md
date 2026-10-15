@@ -43,4 +43,4 @@ eng->set_extend("print", handler);
 eng->set_define("PI", 3.14159);
 ```
 
-See `doc/scpt/lang.md` §15 for details on the extension mechanism.
+See `doc/scpt/lang.md` §14 for details on the extension mechanism.

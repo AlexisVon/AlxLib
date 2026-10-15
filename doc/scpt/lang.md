@@ -1720,9 +1720,9 @@ Scpt -c --embed f.axc       # self-contained compile (§11.5): link/env are erro
 
 # Appendix B: C++ Host API
 
-## 15. Extension functions `$xxx`
+## 14. Extension functions `$xxx`
 
-### 15.1 Overview
+### 14.1 Overview
 
 The extension mechanism gives scripts superset capabilities of the engine platform. The base engine is **zero extensions** — any `$xxx` call is a compile error. The host registers extension functions and predefined constants as needed through `engine::set_extend()` and `engine::set_define()`.
 
@@ -1730,7 +1730,7 @@ Two motivations:
 1. **System/IO interaction**: script functions cannot do file reads and writes, command execution and so on, which until now all depended on `link "base"`. Extension functions lift that class of capability to engine-level builtins, with no link needed.
 2. **Compiler-specific extensions**: capabilities specific to the script language itself (metaprogramming, compile-time tools, debugging interfaces and so on) are not suited to being exposed under an ordinary function name, and the `$` prefix namespace gives them a clear semantic boundary.
 
-### 15.2 Syntax
+### 14.2 Syntax
 
 Extension functions are registered by the engine host and use the special `$`-prefixed naming:
 
@@ -1741,17 +1741,17 @@ Extension functions are registered by the engine host and use the special `$`-pr
 - arguments and types are the function's own responsibility
 - **Argument passing**: only a **bare variable** is passed by reference (it points at the variable's storage slot); an index, member, literal or expression is always **evaluated into a copy** and handed to the function. An in-place native function (such as `$vec_push`) that receives `m["a"]` is modifying a copy and **the change does not land back in the container** — to modify in place, use a path assignment: `m["a"][null] = 7`
 
-### 15.3 Relation to the builtin functions
+### 14.3 Relation to the builtin functions
 
 Extension functions are at the same level as the builtins `int()` `float()` `vec()` and the rest:
 - not readable through `@` reflection (`@("$name")` without parentheses → TypeError; calling through `@("$name")(...)` does work)
 - the call form is exactly the same
 
-### 15.4 Naming restrictions
+### 14.4 Naming restrictions
 
 `$` is a reserved symbol and identifiers do not contain `$` — so the `$xxx` form naturally belongs to extension functions alone.
 
-### 15.5 How to register
+### 14.5 How to register
 
 ```cpp
 auto eng = engine::create(cfg);
@@ -1764,7 +1764,7 @@ eng->set_define("PI", 3.14159);
 eng->set_define("VERSION", "1.0.0");
 ```
 
-### 15.6 Suggested extension functions
+### 14.6 Suggested extension functions
 
 The host may register the following extension functions as needed; the base engine does not provide them:
 

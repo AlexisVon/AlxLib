@@ -13,6 +13,7 @@
 #include "abase.h"
 #include "autility.h"
 #include "avariant.h"
+#include <future>
 #include <initializer_list>
 #include <list>
 
@@ -100,6 +101,8 @@ namespace alx {
             NavError,
             /// Frames exceeded engine_config::max_stack
             StackError,
+            /// The yield service refused or ended a delivery; the message says which way
+            YieldError,
         };
 
         /// Display name of _e; "UnknownError" for anything the table does not carry
@@ -128,6 +131,7 @@ namespace alx {
             case error_type::ShiftError: return "ShiftError";
             case error_type::NavError: return "NavError";
             case error_type::StackError: return "StackError";
+            case error_type::YieldError: return "YieldError";
             default: return "UnknownError";
             }
         }
@@ -219,6 +223,9 @@ namespace alx {
             type_ex type_ex_ptr = nullptr;
             /// Cookie passed back to type_ex_ptr
             void* type_ex_ud = nullptr;
+
+            /// Deliveries one yield queue may hold; 0 = unlimited
+            size_t max_yield = 256;
         };
 
         /**
@@ -460,13 +467,29 @@ namespace alx {
         using script_unload = void (*)(fwrap&);
 
         /**
+         * \brief What a run reports: the value, how it went, and how long it took
+         *
+         * Exec, call and yield all speak in this; a yield delivery carries it inside its
+         * future, and the error is always a value of error_type.
+         */
+        struct result {
+            /// Last statement's value, or the error message when error is not NoError
+            variant value;
+            /// Wall time of the run, in microseconds
+            int_64 elapsed_us = 0;
+            /// NoError when the run finished normally
+            error_type error = error_type::NoError;
+        };
+
+        /**
          * \brief The script engine: a compilation environment, an interpreter, and variables
          *
          * create() hands back an engine the caller owns and deletes. An engine is single-threaded
          * and not reentrant: exec(), call(), compile(), load() and the set_*() methods must never
-         * be entered from two threads at once, while running() and set_interrupt() are meant to be
-         * called from another thread. A native registered here runs on whichever thread executes
-         * the script, so one handler registered in several engines must be thread-safe itself.
+         * be entered from two threads at once, while running(), set_interrupt() and yield() are
+         * meant to be called from another thread. A native registered here runs on whichever
+         * thread executes the script, so one handler registered in several engines must be
+         * thread-safe itself.
          *
          * What a run leaves behind stays: root variables, defs and loaded modules survive into the
          * next exec(), which is what lets a REPL be an exec() in a loop. reset() takes that away.
@@ -569,6 +592,8 @@ namespace alx {
             virtual void set_overflow_check(bool _on) = 0;
             /// Elements a single vec/lst fill may produce; 0 = unlimited
             virtual void set_max_vecfill(size_t _n) = 0;
+            /// Deliveries one yield queue may hold; 0 = unlimited
+            virtual void set_max_yield(size_t _n) = 0;
             /// Directories import and link targets are looked up in, replacing the previous list
             virtual void set_search_paths(const std::list<std::string>& _paths) = 0;
             /**
@@ -634,15 +659,8 @@ namespace alx {
             virtual void set_debug_enable(bool _on) = 0;
 
         public:
-            /// What exec() and call() report: the value, how it went, and how long it took
-            struct result {
-                /// Last statement's value, or the error message when error is not NoError
-                variant value;
-                /// Wall time of the run, in microseconds
-                int_64 elapsed_us = 0;
-                /// NoError when the run finished normally
-                error_type error = error_type::NoError;
-            };
+            /// The run report, hoisted to the script namespace so fwrap can name it
+            using result = script::result;
 
             /**
              * \brief Root variable by name
@@ -671,6 +689,39 @@ namespace alx {
              *         value otherwise
              */
             virtual result call(const std::string& _name, const varvec& _args) = 0;
+            /**
+             * \brief call(), taking the arguments on acceptance
+             *
+             * Same contract; _args is moved only once the name resolves to a def, so the two
+             * refusal paths (missing name, not a def) leave the caller's vector untouched.
+             */
+            virtual result call(const std::string& _name, varvec&& _args) = 0;
+
+            /**
+             * \brief Queue a call to run at the script's next yield point
+             *
+             * Accepted only while a run is in progress: the delivery is serviced by the
+             * script's own yield() instruction, under the priority order and the count/time
+             * window that instruction asks for. A delivery with nothing running, or past
+             * engine_config::max_yield, comes back as a ready future carrying YieldError --
+             * never a broken promise; the serviced call's value and its failures alike arrive
+             * inside the future. The name is resolved at the service position, so a delivery
+             * may name a def defined later. Callable from any thread except the one running
+             * the script; that thread must never block on a future it queued itself.
+             *
+             * \param _name def name, resolved in the root scope like call()
+             * \param _args Arguments, passed as the values they hold at the call; the rvalue
+             *              overload moves them only when the delivery is accepted
+             * \param _priority Higher priorities run first; equal ones keep their arrival order
+             * \param _expiry_ms How long the delivery may wait in the queue; 0 = unlimited. It
+             *                   is settled as YieldError("expired") instead of running
+             * \return The delivery's future; every outcome is inside it
+             */
+            virtual std::future<result> yield(const std::string& _name, const varvec& _args,
+                                              uint_32 _priority = 0, uint_32 _expiry_ms = 0) = 0;
+            /// The varvec&& overload of yield(); otherwise identical
+            virtual std::future<result> yield(const std::string& _name, varvec&& _args,
+                                              uint_32 _priority = 0, uint_32 _expiry_ms = 0) = 0;
 
             /**
              * \brief Run source text, or a product of compile()

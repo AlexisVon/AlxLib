@@ -1847,6 +1847,19 @@ namespace alx {
                 v.push_back(variant(OPTYPE(O_EVAL)));
                 return v;
             }
+            case T_YIELD: {
+
+                advance();
+                if (!check(T_LP)) {
+                    error("'yield' is a op function, cannot be used as a variable or value");
+                    varvec v;
+                    v.push_back(variant(OPTYPE(O_YIELD)));
+                    return v;
+                }
+                varvec v;
+                v.push_back(variant(OPTYPE(O_YIELD)));
+                return v;
+            }
             case T_VEC: {
                 if (peek(1) == T_LB) {
                     advance();

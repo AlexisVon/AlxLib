@@ -1175,6 +1175,93 @@ virtual void set_type_ex(type_ex _fn, void* _ud = nullptr) = 0;
 
 ---
 
+### 4.9f The yield service — the script yield() point, cross-thread delivery, the heartbeat (2026-10-17 — the service landed with F-1 step ③; the fwrap handle, step ④, is tracked in feature.md F-1)
+
+**Motivation**: a link's comm threads and host worker threads need to hand a call back onto the engine's own timeline. `call()` is an entry (it wants a non-running engine), and checkpoint-time insertion was rejected — it tears the intra-segment synchronization of ordinary script code. The injection point is therefore a **yield point the script writes itself**: `yield()` reads as a sleep with event service, and between two yield points the script is plain sequential code (a property of the structure, not a discipline). yield ≡ `call` serialized to the main walk's next yield point; the only differences are deferred admission, priority and future delivery.
+
+**Script surface** — `yield(time_ms = 0, maxcnt = 0) -> cnt` (the 14th reserved word, `ascript_lex.cpp:18`; the same table makes `set_extend("yield")` refuse). `(0,0)` drains the backlog and returns; `(0,n)` drains or stops at n (a non-blocking single pass); `ms > 0` is a residency window — arrivals during it are serviced, an empty queue waits on the clock, n short-circuits; at the deadline no new item is taken and the in-flight one still runs to completion (the atomicity of a serviced call lives in exactly that line). The return counts items serviced; a serviced call that failed still counts (its error went to its own future). A hard interrupt in the window wakes the wait and takes the standard teardown. A yield during a module init throws a script-level `YieldError`; a **nested** yield (op_yield inside a serviced call) aborts that delivery — the submitter's future gets `YieldError`, and the script's `try` cannot catch it: it is a delivery-level abort, not a script exception, so it must pierce op_try's all-catching arm (`ascript_walk.cpp:1102`).
+
+**C++ surface** — `engine::yield(_name, _args, _priority = 0, _expiry_ms = 0) -> std::future<result>`; `fwrap::currying` returns an engine-owned `callback*` (`call` = the same delivery, engine death before handle death = UB); `set_max_yield` writes `engine_config::max_yield` (appended field, default 256, 0 = unlimited). `call` and both delivery entries take `const varvec&` and `varvec&&`: the rvalue form moves **only when the submission is accepted** (enqueue success); every refusal — `no main fiber`, `yield full`, call's two name-resolution misses — leaves the caller's varvec untouched (order: refuse, allocate the node, move last). Every outcome travels inside the future — value, script error, `no main fiber`, `yield full`, `expired`, `not executed`, `hard-interrupted` — and a future is never broken. `result` moves from the engine's nested type to the `script` namespace (`engine::result` stays as an alias); `YieldError` is appended to `error_type`'s tail.
+
+**Data structures**:
+
+```cpp
+// one delivery, late-bound by name; ttd is stamped at enqueue (expiry_ms 0 -> a zero ttd, never expires)
+struct yield_request {
+    std::string name;
+    varvec args;
+    std::chrono::steady_clock::time_point ttd;
+    std::promise<result> ret;
+    uint_32 pri;
+};
+
+// the pending set. The container owns the nodes; a take transfers ownership. The lock spans
+// structural instants only -- never across execution, never across a wait.
+class yield_queue {
+public:
+    explicit yield_queue(const engine_config& _cfg);
+    ~yield_queue();   // the last net: leftovers drain as `not executed`, so no promise dies unset
+    // admission: this delivery's future, or an already-fulfilled `yield full` (args untouched)
+    std::future<result> push(std::string _name, varvec&& _args, uint_32 _pri, uint_32 _expiry_ms);
+    // take: the maximum, earliest on ties, removed; nullptr = empty. The taker owns the ttd
+    // comparison, the execution and the fulfillment
+    yield_request* pop_max();
+    // liquidation (heartbeat): expired nodes removed, fulfilled `expired` outside the lock
+    size_t expire(std::chrono::steady_clock::time_point _now);
+    // teardown: everything removed, fulfilled as _type/_msg outside the lock -- run exit
+    // `not executed`, hard interrupt `hard-interrupted`, the entry-start net
+    size_t drain(error_type _type, const std::string& _msg);
+    // the residency wait: true = an item is available, false = deadline; the interrupt is
+    // judged by the caller after the wake
+    bool wait_for_item(std::chrono::steady_clock::time_point _deadline, const std::atomic<bool>& _stop);
+    // the external wake (set_interrupt): the flag is stored first, then this
+    void wake();
+
+private:
+    const engine_config& m_cfg;   // capacity = max_yield, read live
+    std::mutex m_mut;
+    std::list<yield_request*> m_que;
+    std::condition_variable m_cv;
+};
+```
+
+- Pointers in a `std::list` because arbitrary removal is needed three ways (heartbeat, teardown, take), and the list order *is* the arrival order.
+- **Take = a linear scan for the max**: a strict `>` replacement keeps the *first* maximum, so equal priorities come out FIFO for free; the scan stops at `UINT32_MAX` (nothing can outrank it). No sequence field.
+- **No doorbell**: with the service point script-driven, its only reader left was the heartbeat's skip — and the heartbeat already try_locks and skips on failure. An atomic saving tens of nanoseconds is not worth the write-under-lock discipline it demands.
+- `ttd` is `steady_clock`-based (`time_t` would quantize a 50ms TTL and jump under NTP); the capacity is read live from `m_cfg.max_yield`, never cached.
+- The residency wait judges its predicate (`!empty || interrupted`) under the mutex; `set_interrupt` must store the flag, then lock/unlock the queue mutex, then notify — a bare store loses the wakeup and the window drags to the deadline.
+- **Exactly-once fulfillment**: push (refusal), expire, drain and the dtor all remove under the lock and fulfill outside it; `pop_max` hands the node over and the taker fulfills. That single form is where "each item is settled once" lives.
+
+**The service point (op_yield)**: the body sets a `serving` flag (RAII — a nested op_yield hits it), then loops: take (locked), compare ttd outside the lock (an expired item is fulfilled `expired`, never executed, not counted), run the shared execution helper, repeat; ms/n boundaries end it. The serviced call runs under **root pose**: `frames` (a pointer since `64d84aa`) is repointed at a local empty deque while `current` (a last-frame pop leaves it as-is), the four control flags and the position are saved and restored by RAII — the spare deque is declared before the guard, so the restore precedes its destruction. `m_insn`/`m_insn_total` are deliberately not saved: instructions count and exec events fire, so the host's watchdog covers serviced calls, and `max_stack` is each serviced call's root budget. Name resolution happens here and only here (a miss = NameError into the future); admission never looks the name up, so a delivery to a def defined later is legal.
+
+**Expiry**: "an expired item never executes" is exact at the take point (the clock is compared before the take commits to execution); settling an item that expires *while queued* waits for the heartbeat, so TTL granularity below the period is quantized. The heartbeat only liquidates — it never reorders.
+
+**The heartbeat** — `res_mng` (the process-wide resource layer behind `mod_mng::s_res`) owns the script layer's first background thread, a 50ms periodic pass over its registered targets:
+
+```cpp
+// the periodic receiving face: each pass calls time_event() on every registered target;
+// later periodic duties join this surface as more virtuals (time_event is the first)
+class hb_target {
+public:
+    virtual ~hb_target() = default;
+    virtual void time_event() = 0;
+};
+// res_mng
+void hb_attach(hb_target* _t);
+void hb_detach(hb_target* _t);
+```
+
+- `time_event()` must be light (today: `try_lock`, scan, fail out expired items, fulfill outside the lock) — heavy work's sanctioned channel is a delivery into the queue; the overrun warning is this contract's tripwire. A failing `try_lock` skips the engine for this pass (the next one catches up).
+- Registration is per engine: `hb_attach` from engine_impl's constructor, `hb_detach` first thing in `~engine_impl` — before the walker (and its queue) dies. The registry lock spans a whole pass (the light contract bounds it); the overrun `on_csys` fire happens *after* the lock is released.
+- A pass longer than the period fires one `on_csys` entry (`heartbeat overrun: …`, the sys family after ast/link) — the duration, no per-engine detail, no rate limiting: appearance means "go measure". No catch-up, no skipped-pass compensation.
+- `~res_mng` stops and joins the thread explicitly (process-exit ordering). Promise: settlement lag ≤ 200ms (the period leaves margin). `on_csys` thereby becomes cross-thread — host slots may arrive on the heartbeat thread (api.md contract).
+
+**Teardown**: a failed run keeps root, defs and modules (reset-on-failure died in ②) — the queue is drained at run exit (`not executed`), at a hard interrupt (`hard-interrupted` for every delivery, the in-flight one short-circuited layer by layer), and at every entry's start (the safety net for a racing enqueue, mirroring the flag clears). The queue must be empty before the store and the module layer go: nodes hold args (possibly anyptrs) and unfulfilled promises. `reset()` is the only reaper.
+
+**Impact**: `O_YIELD` appends after `O_DEBUG` — **no engine-side vtype change** (old products never carry it; a product that uses yield is the host's own stamping call, the gate at `ascript.cpp:298` doing the refusing).
+
+---
+
 ## 5. API
 
 ```cpp

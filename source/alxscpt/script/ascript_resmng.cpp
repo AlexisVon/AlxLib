@@ -49,6 +49,64 @@ namespace alx {
             _sig->exec(alx::this_tid(), _msg);
         }
 
+        // the script layer's first background thread: one light pass per period, nothing else
+        static const std::chrono::milliseconds HB_PERIOD(50);
+
+        res_mng::res_mng() {
+            m_hb_thread = std::thread([this] { hb_loop(); });
+        }
+
+        res_mng::~res_mng() {
+            m_hb_stop.store(true, std::memory_order_relaxed);
+            {
+                std::lock_guard<std::mutex> lk(m_hb_wait_mtx);
+            }
+            m_hb_cv.notify_all();
+            if (m_hb_thread.joinable()) m_hb_thread.join();
+            clear();
+        }
+
+        void res_mng::hb_attach(hb_target* _t) {
+            std::lock_guard<std::mutex> lk(m_hb_mtx);
+            m_hb.push_back(_t);
+        }
+
+        void res_mng::hb_detach(hb_target* _t) {
+            std::lock_guard<std::mutex> lk(m_hb_mtx);
+            m_hb.remove(_t);
+        }
+
+        void res_mng::hb_loop() {
+            while (true) {
+                {
+                    std::unique_lock<std::mutex> lk(m_hb_wait_mtx);
+                    m_hb_cv.wait_for(lk, HB_PERIOD, [&] {
+                        return m_hb_stop.load(std::memory_order_relaxed);
+                    });
+                }
+                if (m_hb_stop.load(std::memory_order_relaxed)) break;
+
+                auto t0 = std::chrono::steady_clock::now();
+                bool threw = false;
+                {
+                    std::lock_guard<std::mutex> lk(m_hb_mtx);
+                    for (hb_target* t : m_hb) {
+                        try {
+                            t->time_event();
+                        } catch (...) {
+                            threw = true;
+                        }
+                    }
+                }
+                auto cost = std::chrono::steady_clock::now() - t0;
+                if (cost > HB_PERIOD) {
+                    auto us = std::chrono::duration_cast<std::chrono::microseconds>(cost).count();
+                    fire(&on_csys, "heartbeat overrun: " + std::to_string(us) + " us");
+                }
+                if (threw) fire(&on_csys, "heartbeat error: time_event() threw");
+            }
+        }
+
         // '@<16 hex>' is already the compile-side module key: decode it back, never hash it
         // plain path: SHA-256 of the path, first 8 bytes; a fresh hasher per call, so no lock
         uint_64 res_make_key(const std::string& _path) {

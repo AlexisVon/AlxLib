@@ -14,12 +14,60 @@
 #include "ascript_resmng.h"
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <future>
+#include <list>
+#include <mutex>
 
 namespace alx {
     namespace script {
 
         using op_func = variant (*)(const varvec&, walker&);
         using op_table = op_func[O_ENUMSIZE];
+
+        // One delivery: late-bound by name; ttd is stamped at enqueue (default = never expires)
+        struct yield_request {
+            std::string name;
+            varvec args;
+            std::chrono::steady_clock::time_point ttd{};
+            std::promise<result> ret;
+            uint_32 pri = 0;
+        };
+
+        // The pending set. The container owns the nodes; a take transfers ownership. The lock
+        // spans structural instants only -- never across execution, never across a wait.
+        class yield_queue {
+        public:
+            explicit yield_queue(const engine_config& _cfg) : m_cfg(_cfg) {}
+            // the last net: leftovers drain as `not executed`, so no promise ever dies unset
+            ~yield_queue();
+
+            // admission: this delivery's future, or an already-fulfilled `yield full`
+            std::future<result> push(std::string _name, varvec&& _args, uint_32 _pri, uint_32 _expiry_ms);
+            // take: the maximum, earliest on ties, removed; nullptr = empty. The taker judges
+            // expiration, executes and fulfills
+            yield_request* pop_max();
+            // a stamped ttd that has passed
+            static bool expired(const yield_request& _r, std::chrono::steady_clock::time_point _now) {
+                return _r.ttd != std::chrono::steady_clock::time_point{} && _r.ttd <= _now;
+            }
+            // liquidation (heartbeat): expired nodes removed, fulfilled `expired` outside the
+            // lock; try_lock only, a locked queue is skipped and the next pass catches up
+            size_t expire(std::chrono::steady_clock::time_point _now);
+            // teardown: everything removed, fulfilled as _type/_msg outside the lock
+            size_t drain(error_type _type, const std::string& _msg);
+            // the residency wait: true = an item is available, false = deadline; the caller
+            // judges the interrupt after the wake
+            bool wait_for_item(std::chrono::steady_clock::time_point _deadline, const std::atomic<bool>& _stop);
+            // the external wake (set_interrupt): the flag is stored first, then this
+            void wake();
+
+        private:
+            const engine_config& m_cfg; // capacity = max_yield, read live
+            std::mutex m_mut;
+            std::list<yield_request*> m_que;
+            std::condition_variable m_cv;
+        };
 
         class walker {
         public:
@@ -45,6 +93,14 @@ namespace alx {
             std::atomic<bool> m_interrupted{false};
             // hook_info::desc points here: the hook writes the reject reason, exec reads it after the walk
             std::string m_interrupt_desc;
+
+            // pending deliveries: constructed with the walker, settled by reset() and the dtor
+            // before the store and the module layer go
+            yield_queue m_yq;
+            // set while op_yield runs a serviced call: a yield inside it aborts that delivery
+            bool m_serving = false;
+            // set on the sub-walker an import init runs on: yield there is a script-level error
+            bool m_init_walk = false;
 
             walker(const engine_config& _cfg);
             ~walker();
@@ -85,6 +141,7 @@ namespace alx {
             static variant op_trap(const varvec&, walker&);
             static variant op_debug(const varvec&, walker&);
             static variant op_eval(const varvec&, walker&);
+            static variant op_yield(const varvec&, walker&);
             static variant op_program(const varvec&, walker&);
             static variant op_block(const varvec&, walker&);
             static variant op_load(const varvec&, walker&);
@@ -213,6 +270,11 @@ namespace alx {
             static void assign_raw(walker& _w, const variant& _name, variant&& _val);
             static const varvec* find_def(walker& _w, const std::string& _name);
             static variant eval_arg(const variant& _node, walker& _w);
+            // call()'s look-up, shared by the yield service: a root-scope name to its def; null
+            // with _err filled when the name is absent or is not a def
+            static call_able* resolve_def(impl_import& _root, const std::string& _name, std::string& _err);
+            // call()'s argument tree from plain values, moved in
+            static varvec make_call_tree(const std::string& _name, varvec&& _args);
 
             /// An argument scanned before any address is taken: a value, or a bare name deferred until
             /// the callee's path has run

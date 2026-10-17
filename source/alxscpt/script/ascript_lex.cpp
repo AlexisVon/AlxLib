@@ -53,6 +53,7 @@ namespace alx {
             {"here", T_HERE},
             {"trap", T_TRAP},
             {"eval", T_EVAL},
+            {"yield", T_YIELD},
         };
 
         bool is_reserved_name(const std::string& _name) {

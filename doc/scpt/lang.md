@@ -40,7 +40,7 @@ var x;  // trailing comment
 
 ## 2.1 Full keyword table
 
-19 base keywords + 5 constants + 13 builtin function names (reserved, not usable as identifiers):
+19 base keywords + 5 constants + 14 builtin function names (reserved, not usable as identifiers):
 
 ```
 var    def    if     else   while  for
@@ -54,7 +54,7 @@ Builtin function names (reserved words; forbidden as variable / function / param
 
 ```
 int   float  string  bool   bytes  vec    map
-lst   type   env    here   eval   trap
+lst   type   env    here   eval   trap   yield
 ```
 
 The `$xxx` extension mechanism: the `$` prefix namespace is a lexical-level hard isolation (`$` is a reserved symbol; identifiers do not contain `$`). The base engine is **zero extensions** — any `$xxx` call is a compile error. The host registers extension functions and predefined constants through `engine::set_extend(name, handler)` and `engine::set_define(name, value)`, giving scripts superset capabilities of the engine platform (IO, system interaction, compiler tools, etc.). An unregistered `$xxx` is a compile-time error; a registered one is a run-time table lookup. Extension functions are registered by the host at its option; they are not inherent to the language.
@@ -364,7 +364,7 @@ A callable is not a value — reading one is refused, `type()` included (`TypeEr
 
 Everything the script layer has no name of its own for — an object a host handed over, or a value of a variant type it does not model (only a host can pass one in: a 32-bit float, an unsigned integer, a `std::vector<T>`) — asks the host's type-naming callback (`engine::set_type_ex`) first; an empty answer, or no callback installed, gives `"unknown"`. A `null` value and an empty handle both answer `"null"`, so **empty reads as null, not as "unknown"**; `type()` never answers a null value itself.
 
-> `type`, `int`, `float`, `string`, `bool`, `bytes`, `vec`, `map`, `lst`, `env`, `here`, `eval`, `trap` are all reserved words and cannot be used as a variable name, function name, parameter name or `as` alias. `$xxx` extension function names are registered by the host and are not reserved words.
+> `type`, `int`, `float`, `string`, `bool`, `bytes`, `vec`, `map`, `lst`, `env`, `here`, `eval`, `trap`, `yield` are all reserved words and cannot be used as a variable name, function name, parameter name or `as` alias. `$xxx` extension function names are registered by the host and are not reserved words.
 
 <div style="page-break-after: always;"></div>
 
@@ -834,6 +834,7 @@ def init(x, y) { ... }  // always succeeds, the engine will not stop it for a na
 | `NativeError` | a wrapped C++ native exception (resource errors are not in this class, see above) |
 | `NavError` | reverse navigation past the entity tree depth |
 | `InterruptedError` | the host hook forced an interrupt (uncatchable, a script's try/catch cannot swallow it; see engine interface semantics · execution interrupt hook) |
+| `YieldError` | the yield service (§9.4): a `yield()` during module init (thrown into the script, catchable), or a delivery refused or ended by the service — those travel inside the delivery's own future, not into the script |
 
 <div style="page-break-after: always;"></div>
 
@@ -1031,6 +1032,23 @@ trap(cond_expr, args_expr);  // two arguments: a falsy cond_expr skips it (args_
 - with two arguments the first is the condition (`to_bool_strict`); falsy skips and does not evaluate the second expression
 - every firing calls the host hook event (not limited by the checkpoint interval); a host hook returning false → the execution is interrupted (`InterruptedError`, uncatchable)
 - typical uses: breakpoint debugging, conditional breakpoints, gathering run-time data on a hot path (combined with the host's `hook_info::wkdt` read-only execution view for frames/variables/module data, see Appendix B "Execution hook"; the engine-side mechanism is in `doc/scpt/design.md` §4.9b)
+
+## 9.4 yield — the service point
+
+`yield()` is the script's own service point: it hands execution to the deliveries the host queued through `engine::yield` (`api.md` §3.2b), and with a time window it waits for arrivals. It is the **only** place a delivery can run — between two `yield()` calls the script is ordinary sequential code and nothing can be inserted into it.
+
+```js
+yield();           // drain the pending deliveries, return at once
+yield(ms);         // resident window: drain, then wait for arrivals until ms elapses
+yield(ms, maxcnt); // also return early once maxcnt deliveries have been serviced
+```
+
+- the value returned is the number of deliveries serviced in this call (a serviced call that failed still counts — its error went to its own future)
+- `(0, 0)` is a non-blocking single pass, `(0, n)` stops at n; with `ms > 0` arrivals during the window are serviced, an empty queue sleeps until the deadline and `n` short-circuits; **past the deadline no new delivery is taken and the in-flight one runs to completion**
+- a serviced call runs like a root call: it sees root variables and modules, **not** the caller's locals or execution position; `max_stack` is its own root budget, and hook events and interrupts keep firing during it (the host's watchdog covers serviced calls)
+- **during module init** (an `import`/`link` body) `yield()` throws a script-level `YieldError` — init runs before the engine's service point exists
+- **inside a serviced call** a nested `yield()` aborts that delivery with `YieldError` in its future; it is a delivery-level abort, not a script exception, so a `try/catch` there cannot catch it — the main script is unaffected
+- an interrupt behaves as everywhere else: it wakes the wait, no value is produced, and the run comes back as `InterruptedError`; queued deliveries settle as `hard-interrupted`
 
 <div style="page-break-after: always;"></div>
 

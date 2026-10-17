@@ -343,6 +343,8 @@ namespace alx {
                                     script_exception& _err) {
             walker sub(_w->m_cfg);
             sub.mgr = this;
+            // a yield inside init is a script-level error, not a service point
+            sub.m_init_walk = true;
             // the walk runs on the fly's own root: the store needs no move at the end, and a nested
             // import/link binding its parent to it names the fly, not this stack frame
             sub.state.root = &fly->m_root;

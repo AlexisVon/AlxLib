@@ -34,6 +34,16 @@ namespace alx {
                 ~running_guard() { flag.store(false, std::memory_order_relaxed); }
             };
 
+            // settle whatever a run leaves queued; declared before a running_guard so the guard
+            // clears first and no delivery can land after the flag clears
+            struct queue_settle {
+                walker& w;
+                ~queue_settle() {
+                    w.m_yq.drain(error_type::YieldError,
+                                 w.m_interrupted ? "hard-interrupted" : "not executed");
+                }
+            };
+
             // exec's result must be retainable data — basic types and containers; an anyptr anywhere is refused
             const variant* find_anyptr(const variant& _v) {
                 if (_v.is<anyptr>()) return &_v;
@@ -59,15 +69,18 @@ namespace alx {
             }
         }
 
-        class engine_impl : public engine {
+        class engine_impl : public engine, private hb_target {
         public:
             engine_impl(const engine_config& _cfg) : m_cfg(_cfg), m_w(m_cfg) {
                 reset();
+                m_mod.m_res->hb_attach(this);
             }
 
             ~engine_impl() override {
 
-                // walker first: reset() drops the impls while m_mod and the shared layer are alive
+                // out of the heartbeat first: no pass may reach the walker below
+                m_mod.m_res->hb_detach(this);
+                // walker next: reset() drops the impls while m_mod and the shared layer are alive
                 m_w.reset();
             }
 
@@ -128,34 +141,53 @@ namespace alx {
             }
 
             result call(const std::string& _name, const varvec& _args) override {
+                varvec copy(_args);
+                return call(_name, std::move(copy));
+            }
+
+            result call(const std::string& _name, varvec&& _args) override {
+                // settle deliveries a previous run left behind before this entry may accept new ones
+                m_w.m_yq.drain(error_type::YieldError, "not executed");
                 m_w.m_interrupted = false;
                 m_w.m_interrupt_desc.clear();
 
-                variant* p = m_w.m_root.m_store.find(_name);
-                if (!p || !p->is<anyptr>())
-                    return {variant("function not found: " + _name), 0, error_type::NameError};
+                std::string err;
+                call_able* ca = walker::resolve_def(m_w.m_root, _name, err);
+                if (!ca) return {variant(err), 0, error_type::NameError};
 
-                call_able* ca = anyptr_ex<call_able>::as(p->to<anyptr>());
-                if (!ca || !ca->is_def())
-                    return {variant("not a def function: " + _name), 0, error_type::NameError};
-
+                queue_settle _qs{m_w};
                 auto t0 = std::chrono::steady_clock::now();
                 running_guard _rg(m_running);
                 walker::call_ctx cw;
                 cw.ca = ca;
                 cw.name = _name;
-                cw.tree.push_back(variant(OPTYPE(O_CALL)));
-                cw.tree.push_back(variant(_name));
-                for (const auto& a : _args) {
-                    varvec leaf;
-                    leaf.push_back(variant(a));
-                    cw.tree.push_back(variant(std::move(leaf)));
-                }
+                cw.tree = walker::make_call_tree(_name, std::move(_args));
                 return m_w.run_entry(t0, &walker::entry_call, &cw);
+            }
+
+            std::future<result> yield(const std::string& _name, const varvec& _args,
+                                      uint_32 _priority, uint_32 _expiry_ms) override {
+                varvec copy(_args);
+                return yield(_name, std::move(copy), _priority, _expiry_ms);
+            }
+
+            std::future<result> yield(const std::string& _name, varvec&& _args,
+                                      uint_32 _priority, uint_32 _expiry_ms) override {
+                if (!running()) {
+                    std::promise<result> pro;
+                    std::future<result> fut = pro.get_future();
+                    pro.set_value(result{variant(std::string("no main fiber")), 0,
+                                         error_type::YieldError});
+                    return fut;
+                }
+                return m_w.m_yq.push(_name, std::move(_args), _priority, _expiry_ms);
             }
 
             result exec(const bytes_view& _data,
                         const std::string& _home_dir) override {
+                // settle deliveries a previous run left behind before this entry may accept new ones
+                m_w.m_yq.drain(error_type::YieldError, "not executed");
+                queue_settle _qs{m_w};
                 auto t0 = std::chrono::steady_clock::now();
                 result res;
                 running_guard _rg(m_running);
@@ -246,6 +278,7 @@ namespace alx {
             void set_overflow_check(bool _on) override { m_cfg.overflow_check = _on; }
             void set_debug_enable(bool _on) override { m_cfg.debug_enable = _on; }
             void set_max_vecfill(size_t _n) override { m_cfg.max_vecfill = _n; }
+            void set_max_yield(size_t _n) override { m_cfg.max_yield = _n; }
             void set_search_paths(const std::list<std::string>& _paths) override {
                 m_cfg.search_paths = _paths;
             }
@@ -273,7 +306,14 @@ namespace alx {
             }
 
             bool running() const override { return m_running.load(std::memory_order_relaxed); }
-            void set_interrupt() override { m_w.m_interrupted.store(true, std::memory_order_relaxed); }
+            void set_interrupt() override {
+                m_w.m_interrupted.store(true, std::memory_order_relaxed);
+                // the store above precedes the wake, so a residency wait cannot check and then sleep through it
+                m_w.m_yq.wake();
+            }
+
+            // the heartbeat's per-engine duty: liquidate expired deliveries; try_lock only
+            void time_event() override { m_w.m_yq.expire(std::chrono::steady_clock::now()); }
 
             varvec do_parse(const bytes_view& _src, const std::string& _file_path,
                             compile_result* _embed_out = nullptr) const {

@@ -137,6 +137,8 @@ namespace alx {
 
             // [O_DEBUG, row, col, ofst] -- not an instruction: no s_ops entry, dispatched before the hook checkpoint
             O_DEBUG,
+            // [O_YIELD, time_ms?, maxcnt?] -- serve queued deliveries; returns the number served
+            O_YIELD,
 
             // Bound for the s_ops table
             O_ENUMSIZE
@@ -233,6 +235,7 @@ namespace alx {
             "ASS_BIT_OR",
             "ASS_BIT_XOR",
             "DEBUG",
+            "YIELD",
         };
         static_assert(sizeof(s_op_names) / sizeof(s_op_names[0]) == O_ENUMSIZE,
                       "s_op_names must match op_enum count");
@@ -291,6 +294,8 @@ namespace alx {
             T_HERE,
             T_TRAP,
             T_EVAL,
+            // outside the T_VAR..T_EVAL range on purpose: yield is not $nameable
+            T_YIELD,
 
             T_PLUS,
             T_MINUS,

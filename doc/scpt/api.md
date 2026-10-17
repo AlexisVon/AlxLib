@@ -45,19 +45,20 @@ cfg.max_stack   = 1024;        // live frames allowed, 0 = unlimited
 cfg.max_vecfill = 0;           // elements one vec/lst fill may produce, 0 = unlimited
 cfg.parse_depth = 1024;        // syntax nesting depth of one parse, 0 = unlimited
 cfg.overflow_check = false;    // integer overflow check
+cfg.max_yield   = 256;         // deliveries the yield queue may hold, 0 = unlimited
 
 alx::script::engine* eng = alx::script::engine::create(cfg);
 eng->config();                 // read the configuration back
 
 // runtime adjustment (affects later compiles and execs only)
 eng->set_max_stack(...);  eng->set_parse_depth(...);  eng->set_max_vecfill(...);
-eng->set_overflow_check(...);  eng->set_search_paths({"mods", "lib"});
+eng->set_max_yield(...);  eng->set_overflow_check(...);  eng->set_search_paths({"mods", "lib"});
 eng->reset();                  // drop the intermediate state of a run: the root store is rebuilt and loaded modules are released with it (hot reload)
 ```
 
 `reset()` is also the only reaper: a run that fails during execution leaves root variables, defs and loaded modules standing — and with them the parsed ASTs behind the defs — so a long-lived engine holds that memory until an explicit `reset()`.
 
-`engine` is **single-threaded and not reentrant**: one instance runs on one thread at a time. Only two interfaces are meant to cross threads (§10 interrupt).
+`engine` is **single-threaded and not reentrant**: one instance runs on one thread at a time. Only three interfaces are meant to cross threads: `running()` and `set_interrupt()` (§10), and `yield()` (§3.2b).
 
 ---
 
@@ -86,11 +87,32 @@ Only retainable data may leave `exec()`: a result that holds an object handle �
 
 ```cpp
 alx::script::engine::result call(const std::string& _name, const varvec& _args);
+alx::script::engine::result call(const std::string& _name, varvec&& _args);   // moves on acceptance
 ```
 
-Calls the `def` of that name in the **root scope** (no module path is resolved), passes the arguments as values, and returns the same shape as `exec`.
+Calls the `def` of that name in the **root scope** (no module path is resolved), passes the arguments as values, and returns the same shape as `exec`. The rvalue overload takes the arguments over only once the name resolves to a def — both refusal paths (`function not found`, `not a def function`) leave the caller's vector untouched.
 
 Unlike `exec()`, `call()` has **no result gate** — a value holding an object handle comes back whole: the unrestricted channel for complex C++ & script work (dynamic object construction and the like). Its contract flips: such a value references the engine's world and must be dropped before the engine dies — and before an explicit `reset()`, which rebuilds the world the handle's instance lives in (a failed run no longer drops it). The same holds for handles read back through `load()`, whose pointer is additionally invalidated by any root-variable addition and by any reset.
+
+### 3.2b Delivery into a run — `engine::yield`
+
+```cpp
+std::future<alx::script::result> yield(const std::string& _name, const varvec& _args,
+                                       uint_32 _priority = 0, uint_32 _expiry_ms = 0);
+std::future<alx::script::result> yield(const std::string& _name, varvec&& _args,
+                                       uint_32 _priority = 0, uint_32 _expiry_ms = 0);
+void set_max_yield(size_t _n);   // writes engine_config::max_yield
+```
+
+Queues a call to run at the script's next `yield()` (`lang.md` §9.4) — `call()` serialized onto the running timeline. Callable from any thread except the one running the script.
+
+- **accepted only while a run is in progress and the queue is below `max_yield`**; otherwise the future comes back already fulfilled with `YieldError` (`no main fiber`, `yield full`) and nothing was moved — the rvalue overload hands the arguments over only on acceptance
+- the name is resolved when the delivery is serviced, in the root scope like `call()`: a delivery may name a def defined later, and a miss comes back as `NameError` inside the future
+- `_priority`: higher runs first, equal priorities keep their arrival order; `_expiry_ms` is the longest the delivery may wait in the queue — an **expired delivery never runs** and its future says `expired` (settled by a background pass, so its precision is about one 50 ms beat)
+- **every outcome is inside the future** — the value, a script error, or `YieldError` (`expired`, `not executed` when the run ends before a yield point reached it, `hard-interrupted` when an interrupt tears the run down); a future is never broken
+- the result is shaped like `call()`'s and, like `call()`'s, has no exec result gate — a value holding an object handle must be dropped before the engine dies or `reset()` runs
+- the serviced call runs in root posture: root variables and modules only, `max_stack` as its own root budget, hook events and interrupts still firing (the watchdog covers it)
+- contract: never block on a future queued from the engine's own thread (use `fwrap::call` there); `set_max_yield` shrinks without evicting what is already queued
 
 ### 3.3 Compiling into a product
 
@@ -122,7 +144,7 @@ The keys `unpack` puts into `_out`: `"ast"` (AST dump), `"modules"` (module key 
 |---|---|---|
 | `on_cerr` | `const std::string&` | engine diagnostics (runtime error messages and the like) |
 | `on_cmpl` | `const compile_error&` | a compile error (with row, col and byte offset) |
-| `get_csys()` | `signal<uint_64, const std::string&>&` | pool-level events (module load/unload, link failures and the like); the callback gets (thread id, message) |
+| `get_csys()` | `signal<uint_64, const std::string&>&` | pool-level events (module load/unload, link failures and the like); the callback gets (thread id, message). The yield service's background pass adds `heartbeat overrun: …` / `heartbeat error: …` — the only entries emitted off the running thread, so a slot must tolerate another thread and must not block |
 
 `get_csys()` returns a reference to a **pool-level shared signal** that outlives any single engine, so it is safe to keep across engines.
 
@@ -306,7 +328,7 @@ bool running() const;        // true while an entry runs: exec() or call()
 void set_interrupt();        // ask for an interrupt (callable from any thread)
 ```
 
-The interrupt is **cooperative**: once the request is raised it takes effect at the next checkpoint of the execution flow (the run comes back as `InterruptedError`). Every entry that runs a walk reports it the same way — `exec` and `call` alike; a request made while nothing is running is discarded (an entry clears the flag as it starts), and a run that fails during execution — an error or an interrupt — **only ends that run**: root variables and loaded modules survive it, and `reset()` is the only thing that drops them. The checkpoints are governed by `set_hook`'s `_interval`, but **the flag is looked at on every checkpoint** — an interval of 0 only turns `exec` events off, `set_interrupt()` still works.
+The interrupt is **cooperative**: once the request is raised it takes effect at the next checkpoint of the execution flow (the run comes back as `InterruptedError`). Every entry that runs a walk reports it the same way — `exec` and `call` alike; a request made while nothing is running is discarded (an entry clears the flag as it starts), and a run that fails during execution — an error or an interrupt — **only ends that run**: root variables and loaded modules survive it, and `reset()` is the only thing that drops them. The checkpoints are governed by `set_hook`'s `_interval`, but **the flag is looked at on every checkpoint** — an interval of 0 only turns `exec` events off, `set_interrupt()` still works. `set_interrupt()` also wakes a `yield()` residency wait (§3.2b), so an interrupt lands promptly even while the script is sleeping there.
 
 ---
 
@@ -396,6 +418,7 @@ A script-side `throw`, a host-side `raise` and an engine-internal failure all la
 | Compile | `ParseError` |
 | Module | `ImportError`, `LinkError`, `VersionError` |
 | Host | `NativeError` (a wrapped C++ exception), `InterruptedError` (an interrupt, uncatchable) |
+| Delivery | `YieldError` — `no main fiber` / `yield full` / `expired` / `not executed` / `hard-interrupted` arrive inside a delivery's future; a `yield()` during module init throws it into the script and is catchable |
 | Fallback | `UnknownError` |
 
 - A script-side `try/catch` catches only what is catchable; `InterruptedError`, and the interrupt an import/link hook returning `false` in §8 causes, both **pass through the script's catch**.

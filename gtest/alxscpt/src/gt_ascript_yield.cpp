@@ -56,12 +56,31 @@ namespace {
         _f.freturn(variant());
     }
 
-    fwrap::callback* g_cb = nullptr;
+    std::atomic<fwrap::callback*> g_cb{nullptr};
+    std::atomic<bool> g_armed{false};
 
     // $curry(name) -- mint a delivery handle for a worker thread
     void native_curry(fwrap& _f) {
         g_cb = _f.currying(_f[0].to<std::string>());
         _f.freturn(variant());
+    }
+
+    // $post_arm(name) -- post, then let the hook start rejecting checkpoints
+    void native_post_arm(fwrap& _f) {
+        native_post(_f);
+        g_armed = true;
+    }
+
+    // $shrink(n) -- resize the yield queue from inside the run
+    void native_shrink(fwrap& _f) {
+        g_eng->set_max_yield(static_cast<size_t>(_f[0].to<int_64>()));
+        _f.freturn(variant());
+    }
+
+    bool reject_hook(hook_info& _hi) {
+        if (!g_armed.load()) return true;
+        *_hi.desc = "reject";
+        return false;
     }
 
     result run(engine* _e, const char* _src) {
@@ -420,14 +439,14 @@ TEST(gt_ascript_yield, CurryingHandleDeliversFromAWorkerThread) {
     });
     for (int i = 0; i < 5000 && !g_cb; i++)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    ASSERT_NE(g_cb, nullptr);
+    ASSERT_NE(g_cb.load(), nullptr);
 
     varvec a1;
     a1.push_back(variant(static_cast<int_64>(7)));
-    auto f1 = g_cb->call(a1);
+    auto f1 = g_cb.load()->call(a1);
     varvec a2;
     a2.push_back(variant(static_cast<int_64>(2)));
-    auto f2 = g_cb->call(std::move(a2));
+    auto f2 = g_cb.load()->call(std::move(a2));
     auto r1 = f1.get();
     auto r2 = f2.get();
     EXPECT_EQ(r1.error, error_type::NoError);
@@ -436,7 +455,7 @@ TEST(gt_ascript_yield, CurryingHandleDeliversFromAWorkerThread) {
     EXPECT_EQ(r2.value.to<int_64>(), 6);
     ASSERT_EQ(fut.wait_for(std::chrono::seconds(2)), std::future_status::ready);
     EXPECT_EQ(fut.get().value.to<int_64>(), 2);
-    delete g_cb;
+    delete g_cb.load();
     g_cb = nullptr;
     delete eng;
     g_eng = nullptr;
@@ -453,15 +472,107 @@ TEST(gt_ascript_yield, CurryingAllowsALaterDefinition) {
     });
     for (int i = 0; i < 5000 && !g_cb; i++)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    ASSERT_NE(g_cb, nullptr);
+    ASSERT_NE(g_cb.load(), nullptr);
     varvec args;
     args.push_back(variant(static_cast<int_64>(41)));
-    auto r = g_cb->call(args).get();
+    auto r = g_cb.load()->call(args).get();
     EXPECT_EQ(r.error, error_type::NoError);
     EXPECT_EQ(r.value.to<int_64>(), 42);
     ASSERT_EQ(fut.wait_for(std::chrono::seconds(2)), std::future_status::ready);
     EXPECT_EQ(fut.get().error, error_type::NoError);
-    delete g_cb;
+    delete g_cb.load();
+    g_cb = nullptr;
+    delete eng;
+    g_eng = nullptr;
+}
+
+TEST(gt_ascript_yield, HardInterruptDrainsTheBacklog) {
+    engine* eng = engine::create();
+    g_eng = eng;
+    g_futs.clear();
+    g_marks.clear();
+    eng->set_extend("post", native_post);
+    eng->set_extend("mark", native_mark);
+    auto fut = std::async(std::launch::async, [&] {
+        return run(eng,
+                   "def slow() { var i = 0; while (1) { i = i + 1; } }"
+                   "def later() { $mark(\"later\"); }"
+                   "$post(\"slow\"); $post(\"later\"); yield(0, 0); return 1;");
+    });
+    for (int i = 0; i < 5000 && !eng->running(); i++)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    ASSERT_TRUE(eng->running());
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    eng->set_interrupt();
+    auto r = fut.get();
+    EXPECT_EQ(r.error, error_type::InterruptedError);
+    ASSERT_EQ(g_futs.size(), 2u);
+    for (auto& f : g_futs) {
+        auto fr = f.get();
+        EXPECT_EQ(fr.error, error_type::InterruptedError);
+    }
+    EXPECT_TRUE(g_marks.empty());
+    g_futs.clear();
+    delete eng;
+    g_eng = nullptr;
+}
+
+TEST(gt_ascript_yield, TheHookRejectReasonSettlesDeliveries) {
+    engine* eng = engine::create();
+    g_eng = eng;
+    g_futs.clear();
+    g_armed = false;
+    eng->set_extend("post_arm", native_post_arm);
+    eng->set_hook(reject_hook, nullptr, 1);
+    auto r = run(eng, "def f() { } $post_arm(\"f\"); yield(0, 0); return 1;");
+    EXPECT_EQ(r.error, error_type::InterruptedError);
+    ASSERT_EQ(g_futs.size(), 1u);
+    auto fr = g_futs[0].get();
+    EXPECT_EQ(fr.error, error_type::InterruptedError);
+    EXPECT_EQ(fr.value.to<std::string>(), "reject");
+    g_armed = false;
+    g_futs.clear();
+    delete eng;
+    g_eng = nullptr;
+}
+
+TEST(gt_ascript_yield, MaxYieldChangeAdmitsImmediately) {
+    engine* eng = engine::create();
+    g_eng = eng;
+    g_futs.clear();
+    eng->set_extend("post", native_post);
+    eng->set_extend("shrink", native_shrink);
+    auto r = run(eng,
+                 "def f() { } $shrink(1); $post(\"f\"); $post(\"f\"); $post(\"f\");"
+                 "var c = yield(0, 0); return c;");
+    ASSERT_EQ(r.error, error_type::NoError);
+    EXPECT_EQ(r.value.to<int_64>(), 1);
+    ASSERT_EQ(g_futs.size(), 3u);
+    EXPECT_EQ(g_futs[0].get().error, error_type::NoError);
+    for (int i = 1; i < 3; i++) {
+        auto fr = g_futs[i].get();
+        EXPECT_EQ(fr.error, error_type::YieldError);
+        EXPECT_EQ(fr.value.to<std::string>(), "yield full");
+    }
+    g_futs.clear();
+    delete eng;
+    g_eng = nullptr;
+}
+
+TEST(gt_ascript_yield, AHandleSurvivesReset) {
+    engine* eng = engine::create();
+    g_eng = eng;
+    g_cb = nullptr;
+    eng->set_extend("curry", native_curry);
+    auto r = run(eng, "def f() { return 1; } $curry(\"f\"); return 0;");
+    ASSERT_EQ(r.error, error_type::NoError);
+    ASSERT_NE(g_cb.load(), nullptr);
+    eng->reset();
+    varvec args;
+    auto fr = g_cb.load()->call(args).get();
+    EXPECT_EQ(fr.error, error_type::YieldError);
+    EXPECT_EQ(fr.value.to<std::string>(), "no main fiber");
+    delete g_cb.load();
     g_cb = nullptr;
     delete eng;
     g_eng = nullptr;

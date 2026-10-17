@@ -739,7 +739,9 @@ namespace alx {
              * inside the future. The name is resolved at the service position, so a delivery
              * may name a def defined later. Callable from any thread; the thread that runs
              * the script must never block on a future it queued itself -- its synchronous
-             * tool is fwrap::call().
+             * tool is fwrap::call(). A future is never broken from the engine's own paths (a
+             * host slot that breaks the signal contract, or an allocation failure while
+             * settling, is outside the guarantee).
              *
              * \param _name def name, resolved in the root scope like call()
              * \param _args Arguments, passed as the values they hold at the call; the rvalue
@@ -832,8 +834,10 @@ namespace alx {
              * \brief The event sink every engine in the process shares
              *
              * Module load and unload and link failures are reported here as (thread id, message)
-             * instead of through on_cerr. It belongs to the process-wide resource pool, which the
-             * first engine creates and the last one destroys, so a reference kept past that point
+             * instead of through on_cerr; the yield service's background pass adds
+             * `heartbeat overrun: …` / `heartbeat error: …`, the only entries emitted off the
+             * running thread. It belongs to the process-wide resource pool, which the first
+             * engine creates and the last one destroys, so a reference kept past that point
              * dangles.
              */
             virtual signal<uint_64, const std::string&>& get_csys() = 0;

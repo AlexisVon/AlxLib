@@ -834,7 +834,7 @@ def init(x, y) { ... }  // always succeeds, the engine will not stop it for a na
 | `NativeError` | a wrapped C++ native exception (resource errors are not in this class, see above) |
 | `NavError` | reverse navigation past the entity tree depth |
 | `InterruptedError` | the host hook forced an interrupt (uncatchable, a script's try/catch cannot swallow it; see engine interface semantics · execution interrupt hook) |
-| `YieldError` | the yield service (§9.4): a `yield()` during module init (thrown into the script, catchable), or a delivery refused or ended by the service — those travel inside the delivery's own future, not into the script |
+| `YieldError` | the yield service (§9.4): a `yield()` during module init or inside a serviced call (both thrown into the script, catchable; the nested one reads `nested yield`), or a delivery refused or ended by the service (`no main fiber` / `yield full` / `expired` / `not executed` / `nested yield` uncaught) — those travel inside the delivery's own future, not into the script |
 
 <div style="page-break-after: always;"></div>
 
@@ -1035,7 +1035,11 @@ trap(cond_expr, args_expr);  // two arguments: a falsy cond_expr skips it (args_
 
 ## 9.4 yield — the service point
 
-`yield()` is the script's own service point: it hands execution to the deliveries the host queued through `engine::yield` (`api.md` §3.2b), and with a time window it waits for arrivals. It is the **only** place a delivery can run — between two `yield()` calls the script is ordinary sequential code and nothing can be inserted into it.
+`yield()` **is yield** — the same concept as a coroutine language's yield, with one difference: what it yields to is the **C++ layer (the host)**, not a scheduler. At the yield point the script pauses, the host gets a bounded window to run the calls it queued (`engine::yield` / an `fwrap::currying` handle, `api.md` §3.2b), and control then returns to the next statement. Before this, host code could only run after a whole `exec()`/`call()` had finished — with a yield point the script voluntarily lends out its execution for a while. It is the **only** place a delivery can run: between two `yield()` calls the script is ordinary sequential code and nothing can be inserted into it.
+
+What runs in that window is **script, not arbitrary C++**: every delivery is a call to a root-scope `def`, executed exactly like a normal call. The mechanism serves the interaction in the other direction — the C++ layer's other native threads hand calls to the script's timeline: their requests are held in a queue, and they run only when the script itself yields.
+
+Because a time window keeps servicing arrivals, `yield(n)` doubles as the script's **sleep** — sleep `n` ms: the script spends the window waiting, and the host's queued call requests are serviced during the wait instead of being blocked by it. The window elapses in full whether or not a delivery ever arrives — with nothing queued it is a plain sleep, so the sleep length does not depend on the host using the delivery mechanism at all.
 
 ```js
 yield();           // drain the pending deliveries, return at once
@@ -1957,6 +1961,7 @@ struct engine_config {
     size_t max_stack = 1024;    // 0 = unlimited
     size_t max_vecfill = 0;     // 0 = unlimited
     size_t parse_depth = 1024;
+    size_t max_yield = 256;     // yield queue capacity, 0 = unlimited
 
     // import search paths
     std::list<std::string> search_paths;
@@ -2085,7 +2090,7 @@ eng->get_csys().connect([](uint_64 tid, const std::string& s) {
 });
 ```
 
-**Callback constraints (identical for all three signals)**: a callback may fire at any moment — including in the middle of an engine's **destruction/reset chain** (the unload event, for instance, is emitted on the destructor path of `delete eng`). Inside a callback **no engine API may be called** (exec/reset/compile and so on) — unless the host intends to destroy or reset that engine (a suicidal act, with no guarantees). A callback should do environment-independent work only: printing, logging, counting, notifying the outside world.
+**Callback constraints (identical for all three signals)**: a callback may fire at any moment — including in the middle of an engine's **destruction/reset chain** (the unload event, for instance, is emitted on the destructor path of `delete eng`), and it runs on whichever thread emitted the entry (an `on_csys` entry from the yield service's background pass arrives on that thread). A callback may only take the text: it must not block, **must not throw**, must not create or destroy engines, and must not call any engine API (exec/reset/compile and so on). The engine does not defend against a callback that breaks this. Keep it to environment-independent work: printing, logging, counting, notifying the outside world.
 
 ## The full engine interface table
 
@@ -2098,6 +2103,7 @@ eng->get_csys().connect([](uint_64 tid, const std::string& s) {
 | `exec(data, home_dir)` | execute source or compiled bytes (recognised automatically) → `result{value, elapsed_us, error}` |
 | `exec(file_path)` | execute from a file path (home_dir extracted automatically) |
 | `call(name, args)` | call a script-defined def function (looked up in the root scope); args is a `varvec`, returns a `result`. def functions only (a native function is called from C++ directly, with no need to go through the engine). Exception handling is isomorphic to exec |
+| `yield(name, args, pri, expiry)` | queue a call to a root-scope def, serviced at the script's next `yield()` — `call()` serialized onto the running timeline (`api.md` §3.2b); returns `future<result>`, every outcome inside. Cross-thread; the `varvec&&` overload moves only on acceptance. `fwrap::currying` mints a caller-owned handle that carries the same delivery (§12.4) |
 | `load(name, auto_create)` | read and write a root scope variable. Returns a `variant*` (nullptr when absent; created automatically when auto_create=true) |
 | `compile(data, home_dir, cmps, embed, hint)` | compile to .axp; `embed=true` compiles self-contained (link/env are errors, imports must resolve); `hint` (bytes_view) = a host JSON payload stored as given (compressed internally when `cmps=true`), empty leaves the key out of the product; the path version's hint is a JSON file path |
 | `compile(path, cmps, embed, hint)` | compile from a file path (hint = a JSON file path the engine reads and then takes the same path with) |
@@ -2111,6 +2117,7 @@ eng->get_csys().connect([](uint_64 tid, const std::string& s) {
 | `set_parse_depth(n)` | parser nesting depth (default 1024) |
 | `set_overflow_check(on)` | integer overflow / shift checking (default false) |
 | `set_max_vecfill(n)` | vec fill count cap (default 0=unlimited) |
+| `set_max_yield(n)` | yield queue capacity (default 256, 0=unlimited); admissions see the new value immediately |
 | `set_search_paths(paths)` | global search paths (`std::list<string>`, persist across reset) |
 | `set_type_ex(fn, ud)` | host type-naming callback (`type_ex`): `type()` asks it for a value the script layer cannot name and uses the returned name as-is; null removes it |
 | `set_debug_enable(on)` | statement-by-statement position tracking: the parser inserts a marker per statement and the walker records positions and fires `hook_event::debug`; off by default (an already compiled product stays without positions and reports row 0) |
@@ -2157,7 +2164,7 @@ eng->get_csys().connect([](uint_64 tid, const std::string& s) {
 |------|----------|------|
 | `on_cerr` | `void(const string& msg)` | run-time error messages (Uncaught / NativeError and so on) |
 | `on_cmpl` | `void(const compile_error& e)` | compile errors (`msg`, `loc.{path,row,col,index}`) |
-| `get_csys()` | `signal<uint_64, const string&>&` | the event signal reference (shared by the resource layer, callbacks carry the thread id tid): `ast load/unload`, `link load/unload`, `link error`, `env`. Its lifetime ≥ any engine |
+| `get_csys()` | `signal<uint_64, const string&>&` | the event signal reference (shared by the resource layer, callbacks carry the thread id tid): `ast load/unload`, `link load/unload`, `link error`, `env`, and from the yield service's background pass `heartbeat overrun: …` / `heartbeat error: …` (the only entries emitted off the running thread). Its lifetime ≥ any engine |
 
 ### Static utilities
 

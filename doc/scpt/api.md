@@ -50,7 +50,8 @@ cfg.max_yield   = 256;         // deliveries the yield queue may hold, 0 = unlim
 alx::script::engine* eng = alx::script::engine::create(cfg);
 eng->config();                 // read the configuration back
 
-// runtime adjustment (affects later compiles and execs only)
+// runtime adjustment (affects later compiles and execs only — set_max_yield is the exception:
+// deliveries admitted from then on see the new capacity immediately)
 eng->set_max_stack(...);  eng->set_parse_depth(...);  eng->set_max_vecfill(...);
 eng->set_max_yield(...);  eng->set_overflow_check(...);  eng->set_search_paths({"mods", "lib"});
 eng->reset();                  // drop the intermediate state of a run: the root store is rebuilt and loaded modules are released with it (hot reload)
@@ -104,12 +105,12 @@ std::future<alx::script::result> yield(const std::string& _name, varvec&& _args,
 void set_max_yield(size_t _n);   // writes engine_config::max_yield
 ```
 
-Queues a call to run at the script's next `yield()` (`lang.md` §9.4) — `call()` serialized onto the running timeline. Callable from any thread; the thread that runs the script must never block on a future it queued itself (its synchronous tool is `fwrap::call`).
+Queues a call to run at the script's next `yield()` (`lang.md` §9.4) — `call()` serialized onto the running timeline. Before this interface, host code could only call into a script between runs; a delivery lets it run *inside* one, in the window the script itself opens. What runs there is **script**: the delivery names a root-scope def and the engine calls it like any other def — no arbitrary C++ is injected. The point is the reverse channel — the C++ layer's native threads hand calls to the script's timeline, the requests wait in the queue, and they execute only when the script yields; a script in a `yield(ms)` window is not blocking them, it is servicing them as they arrive. Callable from any thread; the thread that runs the script must never block on a future it queued itself (its synchronous tool is `fwrap::call`).
 
 - **accepted only while a run is in progress and the queue is below `max_yield`**; otherwise the future comes back already fulfilled with `YieldError` (`no main fiber`, `yield full`) and nothing was moved — the rvalue overload hands the arguments over only on acceptance
 - the name is resolved when the delivery is serviced, in the root scope like `call()`: a delivery may name a def defined later, and a miss comes back as `NameError` inside the future
 - `_priority`: higher runs first, equal priorities keep their arrival order; `_expiry_ms` is the longest the delivery may wait in the queue — an **expired delivery never runs**: the take point settles one it finds expired exactly, and one still waiting in the queue is settled by the background pass (precision: about one 50 ms beat)
-- **every outcome is inside the future** — the value, a script error, `YieldError` (`expired`, `not executed` when the run ends before a yield point reached it, `nested yield` when a serviced call calls `yield()` and does not catch the script-level error), or `InterruptedError` when an interrupt tears the run down (the hook's reject reason, when there is one, is the value); a future is never broken
+- **every outcome is inside the future** — the value, a script error, `YieldError` (`expired`, `not executed` when the run ends before a yield point reached it, `nested yield` when a serviced call calls `yield()` and does not catch the script-level error), or `InterruptedError` when an interrupt tears the run down (the hook's reject reason, when there is one, is the value); a future is never broken — the only ways out are an allocation failure while settling and a host slot that breaks the signal contract (§3.5), both outside the guarantee
 - the result is shaped like `call()`'s and, like `call()`'s, has no exec result gate — a value holding an object handle must be dropped before the engine dies or `reset()` runs
 - the serviced call runs in root posture: root variables and modules only, `max_stack` as its own root budget, hook events and interrupts still firing (the watchdog covers it)
 - `set_max_yield` shrinks without evicting what is already queued
@@ -148,7 +149,7 @@ The keys `unpack` puts into `_out`: `"ast"` (AST dump), `"modules"` (module key 
 
 `get_csys()` returns a reference to a **pool-level shared signal** that outlives any single engine, so it is safe to keep across engines.
 
-**Every slot on every signal is a text notification, nothing more** — `on_cerr`, `on_cmpl` and `on_csys` alike. A slot runs on whichever thread emitted the entry (an `on_csys` entry from the yield service's background pass arrives on that thread), and the engine's own thread may be executing script while it runs, so a slot may only take the text (format it, or hand it off and return): it must not block, must not create or destroy engines, and must not re-enter the engine in any other way. The engine does not defend against a slot that does any of this.
+**Every slot on every signal is a text notification, nothing more** — `on_cerr`, `on_cmpl` and `on_csys` alike. A slot runs on whichever thread emitted the entry (an `on_csys` entry from the yield service's background pass arrives on that thread), and the engine's own thread may be executing script while it runs, so a slot may only take the text (format it, or hand it off and return): it must not block, **must not throw**, must not create or destroy engines, and must not re-enter the engine in any other way. The engine does not defend against a slot that breaks this.
 
 ---
 

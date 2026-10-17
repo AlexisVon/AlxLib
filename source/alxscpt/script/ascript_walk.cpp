@@ -150,17 +150,17 @@ namespace alx {
                 throw script_exception{error_type::TypeError, std::string("Type does not support [i] index")};
             }
 
-            // Parks the walk at root posture for the guard's lifetime: frames repoint at a local
-            // empty deque, current goes to the root entity, the control flags and position are
-            // saved, and the walk is marked as executing a delivery (a nested yield hits that)
-            struct root_guard {
+            // New code runs on a clean root: frames repoint at a local empty deque, current goes to
+            // the root entity, the control flags and position are saved, and the walk is marked as
+            // executing a delivery so a nested yield is refused
+            struct context_guard {
                 walker& w;
                 std::deque<scope_frame> spare;
                 impl_import* saved_current;
                 bool saved_break, saved_cont, saved_ret, saved_tail, saved_yield_exec;
                 src_pos saved_pos;
 
-                explicit root_guard(walker& _w)
+                explicit context_guard(walker& _w)
                     : w(_w), saved_current(_w.state.current),
                       saved_break(_w.state.break_flag), saved_cont(_w.state.cont_flag),
                       saved_ret(_w.state.ret_flag), saved_tail(_w.state.tail_flag),
@@ -174,7 +174,7 @@ namespace alx {
                     _w.state.top_pos = src_pos();
                     _w.m_yield_exec = true;
                 }
-                ~root_guard() {
+                ~context_guard() {
                     // unwind inner-to-outer: a frame dtor truncates the store to its base, and a
                     // front-to-back destruction would regrow it through the higher bases
                     while (!spare.empty()) spare.pop_back();
@@ -696,7 +696,7 @@ namespace alx {
             }
             auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(time_ms);
 
-            root_guard pose(_w);
+            context_guard pose(_w);
 
             // the interrupt teardown: every delivery, the in-flight one included, reports the
             // interrupt itself, with the hook's reject reason when there is one
@@ -751,7 +751,9 @@ namespace alx {
                     // an error path leaves the serviced call's frames behind; drop them inner-first
                     while (!_w.state.frames->empty()) _w.state.frames->pop_back();
                 }
-                if (res.error == error_type::InterruptedError) {
+                // the flag is the interrupt's truth: a native that raises an InterruptedError
+                // without one is just an ordinary failed call
+                if (_w.m_interrupted) {
                     hard_stop(&pro);
                     return variant();
                 }

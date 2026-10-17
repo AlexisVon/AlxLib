@@ -363,7 +363,7 @@ namespace alx {
                 fly->m_ast->m_inner_modules.empty() ? _w->state.compiled_modules : &fly->m_ast->m_inner_modules;
 
             try {
-                sub.walk_forest(fly->m_ast->m_ast);
+                sub.entry_init(fly);
                 // an interrupt outranks the walk's own outcome, and its reason travels up with it
                 if (sub.m_interrupted || _w->m_interrupted) {
                     _w->m_interrupted = true;

@@ -325,6 +325,93 @@ namespace alx {
             return result;
         }
 
+        variant walker::entry_forest(void*) {
+            return walk_forest(m_root_asts.back());
+        }
+
+        variant walker::entry_call(void* _ud) {
+            auto& c = *static_cast<call_ctx*>(_ud);
+            auto args = scan_call_args(c.tree, 2, *this);
+            return invoke_def(state.current, *c.ca->m_def, c.name, c.tree, *this, args);
+        }
+
+        variant walker::entry_init(void* _ud) {
+            auto* fly = static_cast<fly_import*>(_ud);
+            return walk_forest(fly->m_ast->m_ast);
+        }
+
+        engine::result walker::run_entry(const std::chrono::steady_clock::time_point& _t0,
+                                         entry_fn _fn, void* _ud) {
+            // the entry point is the safety net under RAII: a torn leave must not poison this run,
+            // and the frame side is three narrow fields -- state.clear() would drop the root bindings
+            state.frames->clear();
+            state.current = &m_root;
+            state.ret_flag = false;
+            state.break_flag = false;
+            state.cont_flag = false;
+            state.tail_flag = false;
+            state.clear_pos();
+
+            engine::result res;
+            try {
+                res.value = (this->*_fn)(_ud);
+            } catch (const script_exception& _e) {
+                if (m_interrupted) return interrupt_result(_t0);
+                std::string trace;
+                try {
+                    trace = walk_state_trace(*this);
+                } catch (...) {
+                }
+                std::string msg = strutil::format("Uncaught: [%1] %2",
+                                                  error_type_name(_e.type), _e.info);
+                if (!trace.empty()) msg += "\n" + trace;
+                if (state.on_cerr) state.on_cerr->exec(msg);
+                res.value = _e.info;
+                res.error = _e.type;
+            } catch (const std::bad_alloc&) {
+                if (m_interrupted) return interrupt_result(_t0);
+                if (state.on_cerr) state.on_cerr->exec("MemoryError: out of memory");
+                res.value = variant(std::string("out of memory"));
+                res.error = error_type::MemoryError;
+            } catch (const std::length_error& _e) {
+                if (m_interrupted) return interrupt_result(_t0);
+                if (state.on_cerr) state.on_cerr->exec(std::string("MemoryError: ") + _e.what());
+                res.value = variant(std::string(_e.what()));
+                res.error = error_type::MemoryError;
+            } catch (const std::exception& _e) {
+                if (m_interrupted) return interrupt_result(_t0);
+                if (state.on_cerr) state.on_cerr->exec("NativeError: " + std::string(_e.what()));
+                res.value = variant(std::string(_e.what()));
+                res.error = error_type::NativeError;
+            } catch (...) {
+                if (m_interrupted) return interrupt_result(_t0);
+                if (state.on_cerr) state.on_cerr->exec("NativeError: unknown");
+                res.error = error_type::NativeError;
+            }
+            if (m_interrupted) return interrupt_result(_t0);
+            res.elapsed_us = static_cast<int_64>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - _t0)
+                    .count());
+            return res;
+        }
+
+        engine::result walker::interrupt_result(const std::chrono::steady_clock::time_point& _t0) {
+            // the hook's reject reason, written through hook_info::desc
+            std::string desc = m_interrupt_desc;
+            std::string reason = "execution interrupted";
+            if (!desc.empty()) reason += " — " + desc;
+            if (state.on_cerr) state.on_cerr->exec("Uncaught: [InterruptedError] " + reason);
+            engine::result r;
+            r.value = variant(reason);
+            r.error = error_type::InterruptedError;
+            r.elapsed_us = static_cast<int_64>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - _t0)
+                    .count());
+            return r;
+        }
+
         variant walker::op_nop(const varvec&, walker&) { return variant(); }
 
         variant walker::op_here(const varvec& _tree, walker&) {

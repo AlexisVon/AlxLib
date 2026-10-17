@@ -78,7 +78,7 @@ The three fields of `result`:
 
 `home_dir` is **the base relative imports resolve against**, and the anchor of the module namespace.
 
-Only retainable data may leave `exec()`: a result that holds an object handle — an `anyptr` (a module instance, a host object) or a container holding one — is refused; `error` comes back as `TypeError` (`exec result: <type> cannot be returned`, the name `type()` reports), the value is released and the engine reset. The gate reports through `result` alone — no `on_cerr` line. An `exec()` value is safe to keep indefinitely — its lifetime is the host's.
+Only retainable data may leave `exec()`: a result that holds an object handle — an `anyptr` (a module instance, a host object) or a container holding one — is refused; `error` comes back as `TypeError` (`exec result: <type> cannot be returned`, the name `type()` reports) and the value is released. The gate reports through `result` alone — no `on_cerr` line. An `exec()` value is safe to keep indefinitely — its lifetime is the host's.
 
 ### 3.2 Calling a script function
 
@@ -88,7 +88,7 @@ alx::script::engine::result call(const std::string& _name, const varvec& _args);
 
 Calls the `def` of that name in the **root scope** (no module path is resolved), passes the arguments as values, and returns the same shape as `exec`.
 
-Unlike `exec()`, `call()` has **no result gate** — a value holding an object handle comes back whole: the unrestricted channel for complex C++ & script work (dynamic object construction and the like). Its contract flips: such a value references the engine's world and must be dropped before the engine dies — and before any failed run, which resets the engine (a handle's instance lives in the run's world that the reset drops). The same holds for handles read back through `load()`, whose pointer is additionally invalidated by any root-variable addition and by any reset.
+Unlike `exec()`, `call()` has **no result gate** — a value holding an object handle comes back whole: the unrestricted channel for complex C++ & script work (dynamic object construction and the like). Its contract flips: such a value references the engine's world and must be dropped before the engine dies — and before an explicit `reset()`, which rebuilds the world the handle's instance lives in (a failed run no longer drops it). The same holds for handles read back through `load()`, whose pointer is additionally invalidated by any root-variable addition and by any reset.
 
 ### 3.3 Compiling into a product
 
@@ -304,7 +304,7 @@ bool running() const;        // true while an entry runs: exec() or call()
 void set_interrupt();        // ask for an interrupt (callable from any thread)
 ```
 
-The interrupt is **cooperative**: once the request is raised it takes effect at the next checkpoint of the execution flow (the run comes back as `InterruptedError`). Every entry that runs a walk reports it the same way — `exec` and `call` alike; a request made while nothing is running is discarded (an entry clears the flag as it starts), and a run that fails during execution — an error or an interrupt — resets the engine: root variables and loaded modules are gone, the next entry starts from an empty state. The checkpoints are governed by `set_hook`'s `_interval`, but **the flag is looked at on every checkpoint** — an interval of 0 only turns `exec` events off, `set_interrupt()` still works.
+The interrupt is **cooperative**: once the request is raised it takes effect at the next checkpoint of the execution flow (the run comes back as `InterruptedError`). Every entry that runs a walk reports it the same way — `exec` and `call` alike; a request made while nothing is running is discarded (an entry clears the flag as it starts), and a run that fails during execution — an error or an interrupt — **only ends that run**: root variables and loaded modules survive it, and `reset()` is the only thing that drops them. The checkpoints are governed by `set_hook`'s `_interval`, but **the flag is looked at on every checkpoint** — an interval of 0 only turns `exec` events off, `set_interrupt()` still works.
 
 ---
 

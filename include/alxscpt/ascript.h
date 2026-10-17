@@ -616,9 +616,10 @@ namespace alx {
              *
              * Safe to call from any thread. The request is honoured at the next instruction
              * boundary and the run comes back as InterruptedError; a request made while nothing
-             * is running is discarded, because an entry clears the flag as it starts. An
-             * interrupted run resets the engine — root variables and loaded modules are gone — as
-             * does any run that fails during execution.
+             * is running is discarded, because an entry clears the flag as it starts. Every run
+             * that fails during execution, an interrupted one included, only ends that run: root
+             * variables and loaded modules survive it, as they do through an in-script catch —
+             * reset() is the only thing that drops them.
              */
             virtual void set_interrupt() = 0;
 
@@ -675,8 +676,8 @@ namespace alx {
              * \brief Run source text, or a product of compile()
              *
              * A product is recognised by its container, so the one entry point runs either. Root
-             * variables and loaded modules are left behind for the next call — a run that fails
-             * during execution (an uncaught error or an interrupt) resets the engine instead. The
+             * variables and loaded modules are left behind for the next call, whether the run
+             * finished or failed — only reset() takes them away. The
              * script's own failures are reported rather than thrown: error carries the
              * classification, value the message, and the message also goes to on_cerr with a
              * traceback.
@@ -686,7 +687,7 @@ namespace alx {
              *                  is attributed to
              * Only retainable data may leave: a result that holds an object handle (an anyptr, in a
              * container too) is refused — error comes back as TypeError
-             * (`exec result: <type> cannot be returned`), the value released and the engine reset.
+             * (`exec result: <type> cannot be returned`) and the value is released.
              * \return error ParseError when source does not parse (value stays empty), VersionError
              *         when a product fails the etype/vtype gate, ImportError when its payload is
              *         corrupt, InterruptedError when a hook or set_interrupt() stopped the run;

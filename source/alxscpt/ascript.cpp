@@ -141,7 +141,7 @@ namespace alx {
 
                 auto t0 = std::chrono::steady_clock::now();
                 running_guard _rg(m_running);
-                call_walk cw;
+                walker::call_ctx cw;
                 cw.ca = ca;
                 cw.name = _name;
                 cw.tree.push_back(variant(OPTYPE(O_CALL)));
@@ -151,8 +151,7 @@ namespace alx {
                     leaf.push_back(variant(a));
                     cw.tree.push_back(variant(std::move(leaf)));
                 }
-                if (!m_w.state.current) m_w.state.current = &m_w.m_root;
-                return run_walk(t0, walk_entry_call, &cw);
+                return m_w.run_entry(t0, &walker::entry_call, &cw);
             }
 
             result exec(const bytes_view& _data,
@@ -165,14 +164,6 @@ namespace alx {
                 m_w.m_insn_total = 0;
                 m_w.m_interrupted = false;
                 m_w.m_interrupt_desc.clear();
-
-                // the walk state survives a run, so a stale position must not stick to a marker-less AST
-                m_w.state.clear_pos();
-
-                m_w.state.ret_flag = false;
-                m_w.state.break_flag = false;
-                m_w.state.cont_flag = false;
-                m_w.state.tail_flag = false;
 
                 varvec ast;
                 if (varsolid::is_valid(_data)) {
@@ -219,17 +210,15 @@ namespace alx {
                 // a list, so nodes stay put: a registered def keeps a pointer into this AST
                 m_w.m_root_asts.push_back(std::move(ast));
                 m_w.state.root = &m_w.m_root;
-                m_w.state.current = &m_w.m_root;
-                res = run_walk(t0, walk_entry_forest, nullptr);
+                res = m_w.run_entry(t0, &walker::entry_forest, nullptr);
                 if (res.error == error_type::NoError) {
                     if (const variant* bad = find_anyptr(res.value)) {
                         std::string msg = "exec result: " +
                                           std::string(type_name_script(*bad, m_cfg.type_ex_ptr,
                                                                        m_cfg.type_ex_ud)) +
                                           " cannot be returned";
-                        // release before reset: the value's refs unwind while the module world is alive
+                        // release while the module world is alive: the value's refs unwind in place
                         res.value = variant();
-                        m_w.reset();
                         res.value = variant(msg);
                         res.error = error_type::TypeError;
                     }
@@ -301,98 +290,6 @@ namespace alx {
             }
 
         private:
-            /// A walk body run_walk drives; _ud carries the entry's own context
-            using walk_entry = variant (*)(engine_impl&, void*);
-
-            /// call()'s context for its entry
-            struct call_walk {
-                call_able* ca = nullptr;
-                std::string name;
-                varvec tree;
-            };
-
-            /// The shared failure ladder of every engine entry: an interrupt outranks whatever the
-            /// walk raised, and a walk stopped at a checkpoint (a normal return) reports through the
-            /// same exit — so a run is interruptible wherever it was entered
-            result run_walk(const std::chrono::steady_clock::time_point& _t0, walk_entry _walk, void* _ud) {
-                result res;
-                try {
-                    res.value = _walk(*this, _ud);
-                } catch (const script_exception& _e) {
-                    if (m_w.m_interrupted) return interrupt_result(_t0);
-                    std::string trace;
-                    try {
-                        trace = walker::walk_state_trace(m_w);
-                    } catch (...) {
-                    }
-                    m_w.reset();
-                    std::string msg = strutil::format("Uncaught: [%1] %2",
-                                                      error_type_name(_e.type), _e.info);
-                    if (!trace.empty()) msg += "\n" + trace;
-                    on_cerr(msg);
-                    res.value = _e.info;
-                    res.error = _e.type;
-                } catch (const std::bad_alloc&) {
-                    if (m_w.m_interrupted) return interrupt_result(_t0);
-                    m_w.reset();
-                    on_cerr("MemoryError: out of memory");
-                    res.value = variant(std::string("out of memory"));
-                    res.error = error_type::MemoryError;
-                } catch (const std::length_error& _e) {
-                    if (m_w.m_interrupted) return interrupt_result(_t0);
-                    m_w.reset();
-                    on_cerr("MemoryError: " + std::string(_e.what()));
-                    res.value = variant(std::string(_e.what()));
-                    res.error = error_type::MemoryError;
-                } catch (const std::exception& _e) {
-                    if (m_w.m_interrupted) return interrupt_result(_t0);
-                    m_w.reset();
-                    std::string msg = "NativeError: " + std::string(_e.what());
-                    on_cerr(msg);
-                    res.value = variant(std::string(_e.what()));
-                    res.error = error_type::NativeError;
-                } catch (...) {
-                    if (m_w.m_interrupted) return interrupt_result(_t0);
-                    m_w.reset();
-                    on_cerr("NativeError: unknown");
-                    res.error = error_type::NativeError;
-                }
-                if (m_w.m_interrupted) return interrupt_result(_t0);
-                res.elapsed_us = static_cast<int_64>(
-                    std::chrono::duration_cast<std::chrono::microseconds>(
-                        std::chrono::steady_clock::now() - _t0)
-                        .count());
-                return res;
-            }
-
-            static variant walk_entry_forest(engine_impl& _e, void*) {
-                return _e.m_w.walk_forest(_e.m_w.m_root_asts.back());
-            }
-
-            static variant walk_entry_call(engine_impl& _e, void* _ud) {
-                auto& c = *static_cast<call_walk*>(_ud);
-                auto args = walker::scan_call_args(c.tree, 2, _e.m_w);
-                return walker::invoke_def(_e.m_w.state.current, *c.ca->m_def, c.name, c.tree, _e.m_w,
-                                          args);
-            }
-
-            result interrupt_result(const std::chrono::steady_clock::time_point& _t0) {
-                // the hook's reject reason, written through hook_info::desc; reset() clears it
-                std::string desc = m_w.m_interrupt_desc;
-                m_w.reset();
-                std::string reason = "execution interrupted";
-                if (!desc.empty()) reason += " — " + desc;
-                on_cerr("Uncaught: [InterruptedError] " + reason);
-                result r;
-                r.value = variant(reason);
-                r.error = error_type::InterruptedError;
-                r.elapsed_us = static_cast<int_64>(
-                    std::chrono::duration_cast<std::chrono::microseconds>(
-                        std::chrono::steady_clock::now() - _t0)
-                        .count());
-                return r;
-            }
-
             std::string check_version(const varmap& _vm) const {
 
                 if (m_cfg.etype.empty() && m_cfg.vtype == 0) return {};

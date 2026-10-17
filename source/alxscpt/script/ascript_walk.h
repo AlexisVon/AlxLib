@@ -13,6 +13,7 @@
 #include "ascript_dot.h"
 #include "ascript_resmng.h"
 #include <atomic>
+#include <chrono>
 
 namespace alx {
     namespace script {
@@ -57,6 +58,26 @@ namespace alx {
             variant walk_forest(const varvec& _forest);
             // false = interrupted; the due hook_event::exec fires from inside here
             bool checkpoint();
+
+            /// A walk body run_entry drives; _ud carries the entry's own context
+            using entry_fn = variant (walker::*)(void*);
+
+            /// call()'s context for its entry
+            struct call_ctx {
+                call_able* ca = nullptr;
+                std::string name;
+                varvec tree;
+            };
+
+            variant entry_forest(void*);
+            variant entry_call(void* _ud);
+            variant entry_init(void* _ud);
+
+            /// The shared ladder of every engine entry: the entry body plus the final catch layer
+            /// (five error arms, the interrupt outranking them all); a failure ends this run only —
+            /// the engine state stays, so nothing is reset here
+            engine::result run_entry(const std::chrono::steady_clock::time_point& _t0,
+                                     entry_fn _fn, void* _ud);
 
         public:
             static variant op_nop(const varvec&, walker&);
@@ -258,6 +279,7 @@ namespace alx {
 
         private:
             static variant walk_body(const varvec& _body, walker& _w);
+            engine::result interrupt_result(const std::chrono::steady_clock::time_point& _t0);
 
         private:
             // process-wide dispatch table filled once by init(); a null slot means the opcode has no handler

@@ -774,6 +774,10 @@ static void ext_sq(fwrap& fw) {
     fw.freturn(variant(x * x));
 }
 
+static void ext_throw_native(fwrap&) {
+    throw std::runtime_error("host blew up");
+}
+
 TEST(gt_ascript_engine, Ext_SetLookup) {
     engine* eng = engine::create();
     EXPECT_FALSE(eng->fid_extend("hello"));
@@ -1032,7 +1036,8 @@ TEST(gt_ascript_engine, AssignTarget_DynamicPath) {
     auto undef = eng->exec(alx::bytes_view(alx::bytes("var k = \"nope\"; @(k) = 1;")), "");
     EXPECT_EQ(undef.error, error_type::NameError);
 
-    auto ok = eng->exec(alx::bytes_view(alx::bytes("var v = [7]; var k = \"v[0]\"; @(k) = 8;")), "");
+    // a failed run leaves its bindings behind, so the second run picks fresh names
+    auto ok = eng->exec(alx::bytes_view(alx::bytes("var v = [7]; var k2 = \"v[0]\"; @(k2) = 8;")), "");
     EXPECT_EQ(ok.error, error_type::NoError);
     delete eng;
 }
@@ -1654,8 +1659,9 @@ TEST(gt_ascript_engine, HookOffRestore) {
     EXPECT_EQ(res.error, error_type::InterruptedError);
 
     eng->set_hook(nullptr, nullptr, 0);
+    // the interrupted run's own `i` is still bound (no reset on failure), so this run takes a fresh name
     auto res2 = eng->exec(alx::bytes_view(alx::bytes(
-                              "var i = 0; while (i < 1000) { i = i + 1; }\ni;")),
+                              "var j = 0; while (j < 1000) { j = j + 1; }\nj;")),
                           "");
     EXPECT_EQ(res2.error, error_type::NoError);
     EXPECT_EQ(res2.value.to<int_64>(), 1000);
@@ -2758,8 +2764,9 @@ TEST(gt_ascript_engine, Exec_ResultHoldsNoHandle) {
     EXPECT_EQ(bad.value.to<std::string>(), "exec result: import cannot be returned");
     EXPECT_TRUE(on_cerr.empty()) << "the gate reports through the result alone";
 
-    // the refused run resets the engine: the earlier def is gone
-    EXPECT_EQ(eng->call("keep", {}).error, error_type::NameError);
+    // a failed run ends the run only: the earlier def and this run's import binding both stay
+    EXPECT_EQ(eng->call("keep", {}).error, error_type::NoError);
+    EXPECT_NE(eng->load("m"), nullptr);
     EXPECT_EQ(eng->exec(alx::bytes_view(alx::bytes("1 + 1;")), "").value.to<int_64>(), 2);
 
     auto nested = eng->exec(
@@ -2779,6 +2786,74 @@ TEST(gt_ascript_engine, Exec_ResultHoldsNoHandle) {
     }
     delete eng;
     std::remove(tmp.c_str());
+}
+
+TEST(gt_ascript_engine, Failure_EngineStaysUsableWithoutReset) {
+
+    auto* eng = engine::create();
+    eng->on_cerr.connect([](const std::string&) {});
+
+    ASSERT_EQ(eng->exec(alx::bytes_view(alx::bytes("def peer() { return 7; }")), "").error,
+              error_type::NoError);
+    auto call_ok = [&]() {
+        auto r = eng->call("peer", {});
+        EXPECT_EQ(r.error, error_type::NoError);
+        EXPECT_EQ(r.value.to<int_64>(), 7);
+    };
+
+    // an uncaught script error from a nested frame
+    EXPECT_EQ(eng->exec(alx::bytes_view(alx::bytes("def die() { throw(\"x\"); } die();")), "").error,
+              error_type::RuntimeError);
+    call_ok();
+
+    // stack overflow
+    eng->set_max_stack(10);
+    EXPECT_EQ(eng->exec(alx::bytes_view(alx::bytes("def r(n) { r(n + 1); } r(0);")), "").error,
+              error_type::StackError);
+    eng->set_max_stack(1024);
+    call_ok();
+
+    // a host exception out of a native
+    eng->set_extend("host_boom", ext_throw_native);
+    EXPECT_EQ(eng->exec(alx::bytes_view(alx::bytes("$host_boom();")), "").error,
+              error_type::NativeError);
+    call_ok();
+
+    // a failed import
+    std::string fake = "tmp-alxscpt-gtest/alx_stays_usable.so";
+    {
+        std::ofstream ofs(fake);
+        ofs << "not a shared object";
+    }
+    EXPECT_EQ(eng->exec(alx::bytes_view(alx::bytes("link \"" + fake + "\" as bad;")), "").error,
+              error_type::ImportError);
+    std::remove(fake.c_str());
+    call_ok();
+
+    // the exec gate refusing a handle result
+    std::string mod = "tmp-alxscpt-gtest/alx_stays_usable.axc";
+    {
+        std::ofstream ofs(mod);
+        ofs << "var m = 1;";
+    }
+    EXPECT_EQ(eng->exec(alx::bytes_view(alx::bytes("import \"" + mod + "\" as ok; ok;")), "").error,
+              error_type::TypeError);
+    call_ok();
+
+    // an interrupt
+    hook_rec rec;
+    rec.budget = 20;
+    eng->set_hook(test_hook, &rec, 5);
+    EXPECT_EQ(eng->exec(alx::bytes_view(alx::bytes("var z = 0; while (1) { z = z + 1; }")), "").error,
+              error_type::InterruptedError);
+    eng->set_hook(nullptr, nullptr, 0);
+    call_ok();
+
+    // no failure above needed a reset — and reset() is still the only thing that drops the world
+    eng->reset();
+    EXPECT_EQ(eng->call("peer", {}).error, error_type::NameError);
+    delete eng;
+    std::remove(mod.c_str());
 }
 
 TEST(gt_ascript_engine, Parse_NestOverflowReportsOnce) {

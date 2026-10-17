@@ -414,7 +414,7 @@ namespace alx {
             if (params.is<varmap>()) {
                 auto& map = params.to<varmap>();
                 for (auto it = map.begin(); it != map.end(); ++it)
-                    _w.state.frames.back().store(it.key(), it.value());
+                    _w.state.frames->back().store(it.key(), it.value());
             }
             variant result = _w.walk_forest(body);
             while (_w.state.tail_flag) {
@@ -423,7 +423,7 @@ namespace alx {
                 result = _w.walk_forest(body);
             }
             _w.state.pop_frame();
-            _w.state.current = _w.state.frames.empty() ? _w.state.root : _w.state.frames.back().ent;
+            _w.state.current = _w.state.frames->empty() ? _w.state.root : _w.state.frames->back().ent;
             return result;
         }
 
@@ -676,7 +676,7 @@ namespace alx {
 
             const varvec* def = nullptr;
             scope_frame* def_frame = nullptr;
-            for (auto it = _w.state.frames.rbegin(); it != _w.state.frames.rend(); ++it) {
+            for (auto it = _w.state.frames->rbegin(); it != _w.state.frames->rend(); ++it) {
                 if (it->def) {
                     def = it->def;
                     def_frame = &*it;
@@ -726,7 +726,7 @@ namespace alx {
             variant result;
 
             _w.state.push_frame(nullptr, FF_BREAK | FF_CONT);
-            auto& sf = _w.state.frames.back();
+            auto& sf = _w.state.frames->back();
 
             while (true) {
 
@@ -758,7 +758,7 @@ namespace alx {
             variant result;
 
             _w.state.push_frame(nullptr, FF_BREAK | FF_CONT);
-            auto& sf = _w.state.frames.back();
+            auto& sf = _w.state.frames->back();
 
             if (_tree.size() > 1 && !_tree[1].null()) {
                 if (_tree[1].is_vec()) _w.walk_tree(_tree[1].to<varvec>());
@@ -811,7 +811,7 @@ namespace alx {
             variant result;
 
             _w.state.push_frame(nullptr, FF_BREAK | FF_CONT);
-            auto& sf = _w.state.frames.back();
+            auto& sf = _w.state.frames->back();
 
             variant iter_val = _w.walk_tree(_tree[2].to<varvec>());
             auto& target = _tree[1].to<varvec>();
@@ -960,12 +960,12 @@ namespace alx {
             auto& catch_node = _tree[2].to<varvec>();
             std::string catch_name = catch_node[1].to<std::string>();
 
-            size_t frame_snap = _w.state.frames.size();
+            size_t frame_snap = _w.state.frames->size();
 
             auto unwind_and_bind = [&](const std::string& _type, const variant& _val) {
-                while (_w.state.frames.size() > frame_snap)
+                while (_w.state.frames->size() > frame_snap)
                     _w.state.pop_frame();
-                _w.state.current = _w.state.frames.empty() ? _w.state.root : _w.state.frames.back().ent;
+                _w.state.current = _w.state.frames->empty() ? _w.state.root : _w.state.frames->back().ent;
 
                 varmap catch_info;
                 catch_info["what"] = variant(_type);
@@ -980,12 +980,12 @@ namespace alx {
                 sf.var_map.set(catch_name, data_snap);
 
                 // Pushed directly: push_frame would take the size after catch_info and leave that slot unowned
-                _w.state.frames.push_back(std::move(sf));
-                _w.state.current = _w.state.frames.back().ent;
+                _w.state.frames->push_back(std::move(sf));
+                _w.state.current = _w.state.frames->back().ent;
             };
 
             auto cleanup_catch_frame = [&]() {
-                if (!_w.state.frames.empty()) _w.state.pop_frame();
+                if (!_w.state.frames->empty()) _w.state.pop_frame();
             };
 
             try {
@@ -2613,11 +2613,11 @@ namespace alx {
         void walker::store_raw(walker& _w, const variant& _name, variant&& _init_val) {
             std::string name = _name.to<std::string>();
             walker::check_name_conflict(_w, name);
-            if (_w.state.frames.empty()) {
+            if (_w.state.frames->empty()) {
                 variant* p = _w.state.current->m_store.store(name, std::move(_init_val));
                 bind_owner(*p, _w.state.current);
             } else {
-                _w.state.frames.back().store(name, std::move(_init_val));
+                _w.state.frames->back().store(name, std::move(_init_val));
             }
         }
 
@@ -2809,8 +2809,8 @@ namespace alx {
             scope_frame* frame;
             if (_tco) {
 
-                // The reused frame is the callee's, not frames.back(): a tail call inside a block has block frames on top
-                auto& cf = _tco_frame ? *_tco_frame : _w.state.frames.back();
+                // The reused frame is the callee's, not frames->back(): a tail call inside a block has block frames on top
+                auto& cf = _tco_frame ? *_tco_frame : _w.state.frames->back();
                 cf.ent->m_store.m_data.resize(cf.base);
                 cf.var_map.clear();
                 cf.free.clear();
@@ -2890,7 +2890,7 @@ namespace alx {
             }
 
             _w.state.pop_frame();
-            _w.state.current = _w.state.frames.empty() ? _w.state.root : _w.state.frames.back().ent;
+            _w.state.current = _w.state.frames->empty() ? _w.state.root : _w.state.frames->back().ent;
             return result;
         }
 
@@ -3014,7 +3014,7 @@ namespace alx {
             }
 
             // the module store is reachable from the module top layer only: a frame deletes its own vars only
-            if (_w.state.frames.empty()) {
+            if (_w.state.frames->empty()) {
 
                 if (_w.state.current->m_store.contain(name)) {
                     _w.state.current->m_store.remove(name);
@@ -3022,7 +3022,7 @@ namespace alx {
                 }
                 return false;
             }
-            return _w.state.frames.back().remove(name);
+            return _w.state.frames->back().remove(name);
         }
 
         bool walker::del_dot(const varvec& _tree, walker& _w) {
@@ -3053,8 +3053,8 @@ namespace alx {
                 if (r.parent)
                     throw script_exception{error_type::TypeError,
                                            std::string("Type does not support delete ." + kstr)};
-                if (!_w.state.frames.empty())
-                    ok = _w.state.frames.back().remove(kstr);
+                if (!_w.state.frames->empty())
+                    ok = _w.state.frames->back().remove(kstr);
                 break;
 
             case ParentKind::Entity:
@@ -3065,7 +3065,7 @@ namespace alx {
                 if (r.slot_owner != _w.state.current)
                     throw script_exception{error_type::NameError,
                                            std::string("cannot delete across module boundary")};
-                if (_w.state.frames.empty() && r.slot_owner->m_store.contain(kstr)) {
+                if (_w.state.frames->empty() && r.slot_owner->m_store.contain(kstr)) {
                     r.slot_owner->m_store.remove(kstr);
                     ok = true;
                 }
@@ -3143,7 +3143,7 @@ namespace alx {
                 if (r.slot_owner != _w.state.current)
                     throw script_exception{error_type::NameError,
                                            std::string("cannot delete across module boundary")};
-                if (_w.state.frames.empty() && r.slot_owner->m_store.contain(kstr)) {
+                if (_w.state.frames->empty() && r.slot_owner->m_store.contain(kstr)) {
                     r.slot_owner->m_store.remove(kstr);
                     ok = true;
                 }
@@ -3281,7 +3281,7 @@ namespace alx {
             };
             std::vector<std::string> seq;
 
-            for (auto it = _w.state.frames.rbegin(); it != _w.state.frames.rend(); ++it) {
+            for (auto it = _w.state.frames->rbegin(); it != _w.state.frames->rend(); ++it) {
                 if (!(it->flags & FF_RET) && !it->pos.row) continue;
                 seq.push_back(item(it->pos.row, it->pos.col, pos_file(&*it, _w.state.root_entity),
                                    pos_func(&*it)));
@@ -3354,8 +3354,8 @@ namespace alx {
             impl_import* ent = _w.state.current;
             if (!ent) return;
 
-            if (!_w.state.frames.empty()) {
-                auto& cf = _w.state.frames.back();
+            if (!_w.state.frames->empty()) {
+                auto& cf = _w.state.frames->back();
                 uint_64 vi = cf.var_map.get(_name);
                 if (vi != uint_64_npos && vi >= cf.base)
                     throw script_exception{error_type::NameError,

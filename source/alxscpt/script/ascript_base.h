@@ -526,7 +526,9 @@ namespace alx {
             impl_import* root = nullptr;
             impl_import* root_entity = nullptr;
 
-            std::deque<scope_frame> frames;
+            // the storage the pointer defaults to; a yield service parks the walk by repointing it, never by moving this
+            std::deque<scope_frame> frames_main;
+            std::deque<scope_frame>* frames = &frames_main;
 
             impl_import* current = nullptr;
 
@@ -551,36 +553,36 @@ namespace alx {
                 : root(nullptr), current(nullptr) {}
             ~walk_state() { clear(); }
             void clear() {
-                frames.clear();
+                frames->clear();
                 current = nullptr;
                 root = nullptr;
                 root_entity = nullptr;
                 clear_pos();
             }
 
-            src_pos& pos_slot() { return frames.empty() ? top_pos : frames.back().pos; }
-            const src_pos& pos_slot() const { return frames.empty() ? top_pos : frames.back().pos; }
+            src_pos& pos_slot() { return frames->empty() ? top_pos : frames->back().pos; }
+            const src_pos& pos_slot() const { return frames->empty() ? top_pos : frames->back().pos; }
 
             void clear_pos() { top_pos = src_pos(); }
 
             scope_frame& push_frame(impl_import* _ent = nullptr, uint_8 _flags = FF_NONE) {
-                if (m_cfg && m_cfg->max_stack > 0 && frames.size() >= m_cfg->max_stack)
+                if (m_cfg && m_cfg->max_stack > 0 && frames->size() >= m_cfg->max_stack)
                     throw script_exception{error_type::StackError, std::string("stack overflow")};
-                frames.emplace_back(_ent ? _ent : current);
-                frames.back().flags = _flags;
-                return frames.back();
+                frames->emplace_back(_ent ? _ent : current);
+                frames->back().flags = _flags;
+                return frames->back();
             }
             // popping the last frame leaves current on the popped entity until the caller restores it
             void pop_frame() {
-                if (!frames.empty()) {
+                if (!frames->empty()) {
 
-                    uint_8 f = frames.back().flags;
+                    uint_8 f = frames->back().flags;
                     if (f & FF_RET) ret_flag = false;
                     if (f & FF_BREAK) break_flag = false;
                     if (f & FF_CONT) cont_flag = false;
                     if (f & FF_TAIL) tail_flag = false;
-                    frames.pop_back();
-                    if (!frames.empty()) current = frames.back().ent;
+                    frames->pop_back();
+                    if (!frames->empty()) current = frames->back().ent;
                 }
             }
 
@@ -588,12 +590,12 @@ namespace alx {
             variant* var_ptr(const std::string& _name) {
 
                 size_t depth = 0;
-                for (auto it = frames.rbegin(); it != frames.rend(); ++it, ++depth) {
+                for (auto it = frames->rbegin(); it != frames->rend(); ++it, ++depth) {
                     if (it->ent != current) break;
                     size_t idx;
                     variant* p = it->find(_name, &idx);
                     if (p) {
-                        if (depth > 0) frames.back().var_map.set(_name, idx);
+                        if (depth > 0) frames->back().var_map.set(_name, idx);
                         return p;
                     }
                 }

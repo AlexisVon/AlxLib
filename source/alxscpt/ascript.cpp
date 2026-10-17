@@ -487,21 +487,21 @@ namespace alx {
             return static_cast<const walker*>(wkdt)->m_cfg;
         }
         uint_64 hook_info::wkfm_size() const {
-            return static_cast<const walker*>(wkdt)->state.frames.size();
+            return static_cast<const walker*>(wkdt)->state.frames->size();
         }
 
         std::string hook_info::wkfm_func(uint_64 _i) const {
-            auto& f = static_cast<const walker*>(wkdt)->state.frames[_i];
+            auto& f = (*static_cast<const walker*>(wkdt)->state.frames)[_i];
             if (!f.def) return std::string(f.flags & FF_RET ? "eval" : "?");
             return walker::find_func_name(f.ent, f.def);
         }
 
         const void* hook_info::wkfm_eptr(uint_64 _i) const {
-            return static_cast<const walker*>(wkdt)->state.frames[_i].ent;
+            return (*static_cast<const walker*>(wkdt)->state.frames)[_i].ent;
         }
 
         std::vector<std::string> hook_info::wkfm_data_keys(uint_64 _i) {
-            auto& f = static_cast<const walker*>(wkdt)->state.frames[_i];
+            auto& f = (*static_cast<const walker*>(wkdt)->state.frames)[_i];
             std::vector<std::string> keys;
             // promoted: the slot array is frozen and the hash holds the live names
             if (f.var_map.is_promoted()) {
@@ -518,7 +518,7 @@ namespace alx {
         }
 
         const variant* hook_info::wkfm_data_cptr(uint_64 _i, const char* _key) const {
-            auto& f = static_cast<const walker*>(wkdt)->state.frames[_i];
+            auto& f = (*static_cast<const walker*>(wkdt)->state.frames)[_i];
             uint_64 idx = f.var_map.get(_key);
             if (idx == uint_64_npos) return nullptr;
             return &f.ent->m_store.m_data[idx];
@@ -538,7 +538,7 @@ namespace alx {
             auto* ent = static_cast<const impl_import*>(_e);
             // a slot at or past a frame's base is that frame's local, so entity level ends below it
             size_t base = ent->m_store.m_data.size();
-            for (auto& f : w.state.frames)
+            for (auto& f : *w.state.frames)
                 if (f.ent == ent && f.base < base) base = f.base;
             std::vector<std::string> keys;
             for (auto& p : ent->m_store.m_map)
@@ -550,7 +550,7 @@ namespace alx {
             auto& w = *static_cast<const walker*>(wkdt);
             auto* ent = static_cast<const impl_import*>(_e);
             size_t base = ent->m_store.m_data.size();
-            for (auto& f : w.state.frames)
+            for (auto& f : *w.state.frames)
                 if (f.ent == ent && f.base < base) base = f.base;
             auto it = ent->m_store.m_map.find(_key);
             if (it == ent->m_store.m_map.end() || it->second >= base) return nullptr;
@@ -633,7 +633,7 @@ namespace alx {
 
         varmap hook_info::wkdt_pos() const {
             auto& w = *static_cast<const walker*>(wkdt);
-            const scope_frame* f = w.state.frames.empty() ? nullptr : &w.state.frames.back();
+            const scope_frame* f = w.state.frames->empty() ? nullptr : &w.state.frames->back();
             return walker::pos_map(f, w.state, w.state.root_entity);
         }
 
@@ -641,7 +641,7 @@ namespace alx {
             auto& w = *static_cast<const walker*>(wkdt);
             std::list<varmap> out;
 
-            for (auto it = w.state.frames.rbegin(); it != w.state.frames.rend(); ++it) {
+            for (auto it = w.state.frames->rbegin(); it != w.state.frames->rend(); ++it) {
                 // a position-less frame is dropped, an eval frame kept: the error trace's own rule
                 if (!(it->flags & FF_RET) && !it->pos.row) continue;
                 varmap m = walker::pos_map(&*it, w.state, w.state.root_entity);

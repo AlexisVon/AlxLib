@@ -112,7 +112,7 @@ assert_eq(loop_sum, 114, "switch break in loop: sum → 114");
 
 	// ========== TCO + tail call inside an if branch ==========
 	// nested block frame above the function frame — must rebind the function
-	// frame, not frames.back() (was: infinite loop, hung)
+	// frame, not frames->back() (was: infinite loop, hung)
 	def r_in_if(n) {
 	    if (n > 0) {
 	        return r_in_if(n - 1);

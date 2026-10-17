@@ -44,7 +44,7 @@ struct test_harness {
 TEST(gt_ascript_context, Load_Variable) {
     test_harness h;
     h.w.state.push_frame();
-    auto& sf = h.w.state.frames.back();
+    auto& sf = h.w.state.frames->back();
     sf.store("x", variant(42));
     variant* p = h.w.state.var_ptr("x");
     ASSERT_NE(p, nullptr);

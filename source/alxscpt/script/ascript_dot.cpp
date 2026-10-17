@@ -39,7 +39,7 @@ namespace alx {
             variant* v = nullptr;
             ParentKind pk = ParentKind::Entity;
             // innermost frame first, and only frames of the current entity: a hit here is a block-local
-            for (auto it = _s.frames.rbegin(); it != _s.frames.rend(); ++it) {
+            for (auto it = _s.frames->rbegin(); it != _s.frames->rend(); ++it) {
                 if (it->ent != _s.current) break;
                 size_t idx;
                 v = it->find(key, &idx);

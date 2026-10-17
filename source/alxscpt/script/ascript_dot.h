@@ -19,7 +19,7 @@ namespace alx {
         // parent IS that container; Value means a leaf nothing can be indexed through.
         enum class ParentKind : uint_8 {
             Unknown,
-            // Frame/Entity: the key is a name, so deletion goes to frames.back() /
+            // Frame/Entity: the key is a name, so deletion goes to frames->back() /
             // slot_owner->m_store, and a non-null parent there is refused as a leaf.
             Frame,
             Entity,

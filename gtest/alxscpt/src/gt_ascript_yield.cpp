@@ -251,6 +251,54 @@ TEST(gt_ascript_yield, ExpiredNeverRuns) {
     g_eng = nullptr;
 }
 
+TEST(gt_ascript_yield, ConcurrentDeliveriesExpireWhileTheEngineRuns) {
+    engine* eng = engine::create();
+    eng->set_extend("nap", native_nap);
+    auto fut = std::async(std::launch::async, [&] {
+        return run(eng, "$nap(300); var c = yield(0, 0); return c;");
+    });
+    for (int i = 0; i < 5000 && !eng->running(); i++)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    ASSERT_TRUE(eng->running());
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    std::vector<std::future<result>> futs;
+    for (int i = 0; i < 50; i++) futs.push_back(eng->yield("f", varvec(), 0, 10));
+
+    auto r = fut.get();
+    ASSERT_EQ(r.error, error_type::NoError);
+    EXPECT_EQ(r.value.to<int_64>(), 0);
+    for (auto& f : futs) {
+        ASSERT_EQ(f.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+        auto fr = f.get();
+        EXPECT_EQ(fr.error, error_type::YieldError);
+        EXPECT_EQ(fr.value.to<std::string>(), "expired");
+    }
+    delete eng;
+}
+
+TEST(gt_ascript_yield, UnlimitedCapacityAdmitsEverything) {
+    engine* eng = engine::create();
+    g_eng = eng;
+    g_futs.clear();
+    g_marks.clear();
+    eng->set_extend("post", native_post);
+    eng->set_extend("mark", native_mark);
+    eng->set_extend("shrink", native_shrink);
+    std::string src = "$shrink(0); def f() { $mark(\"f\"); }";
+    for (int i = 0; i < 300; i++) src += "$post(\"f\");";
+    src += "var c = yield(0, 0); return c;";
+    auto r = run(eng, src.c_str());
+    ASSERT_EQ(r.error, error_type::NoError);
+    EXPECT_EQ(r.value.to<int_64>(), 300);
+    EXPECT_EQ(g_marks.size(), 300u);
+    for (auto& f : g_futs) EXPECT_EQ(f.get().error, error_type::NoError);
+    g_futs.clear();
+    g_marks.clear();
+    delete eng;
+    g_eng = nullptr;
+}
+
 TEST(gt_ascript_yield, NoYieldPointMeansNotExecuted) {
     engine* eng = engine::create();
     g_eng = eng;
@@ -361,6 +409,28 @@ TEST(gt_ascript_yield, MissingNameFailsInsideTheFuture) {
     auto fr = g_futs[0].get();
     EXPECT_EQ(fr.error, error_type::NameError);
     EXPECT_EQ(fr.value.to<std::string>(), "function not found: nosuch");
+    g_futs.clear();
+    delete eng;
+    g_eng = nullptr;
+}
+
+TEST(gt_ascript_yield, ServicedOutcomeMatchesCall) {
+    engine* eng = engine::create();
+    g_eng = eng;
+    g_futs.clear();
+    eng->set_extend("post", native_post);
+    auto setup = run(eng, "def f() { return [1, 2][9]; }");
+    ASSERT_EQ(setup.error, error_type::NoError);
+    auto direct = eng->call("f", varvec());
+    ASSERT_EQ(direct.error, error_type::IndexError);
+
+    auto r = run(eng, "$post(\"f\"); var c = yield(0, 0); return c;");
+    ASSERT_EQ(r.error, error_type::NoError);
+    EXPECT_EQ(r.value.to<int_64>(), 1);
+    ASSERT_EQ(g_futs.size(), 1u);
+    auto fr = g_futs[0].get();
+    EXPECT_EQ(fr.error, direct.error);
+    EXPECT_EQ(fr.value.to<std::string>(), direct.value.to<std::string>());
     g_futs.clear();
     delete eng;
     g_eng = nullptr;
@@ -486,6 +556,49 @@ TEST(gt_ascript_yield, CurryingAllowsALaterDefinition) {
     g_eng = nullptr;
 }
 
+#ifdef ALX_TEST_LINK_CURRY_MINT_SO
+TEST(gt_ascript_yield, ADeletedHandleLeavesTheEngineRunning) {
+    engine* eng = engine::create();
+    g_eng = eng;
+    g_futs.clear();
+    eng->set_extend("post", native_post);
+    std::string src = std::string("link \"") + ALX_TEST_LINK_CURRY_MINT_SO + "\" as t;";
+    src += "def f(a) { return a + 1; } t.mintdrop();";
+    src += "$post(\"f\", 0, 0, 41); var c = yield(0, 0); return c;";
+    auto r = run(eng, src.c_str());
+    ASSERT_EQ(r.error, error_type::NoError);
+    EXPECT_EQ(r.value.to<int_64>(), 1);
+    ASSERT_EQ(g_futs.size(), 1u);
+    auto fr = g_futs[0].get();
+    EXPECT_EQ(fr.error, error_type::NoError);
+    EXPECT_EQ(fr.value.to<int_64>(), 42);
+    g_futs.clear();
+    delete eng;
+    g_eng = nullptr;
+}
+#endif
+
+#ifdef ALX_TEST_LINK_CURRY_LOAD_SO
+TEST(gt_ascript_yield, CurryingRefusedInLoadEntry) {
+    engine* eng = engine::create();
+    auto r = run(eng, (std::string("link \"") + ALX_TEST_LINK_CURRY_LOAD_SO + "\" as t; 1;").c_str());
+    EXPECT_EQ(r.error, error_type::LinkError);
+    EXPECT_NE(r.value.to<std::string>().find("currying not available"), std::string::npos);
+    delete eng;
+}
+#endif
+
+#ifdef ALX_TEST_LINK_CURRY_CREATE_SO
+TEST(gt_ascript_yield, CurryingRefusedInCreateEntry) {
+    engine* eng = engine::create();
+    auto r = run(eng,
+                 (std::string("link \"") + ALX_TEST_LINK_CURRY_CREATE_SO + "\" as t; 1;").c_str());
+    EXPECT_EQ(r.error, error_type::LinkError);
+    EXPECT_NE(r.value.to<std::string>().find("currying not available"), std::string::npos);
+    delete eng;
+}
+#endif
+
 TEST(gt_ascript_yield, HardInterruptDrainsTheBacklog) {
     engine* eng = engine::create();
     g_eng = eng;
@@ -583,6 +696,12 @@ TEST(gt_ascript_yield, YieldIsReserved) {
     EXPECT_FALSE(eng->set_extend("yield", native_mark));
     auto r = run(eng, "var yield = 1;");
     EXPECT_EQ(r.error, error_type::ParseError);
+    delete eng;
+}
+
+TEST(gt_ascript_yield, DefaultCapacityIs256) {
+    engine* eng = engine::create();
+    EXPECT_EQ(eng->config().max_yield, 256u);
     delete eng;
 }
 

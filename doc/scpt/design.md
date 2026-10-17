@@ -1862,6 +1862,15 @@ Version ALXLIB 1.2.2 → 1.2.3.
 
 Version ALXLIB 1.2.3 → 1.3.0.
 
+**Migration log (2026-10-17, version 1.3.1: an import/link failure reaches the script)**:
+
+- **Init failures stop being swallowed (2026-10-17)**: `import`/`link` used to treat `ResourceError` / `MemoryError` / `NativeError` from a module init or a link's load/create entry as a report-only event — the message went to `on_cerr` and the walk continued as if the binding had succeeded, so a script could go on with an alias that was never bound. They now propagate like every other init failure: an enclosing script `try` may catch them, and uncaught they end the run through the entry's standard ladder. Only an interrupt keeps the non-throwing short-circuit. A link whose `LINK_LOAD`/`LINK_CREATE` throws a C++ exception now surfaces as a `NativeError` result instead of a silent success.
+- **The yield queue's internals take their final names** (no behaviour change): the never-read `wait_for_item`/`expire`/`drain` return values are gone, the members are `m_mtx`/`m_queue`/`m_max_yield`, and the entry-end settle guard is `settle_guard`; `fwrap_impl::currying` sits at the file's end, mirroring the header.
+- **Documentation audit**: lang.md / api.md / design.md / notice.md corrections where the reference described behaviour the engine does not have (the prefixed chain's reach, `@`'s operand rule, `args.store` being create-only, `elapsed_us` on pre-walk failures, the heartbeat's thread scope, and so on). No behavioural claim changed.
+- **Migration note**: no opcode or AST change, so **vtype is untouched and .axp products need no recompilation**; the library version moves 1.3.0 → 1.3.1 — a patch, no symbol changed its home, so the SONAME **stays `.so.1.3`**.
+
+Version ALXLIB 1.3.0 → 1.3.1.
+
 ### 10.2 Syntax
 
 `$foo(args)` → `T_DOLLAR` + `T_NAME` (the value is the bare name `foo`) + the `O_EXCALL` opcode.

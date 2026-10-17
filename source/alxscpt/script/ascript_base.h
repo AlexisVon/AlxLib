@@ -551,6 +551,9 @@ namespace alx {
 
             walk_state()
                 : root(nullptr), current(nullptr) {}
+            // frames aims into this object's own storage — never let a copy re-aim at the source's
+            walk_state(const walk_state&) = delete;
+            walk_state& operator=(const walk_state&) = delete;
             ~walk_state() { clear(); }
             void clear() {
                 frames->clear();

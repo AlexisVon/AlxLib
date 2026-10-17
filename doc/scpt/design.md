@@ -548,8 +548,9 @@ walk_state {
     const varvec* code = nullptr;
     impl_import* root = nullptr;           // = &walker::m_root
     impl_import* root_entity = nullptr;    // walk origin entity; read by the position/trace mapping
-    deque<scope_frame> frames;             // the global flat frame stack
-    impl_import* current = nullptr;        // = frames.back().ent (or root)
+    deque<scope_frame> frames_main;        // the global flat frame stack (its storage; never moved)
+    deque<scope_frame>* frames = &frames_main;  // the active stack; a yield service parks a walk by repointing
+    impl_import* current = nullptr;        // = frames->back().ent (or root)
     src_pos top_pos;                       // position slot while no frame is live
     bool break_flag/cont_flag/ret_flag/tail_flag;
     const varmap* compiled_modules = nullptr;
@@ -666,7 +667,7 @@ struct scope_frame {
 };
 ```
 
-`scope_frame` is defined in `ascript_base.h` (implemented inline). Frames lie flat globally in `walk_state::frames` (`deque<scope_frame>`). `push_frame(entity*)` → the `max_stack` check → `frames.emplace_back(_ent ? _ent : current)`. `pop_frame()` → `frames.pop_back()` + restores `current`. `walk_state::var_ptr()` searches the global frame stack and stops as soon as it meets `ent != current` (the entity barrier), then uses `scope_frame::find(name, &idx)` → falling back to `current->m_store.find(name)`. A variable found in an outer frame is promoted into the current frame's var_map cache.
+`scope_frame` is defined in `ascript_base.h` (implemented inline). Frames lie flat globally in `walk_state::frames_main` (`deque<scope_frame>`), reached through the `frames` pointer so a context can be parked by repointing it (the coming yield service). `push_frame(entity*)` → the `max_stack` check → `frames->emplace_back(_ent ? _ent : current)`. `pop_frame()` → `frames->pop_back()` + restores `current`. `walk_state::var_ptr()` searches the global frame stack and stops as soon as it meets `ent != current` (the entity barrier), then uses `scope_frame::find(name, &idx)` → falling back to `current->m_store.find(name)`. A variable found in an outer frame is promoted into the current frame's var_map cache.
 
 ### 4.2 The walker class
 
@@ -1133,7 +1134,7 @@ std::list<varmap> wkdt_fpos() const; // per level {row, col, ofst, file, func}
 ```
 
 - **How a level renders**: `flags & FF_RET` = a script code boundary (only def and eval frames carry it) ⇒ render the function name / `"eval"`, while **a nameless level (block/loop) renders `?` and appears only when it has a position** (a `row == 0` empty level is simply not shown); the top-level line is always there. ⚠️ Frame kind is judged **by flags, not by `def`**: `sf.def = &_def` is assigned only **after** the frame is pushed
-- The position is **written into the top frame's own slot** (`walk_state::pos_slot()`: `frames.back().pos`, with no frames → the walker's top-level slot) ⇒ each level records "the statement that level is executing"; and because nothing pops frames on the exception path, every level survives into the trace
+- The position is **written into the top frame's own slot** (`walk_state::pos_slot()`: `frames->back().pos`, with no frames → the walker's top-level slot) ⇒ each level records "the statement that level is executing"; and because nothing pops frames on the exception path, every level survives into the trace
 - The write target is just the top frame's own slot (`pos_slot()`, one line) — no cache, no backward scan, no extra field
 - **The exec entry clears the top-level slot** (`clear_pos()`, from the same place as `reset()`'s `state.clear()`): otherwise the previous exec's position sticks to the next one — most visible when running an **unmarked** `.axp`, where the last script's row would be reported as this run's error position (a frame's own slot dies with the frame, so nothing to do there)
 

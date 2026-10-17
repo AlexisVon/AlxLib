@@ -12,6 +12,30 @@
 namespace alx {
     namespace script {
 
+        namespace {
+
+            // the handle fwrap::currying mints: a name and the engine, nothing resolved
+            class currying_handle : public fwrap::callback {
+            public:
+                currying_handle(engine* _e, std::string _name)
+                    : m_engine(_e), m_name(std::move(_name)) {}
+
+                std::future<result> call(const varvec& _args, uint_32 _priority,
+                                         uint_32 _expiry_ms) override {
+                    return m_engine->yield(m_name, _args, _priority, _expiry_ms);
+                }
+                std::future<result> call(varvec&& _args, uint_32 _priority,
+                                         uint_32 _expiry_ms) override {
+                    return m_engine->yield(m_name, std::move(_args), _priority, _expiry_ms);
+                }
+
+            private:
+                engine* m_engine;
+                std::string m_name;
+            };
+
+        }
+
         fwrap_impl::fwrap_impl(std::vector<variant*>&& _args, variant* _ret,
                                data_store* _store, walker* _ws)
             : m_args(std::move(_args)), m_ret(_ret),
@@ -69,6 +93,14 @@ namespace alx {
             iload.push_back(variant(_key));
             // the write posture: _tail_create stays true — a missing terminal key is created
             return walker::resolve_iload(iload, *m_ws);
+        }
+
+        fwrap::callback* fwrap_impl::currying(const std::string& _name) {
+            // The caller owns the returned handle; a load/unload entry point has no engine to name
+            if (!m_ws || !m_ws->state.m_engine)
+                throw script_exception{error_type::LinkError,
+                                       std::string("currying not available during load/unload")};
+            return new currying_handle(m_ws->state.m_engine, _name);
         }
 
         variant fwrap_impl::call(const variant& _func, const varvec& _args) {

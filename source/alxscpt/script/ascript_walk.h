@@ -38,7 +38,7 @@ namespace alx {
         // spans structural instants only -- never across execution, never across a wait.
         class yield_queue {
         public:
-            explicit yield_queue(const engine_config& _cfg) : m_cfg(_cfg) {}
+            explicit yield_queue(const engine_config& _cfg) : m_max(_cfg.max_yield) {}
             // the last net: leftovers drain as `not executed`, so no promise ever dies unset
             ~yield_queue();
 
@@ -61,9 +61,12 @@ namespace alx {
             bool wait_for_item(std::chrono::steady_clock::time_point _deadline, const std::atomic<bool>& _stop);
             // the external wake (set_interrupt): the flag is stored first, then this
             void wake();
+            // capacity, synced by set_max_yield: a delivery thread's push races that setter,
+            // so the admission value lives here as an atomic instead of in the config
+            void set_max(size_t _n) { m_max.store(_n, std::memory_order_relaxed); }
 
         private:
-            const engine_config& m_cfg; // capacity = max_yield, read live
+            std::atomic<size_t> m_max; // 0 = unlimited
             std::mutex m_mut;
             std::list<yield_request*> m_que;
             std::condition_variable m_cv;
@@ -97,8 +100,8 @@ namespace alx {
             // pending deliveries: constructed with the walker, settled by reset() and the dtor
             // before the store and the module layer go
             yield_queue m_yq;
-            // set while op_yield runs a serviced call: a yield inside it aborts that delivery
-            bool m_serving = false;
+            // set while op_yield serves: a yield inside a serviced call is a script-level error
+            bool m_yield_exec = false;
             // set on the sub-walker an import init runs on: yield there is a script-level error
             bool m_init_walk = false;
 

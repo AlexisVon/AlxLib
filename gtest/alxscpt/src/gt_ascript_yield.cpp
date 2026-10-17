@@ -56,6 +56,14 @@ namespace {
         _f.freturn(variant());
     }
 
+    fwrap::callback* g_cb = nullptr;
+
+    // $curry(name) -- mint a delivery handle for a worker thread
+    void native_curry(fwrap& _f) {
+        g_cb = _f.currying(_f[0].to<std::string>());
+        _f.freturn(variant());
+    }
+
     result run(engine* _e, const char* _src) {
         return _e->exec(alx::bytes_view(alx::bytes(_src)), "");
     }
@@ -241,7 +249,7 @@ TEST(gt_ascript_yield, NoYieldPointMeansNotExecuted) {
     g_eng = nullptr;
 }
 
-TEST(gt_ascript_yield, NestedYieldAbortsOnlyThatDelivery) {
+TEST(gt_ascript_yield, UncaughtNestedYieldEndsThatDelivery) {
     engine* eng = engine::create();
     g_eng = eng;
     g_futs.clear();
@@ -249,7 +257,7 @@ TEST(gt_ascript_yield, NestedYieldAbortsOnlyThatDelivery) {
     eng->set_extend("post", native_post);
     eng->set_extend("mark", native_mark);
     auto r = run(eng,
-                 "def f() { try { yield(0, 0); } catch (e) { $mark(\"caught\"); } $mark(\"after\"); }"
+                 "def f() { yield(0, 0); $mark(\"after\"); }"
                  "$post(\"f\"); var c = yield(0, 0); var x = 5; return c;");
     ASSERT_EQ(r.error, error_type::NoError);
     EXPECT_EQ(r.value.to<int_64>(), 1);
@@ -258,6 +266,27 @@ TEST(gt_ascript_yield, NestedYieldAbortsOnlyThatDelivery) {
     auto fr = g_futs[0].get();
     EXPECT_EQ(fr.error, error_type::YieldError);
     EXPECT_EQ(fr.value.to<std::string>(), "nested yield");
+    g_futs.clear();
+    delete eng;
+    g_eng = nullptr;
+}
+
+TEST(gt_ascript_yield, AServicedCallMayCatchItsNestedYield) {
+    engine* eng = engine::create();
+    g_eng = eng;
+    g_futs.clear();
+    g_marks.clear();
+    eng->set_extend("post", native_post);
+    eng->set_extend("mark", native_mark);
+    auto r = run(eng,
+                 "def f() { try { yield(0, 0); } catch (e) { return e[\"what\"]; } return \"missed\"; }"
+                 "$post(\"f\"); var c = yield(0, 0); return c;");
+    ASSERT_EQ(r.error, error_type::NoError);
+    EXPECT_EQ(r.value.to<int_64>(), 1);
+    ASSERT_EQ(g_futs.size(), 1u);
+    auto fr = g_futs[0].get();
+    EXPECT_EQ(fr.error, error_type::NoError);
+    EXPECT_EQ(fr.value.to<std::string>(), "YieldError");
     g_futs.clear();
     delete eng;
     g_eng = nullptr;
@@ -357,8 +386,8 @@ TEST(gt_ascript_yield, HardInterruptSettlesEverything) {
     EXPECT_EQ(r.error, error_type::InterruptedError);
     ASSERT_EQ(g_futs.size(), 1u);
     auto fr = g_futs[0].get();
-    EXPECT_EQ(fr.error, error_type::YieldError);
-    EXPECT_EQ(fr.value.to<std::string>(), "hard-interrupted");
+    EXPECT_EQ(fr.error, error_type::InterruptedError);
+    EXPECT_EQ(fr.value.to<std::string>(), "interrupted");
     g_futs.clear();
     delete eng;
     g_eng = nullptr;
@@ -377,6 +406,65 @@ TEST(gt_ascript_yield, InterruptWakesTheResidencyWait) {
     ASSERT_EQ(fut.wait_for(std::chrono::seconds(2)), std::future_status::ready);
     EXPECT_EQ(fut.get().error, error_type::InterruptedError);
     delete eng;
+}
+
+TEST(gt_ascript_yield, CurryingHandleDeliversFromAWorkerThread) {
+    engine* eng = engine::create();
+    g_eng = eng;
+    g_cb = nullptr;
+    eng->set_extend("curry", native_curry);
+    auto fut = std::async(std::launch::async, [&] {
+        return run(eng,
+                   "def f(a) { return a * 3; }"
+                   "$curry(\"f\"); var c = yield(3000, 2); return c;");
+    });
+    for (int i = 0; i < 5000 && !g_cb; i++)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    ASSERT_NE(g_cb, nullptr);
+
+    varvec a1;
+    a1.push_back(variant(static_cast<int_64>(7)));
+    auto f1 = g_cb->call(a1);
+    varvec a2;
+    a2.push_back(variant(static_cast<int_64>(2)));
+    auto f2 = g_cb->call(std::move(a2));
+    auto r1 = f1.get();
+    auto r2 = f2.get();
+    EXPECT_EQ(r1.error, error_type::NoError);
+    EXPECT_EQ(r1.value.to<int_64>(), 21);
+    EXPECT_EQ(r2.error, error_type::NoError);
+    EXPECT_EQ(r2.value.to<int_64>(), 6);
+    ASSERT_EQ(fut.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(fut.get().value.to<int_64>(), 2);
+    delete g_cb;
+    g_cb = nullptr;
+    delete eng;
+    g_eng = nullptr;
+}
+
+TEST(gt_ascript_yield, CurryingAllowsALaterDefinition) {
+    engine* eng = engine::create();
+    g_eng = eng;
+    g_cb = nullptr;
+    eng->set_extend("curry", native_curry);
+    auto fut = std::async(std::launch::async, [&] {
+        return run(eng,
+                   "$curry(\"later\"); def later(a) { return a + 1; } yield(3000, 1); return 1;");
+    });
+    for (int i = 0; i < 5000 && !g_cb; i++)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    ASSERT_NE(g_cb, nullptr);
+    varvec args;
+    args.push_back(variant(static_cast<int_64>(41)));
+    auto r = g_cb->call(args).get();
+    EXPECT_EQ(r.error, error_type::NoError);
+    EXPECT_EQ(r.value.to<int_64>(), 42);
+    ASSERT_EQ(fut.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(fut.get().error, error_type::NoError);
+    delete g_cb;
+    g_cb = nullptr;
+    delete eng;
+    g_eng = nullptr;
 }
 
 TEST(gt_ascript_yield, YieldIsReserved) {

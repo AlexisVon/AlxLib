@@ -137,6 +137,21 @@ namespace alx {
         }
 
         /**
+         * \brief What a run reports: the value, how it went, and how long it took
+         *
+         * Exec, call and yield all speak in this; a yield delivery carries it inside its
+         * future, and the error is always a value of error_type.
+         */
+        struct result {
+            /// Last statement's value, or the error message when error is not NoError
+            variant value;
+            /// Wall time of the run, in microseconds
+            int_64 elapsed_us = 0;
+            /// NoError when the run finished normally
+            error_type error = error_type::NoError;
+        };
+
+        /**
          * \brief What fired a hook callback; hook_info::info carries the payload
          *
          * Every event but exec is delivered regardless of the checkpoint interval. A callback
@@ -443,6 +458,37 @@ namespace alx {
 
             /// Configuration of the engine, with the pipe pointers in it
             virtual const engine_config& config() const = 0;
+
+            /**
+             * \brief A delivery handle, one per currying() call
+             *
+             * Holds the target name and the engine, nothing resolved: the name is looked up
+             * when a delivery is serviced, so a def defined later is fine. `call` is
+             * engine::yield under this handle's name — same refusals, same outcomes, same
+             * thread rules — and the rvalue overload moves the arguments only on acceptance.
+             * The caller owns the handle and deletes it; it names the engine, so it must go
+             * before the engine does (using one afterwards is UB).
+             */
+            class callback {
+            public:
+                virtual ~callback() = default;
+                /// engine::yield(_name, ...) with this handle's name
+                virtual std::future<result> call(const varvec& _args, uint_32 _priority = 0,
+                                                 uint_32 _expiry_ms = 0) = 0;
+                /// The varvec&& overload; otherwise identical
+                virtual std::future<result> call(varvec&& _args, uint_32 _priority = 0,
+                                                 uint_32 _expiry_ms = 0) = 0;
+            };
+
+            /**
+             * \brief Mint the delivery handle naming _name
+             *
+             * The handle is how a native hands a delivery channel to its worker threads. It
+             * belongs to the caller, which deletes it before the engine dies. Not available
+             * from a load/unload entry point (there is no engine there), and the name is not
+             * checked — currying a not-yet-defined def is legal.
+             */
+            virtual callback* currying(const std::string& _name) = 0;
         };
 
         /// Signature of an extension function and of a native bound with fwrap::bind()
@@ -465,21 +511,6 @@ namespace alx {
         using script_release = void (*)(fwrap&);
         /// Signature of the LINK_UNLOAD entry point
         using script_unload = void (*)(fwrap&);
-
-        /**
-         * \brief What a run reports: the value, how it went, and how long it took
-         *
-         * Exec, call and yield all speak in this; a yield delivery carries it inside its
-         * future, and the error is always a value of error_type.
-         */
-        struct result {
-            /// Last statement's value, or the error message when error is not NoError
-            variant value;
-            /// Wall time of the run, in microseconds
-            int_64 elapsed_us = 0;
-            /// NoError when the run finished normally
-            error_type error = error_type::NoError;
-        };
 
         /**
          * \brief The script engine: a compilation environment, an interpreter, and variables
@@ -706,8 +737,9 @@ namespace alx {
              * engine_config::max_yield, comes back as a ready future carrying YieldError --
              * never a broken promise; the serviced call's value and its failures alike arrive
              * inside the future. The name is resolved at the service position, so a delivery
-             * may name a def defined later. Callable from any thread except the one running
-             * the script; that thread must never block on a future it queued itself.
+             * may name a def defined later. Callable from any thread; the thread that runs
+             * the script must never block on a future it queued itself -- its synchronous
+             * tool is fwrap::call().
              *
              * \param _name def name, resolved in the root scope like call()
              * \param _args Arguments, passed as the values they hold at the call; the rvalue

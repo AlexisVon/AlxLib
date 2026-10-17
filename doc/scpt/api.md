@@ -104,15 +104,15 @@ std::future<alx::script::result> yield(const std::string& _name, varvec&& _args,
 void set_max_yield(size_t _n);   // writes engine_config::max_yield
 ```
 
-Queues a call to run at the script's next `yield()` (`lang.md` §9.4) — `call()` serialized onto the running timeline. Callable from any thread except the one running the script.
+Queues a call to run at the script's next `yield()` (`lang.md` §9.4) — `call()` serialized onto the running timeline. Callable from any thread; the thread that runs the script must never block on a future it queued itself (its synchronous tool is `fwrap::call`).
 
 - **accepted only while a run is in progress and the queue is below `max_yield`**; otherwise the future comes back already fulfilled with `YieldError` (`no main fiber`, `yield full`) and nothing was moved — the rvalue overload hands the arguments over only on acceptance
 - the name is resolved when the delivery is serviced, in the root scope like `call()`: a delivery may name a def defined later, and a miss comes back as `NameError` inside the future
-- `_priority`: higher runs first, equal priorities keep their arrival order; `_expiry_ms` is the longest the delivery may wait in the queue — an **expired delivery never runs** and its future says `expired` (settled by a background pass, so its precision is about one 50 ms beat)
-- **every outcome is inside the future** — the value, a script error, or `YieldError` (`expired`, `not executed` when the run ends before a yield point reached it, `hard-interrupted` when an interrupt tears the run down); a future is never broken
+- `_priority`: higher runs first, equal priorities keep their arrival order; `_expiry_ms` is the longest the delivery may wait in the queue — an **expired delivery never runs**: the take point settles one it finds expired exactly, and one still waiting in the queue is settled by the background pass (precision: about one 50 ms beat)
+- **every outcome is inside the future** — the value, a script error, `YieldError` (`expired`, `not executed` when the run ends before a yield point reached it, `nested yield` when a serviced call calls `yield()` and does not catch the script-level error), or `InterruptedError` when an interrupt tears the run down (the hook's reject reason, when there is one, is the value); a future is never broken
 - the result is shaped like `call()`'s and, like `call()`'s, has no exec result gate — a value holding an object handle must be dropped before the engine dies or `reset()` runs
 - the serviced call runs in root posture: root variables and modules only, `max_stack` as its own root budget, hook events and interrupts still firing (the watchdog covers it)
-- contract: never block on a future queued from the engine's own thread (use `fwrap::call` there); `set_max_yield` shrinks without evicting what is already queued
+- `set_max_yield` shrinks without evicting what is already queued
 
 ### 3.3 Compiling into a product
 
@@ -147,6 +147,8 @@ The keys `unpack` puts into `_out`: `"ast"` (AST dump), `"modules"` (module key 
 | `get_csys()` | `signal<uint_64, const std::string&>&` | pool-level events (module load/unload, link failures and the like); the callback gets (thread id, message). The yield service's background pass adds `heartbeat overrun: …` / `heartbeat error: …` — the only entries emitted off the running thread, so a slot must tolerate another thread and must not block |
 
 `get_csys()` returns a reference to a **pool-level shared signal** that outlives any single engine, so it is safe to keep across engines.
+
+**Every slot on every signal is a text notification, nothing more** — `on_cerr`, `on_cmpl` and `on_csys` alike. A slot runs on whichever thread emitted the entry (an `on_csys` entry from the yield service's background pass arrives on that thread), and the engine's own thread may be executing script while it runs, so a slot may only take the text (format it, or hand it off and return): it must not block, must not create or destroy engines, and must not re-enter the engine in any other way. The engine does not defend against a slot that does any of this.
 
 ---
 
@@ -210,6 +212,7 @@ eng->set_extend("print", [](alx::script::fwrap& _fw) {
 | `load/store/remove(name)` | reach the calling link instance's own data store; a returned pointer follows the same rule (any addition to the store, any reset) |
 | `object()` / `unwrap<T>()` | the C++ object bound to the current area — **area natives only**: outside an area dispatch (an extend handler, a load/unload callback, a `bind` with no area) no area is set, and calling it there is outside the contract — nothing is set to hand back |
 | `config()` | read the engine configuration (the pipe pointers included) |
+| `currying(name)` | mint a **delivery handle** (`fwrap::callback*`) naming a def — each `cb->call(args, priority, expiry)` is `engine::yield` under that name (§3.2b), the native's channel to its worker threads. **The caller owns the handle and deletes it**, before the engine dies (using one afterwards is UB). A load/unload entry point has no engine to name, so calling it there throws `LinkError` |
 
 ---
 
@@ -418,7 +421,7 @@ A script-side `throw`, a host-side `raise` and an engine-internal failure all la
 | Compile | `ParseError` |
 | Module | `ImportError`, `LinkError`, `VersionError` |
 | Host | `NativeError` (a wrapped C++ exception), `InterruptedError` (an interrupt, uncatchable) |
-| Delivery | `YieldError` — `no main fiber` / `yield full` / `expired` / `not executed` / `hard-interrupted` arrive inside a delivery's future; a `yield()` during module init throws it into the script and is catchable |
+| Delivery | `YieldError` — `no main fiber` / `yield full` / `expired` / `not executed` / `nested yield` arrive inside a delivery's future; a `yield()` during module init throws it into the script and is catchable. A delivery torn down by an interrupt reports `InterruptedError` (the interrupt's, not a `YieldError`) |
 | Fallback | `UnknownError` |
 
 - A script-side `try/catch` catches only what is catchable; `InterruptedError`, and the interrupt an import/link hook returning `false` in §8 causes, both **pass through the script's catch**.

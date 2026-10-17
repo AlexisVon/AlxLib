@@ -1044,11 +1044,11 @@ yield(ms, maxcnt); // also return early once maxcnt deliveries have been service
 ```
 
 - the value returned is the number of deliveries serviced in this call (a serviced call that failed still counts — its error went to its own future)
-- `(0, 0)` is a non-blocking single pass, `(0, n)` stops at n; with `ms > 0` arrivals during the window are serviced, an empty queue sleeps until the deadline and `n` short-circuits; **past the deadline no new delivery is taken and the in-flight one runs to completion**
+- `(0, 0)` is a non-blocking single pass, `(0, n)` stops at n; with `ms > 0` arrivals during the window are serviced, an empty queue sleeps until the deadline and `n` short-circuits; **past the deadline no new delivery is taken and the in-flight one runs to completion**; a window beyond a year is clamped to a year — a value that large can only mean "until interrupted"
 - a serviced call runs like a root call: it sees root variables and modules, **not** the caller's locals or execution position; `max_stack` is its own root budget, and hook events and interrupts keep firing during it (the host's watchdog covers serviced calls)
 - **during module init** (an `import`/`link` body) `yield()` throws a script-level `YieldError` — init runs before the engine's service point exists
-- **inside a serviced call** a nested `yield()` aborts that delivery with `YieldError` in its future; it is a delivery-level abort, not a script exception, so a `try/catch` there cannot catch it — the main script is unaffected
-- an interrupt behaves as everywhere else: it wakes the wait, no value is produced, and the run comes back as `InterruptedError`; queued deliveries settle as `hard-interrupted`
+- **inside a serviced call** a nested `yield()` raises a script-level `YieldError` (`nested yield`): the serviced call may catch it, and if it does not, that call ends with the `YieldError` in its delivery's future — the main script is unaffected
+- an interrupt behaves as everywhere else: it wakes the wait, no value is produced, and the run comes back as `InterruptedError`; queued deliveries settle as `InterruptedError` too (the hook's reject reason, when there is one, is the value)
 
 <div style="page-break-after: always;"></div>
 
@@ -1407,8 +1407,9 @@ str.upper("hi");  // "HI"
 | `args.object()` | the `anyptr*` stored for the current area — area natives only |
 | `args.unwrap<T>()` | `anyptr_ex<T>::as(*object())` — type-safe access to the C++ object (area natives only, like `object()`) |
 | `args.wrap<T>(ptr, "area", {{"m1", fn1}, ...})` | store the obj + register methods into the area |
+| `args.currying("f")` | mint a cross-thread delivery handle (`fwrap::callback*`) naming a def — **the caller owns it and deletes it** before the engine dies; `cb->call(vec[, pri, expiry])` queues a delivery serviced at the script's `yield()` (`api.md` §3.2b), the name resolved late; a load/unload entry point has no engine to name (`LinkError`) |
 
-> **Pointer validity (one contract)**: everything this interface hands back — the `args[i]` view, an `iload`/`load` slot, the `m_area` behind `object()`/`unwrap<T>()` — dies the moment script code runs again: a `fw.call()` back into the script, a run that fails during execution (the walk tears mid-op), or an explicit `reset()` invalidates them all, after which they must not be touched. `object()`/`unwrap<T>()` are for area natives only — outside an area dispatch (an extend handler, a load/unload callback, a `bind` with no `_area`) no area is set, and calling them there is outside the contract — nothing is set to hand back.
+> **Pointer validity (one contract)**: everything this interface hands back — the `args[i]` view, an `iload`/`load` slot, the `m_area` behind `object()`/`unwrap<T>()` — dies the moment script code runs again: a `fw.call()` back into the script, a run that fails during execution (the walk tears mid-op), or an explicit `reset()` invalidates them all, after which they must not be touched. The delivery handle from `currying()` is the one deliberate exception: it belongs to the caller, so it stays valid across calls and runs until the caller deletes it — which must happen before the engine dies. `object()`/`unwrap<T>()` are for area natives only — outside an area dispatch (an extend handler, a load/unload callback, a `bind` with no `_area`) no area is set, and calling them there is outside the contract — nothing is set to hand back.
 
 > **The `iload` path**: a simple name → data_store (`O_ILOAD` → `resolve_dot`).
 

@@ -44,6 +44,8 @@ namespace alx {
 
             const engine_config& config() const override { return m_ws ? m_ws->m_cfg : s_empty_cfg; }
 
+            fwrap::callback* currying(const std::string& _name) override;
+
             // Set by the engine when the native is reached through an area; stays null for a plain $name() call
             link_area* m_area = nullptr;
 

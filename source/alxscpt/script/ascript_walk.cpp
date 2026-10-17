@@ -150,10 +150,43 @@ namespace alx {
                 throw script_exception{error_type::TypeError, std::string("Type does not support [i] index")};
             }
 
-            // a yield inside a serviced call: a delivery-level abort that pierces every catch site
-            // the engine writes -- run_entry and op_try rethrow it -- and ends only that delivery
-            struct yield_abort {
-                std::string info;
+            // Parks the walk at root posture for the guard's lifetime: frames repoint at a local
+            // empty deque, current goes to the root entity, the control flags and position are
+            // saved, and the walk is marked as executing a delivery (a nested yield hits that)
+            struct root_guard {
+                walker& w;
+                std::deque<scope_frame> spare;
+                impl_import* saved_current;
+                bool saved_break, saved_cont, saved_ret, saved_tail, saved_yield_exec;
+                src_pos saved_pos;
+
+                explicit root_guard(walker& _w)
+                    : w(_w), saved_current(_w.state.current),
+                      saved_break(_w.state.break_flag), saved_cont(_w.state.cont_flag),
+                      saved_ret(_w.state.ret_flag), saved_tail(_w.state.tail_flag),
+                      saved_yield_exec(_w.m_yield_exec), saved_pos(_w.state.top_pos) {
+                    _w.state.frames = &spare;
+                    _w.state.current = &_w.m_root;
+                    _w.state.break_flag = false;
+                    _w.state.cont_flag = false;
+                    _w.state.ret_flag = false;
+                    _w.state.tail_flag = false;
+                    _w.state.top_pos = src_pos();
+                    _w.m_yield_exec = true;
+                }
+                ~root_guard() {
+                    // unwind inner-to-outer: a frame dtor truncates the store to its base, and a
+                    // front-to-back destruction would regrow it through the higher bases
+                    while (!spare.empty()) spare.pop_back();
+                    w.state.frames = &w.state.frames_main;
+                    w.state.current = saved_current;
+                    w.state.break_flag = saved_break;
+                    w.state.cont_flag = saved_cont;
+                    w.state.ret_flag = saved_ret;
+                    w.state.tail_flag = saved_tail;
+                    w.state.top_pos = saved_pos;
+                    w.m_yield_exec = saved_yield_exec;
+                }
             };
         }
 
@@ -168,17 +201,21 @@ namespace alx {
             bool accepted = false;
             {
                 std::lock_guard<std::mutex> lk(m_mut);
-                if (!m_cfg.max_yield || m_que.size() < m_cfg.max_yield) {
+                size_t max = m_max.load(std::memory_order_relaxed);
+                if (!max || m_que.size() < max) {
                     std::chrono::steady_clock::time_point ttd{};
                     if (_expiry_ms)
                         ttd = std::chrono::steady_clock::now() + std::chrono::milliseconds(_expiry_ms);
-                    // allocation runs before the initializer, so a throwing new leaves the args untouched
-                    yield_request* req = new yield_request{std::move(_name), std::move(_args), ttd,
-                                                           std::move(pro), _pri};
+                    // the list node first, the request second: whichever allocation fails leaves the
+                    // args untouched (new allocates before it initializes; the moves are noexcept)
+                    m_que.push_back(nullptr);
                     try {
-                        m_que.push_back(req);
+                        m_que.back() = new yield_request{std::move(_name), std::move(_args), ttd,
+                                                         std::move(pro), _pri};
                     } catch (...) {
-                        delete req;
+                        auto it = m_que.end();
+                        --it;
+                        m_que.erase(it);
                         throw;
                     }
                     accepted = true;
@@ -469,8 +506,6 @@ namespace alx {
             engine::result res;
             try {
                 res.value = (this->*_fn)(_ud);
-            } catch (const yield_abort&) {
-                throw;
             } catch (const script_exception& _e) {
                 if (m_interrupted) return interrupt_result(_t0);
                 std::string trace;
@@ -636,7 +671,10 @@ namespace alx {
             if (_w.m_init_walk)
                 throw script_exception{error_type::YieldError,
                                        std::string("yield: not available during module init")};
-            if (_w.m_serving) throw yield_abort{std::string("nested yield")};
+            // a yield inside a serviced call is an ordinary script-level error: the serviced
+            // script may catch it, and uncaught it ends that delivery's call
+            if (_w.m_yield_exec)
+                throw script_exception{error_type::YieldError, std::string("nested yield")};
             if (_tree.size() > 3)
                 throw script_exception{error_type::ArgError, std::string("yield: at most 2 arguments")};
 
@@ -658,48 +696,15 @@ namespace alx {
             }
             auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(time_ms);
 
-            struct root_pose {
-                walker& w;
-                std::deque<scope_frame> spare;
-                impl_import* saved_current;
-                bool saved_break, saved_cont, saved_ret, saved_tail;
-                src_pos saved_pos;
+            root_guard pose(_w);
 
-                explicit root_pose(walker& _w)
-                    : w(_w), saved_current(_w.state.current),
-                      saved_break(_w.state.break_flag), saved_cont(_w.state.cont_flag),
-                      saved_ret(_w.state.ret_flag), saved_tail(_w.state.tail_flag),
-                      saved_pos(_w.state.top_pos) {
-                    _w.state.frames = &spare;
-                    _w.state.current = &_w.m_root;
-                    _w.state.break_flag = false;
-                    _w.state.cont_flag = false;
-                    _w.state.ret_flag = false;
-                    _w.state.tail_flag = false;
-                    _w.state.top_pos = src_pos();
-                    _w.m_serving = true;
-                }
-                ~root_pose() {
-                    // unwind inner-to-outer: a frame dtor truncates the store to its base, and a
-                    // front-to-back destruction would regrow it through the higher bases
-                    while (!spare.empty()) spare.pop_back();
-                    w.state.frames = &w.state.frames_main;
-                    w.state.current = saved_current;
-                    w.state.break_flag = saved_break;
-                    w.state.cont_flag = saved_cont;
-                    w.state.ret_flag = saved_ret;
-                    w.state.tail_flag = saved_tail;
-                    w.state.top_pos = saved_pos;
-                    w.m_serving = false;
-                }
-            } pose(_w);
-
-            // the interrupt teardown: every delivery, the in-flight one included, settles as such
+            // the interrupt teardown: every delivery, the in-flight one included, reports the
+            // interrupt itself, with the hook's reject reason when there is one
             auto hard_stop = [&](std::promise<result>* _current) {
-                if (_current)
-                    _current->set_value(result{variant(std::string("hard-interrupted")), 0,
-                                               error_type::YieldError});
-                _w.m_yq.drain(error_type::YieldError, "hard-interrupted");
+                std::string why = _w.m_interrupt_desc.empty() ? std::string("interrupted")
+                                                              : _w.m_interrupt_desc;
+                if (_current) _current->set_value(result{variant(why), 0, error_type::InterruptedError});
+                _w.m_yq.drain(error_type::InterruptedError, why);
             };
 
             size_t served = 0;
@@ -729,26 +734,23 @@ namespace alx {
                 delete req;
                 ++served;
 
+                // the failures in between land in the result directly; the only exception that
+                // travels is a script one raised by the call, and run_entry catches it (call's ladder)
+                engine::result res;
                 std::string err;
                 call_able* ca = resolve_def(_w.m_root, name, err);
                 if (!ca) {
-                    pro.set_value(result{variant(err), 0, error_type::NameError});
-                    continue;
-                }
-                call_ctx cw;
-                cw.ca = ca;
-                cw.name = name;
-                cw.tree = make_call_tree(name, std::move(args));
-                engine::result res;
-                try {
+                    res.value = variant(std::move(err));
+                    res.error = error_type::NameError;
+                } else {
+                    call_ctx cw;
+                    cw.ca = ca;
+                    cw.name = name;
+                    cw.tree = make_call_tree(name, std::move(args));
                     res = _w.run_entry(std::chrono::steady_clock::now(), &walker::entry_call, &cw);
-                } catch (const yield_abort& _a) {
+                    // an error path leaves the serviced call's frames behind; drop them inner-first
                     while (!_w.state.frames->empty()) _w.state.frames->pop_back();
-                    pro.set_value(result{variant(_a.info), 0, error_type::YieldError});
-                    continue;
                 }
-                // an error path leaves the serviced call's frames behind; drop them inner-first
-                while (!_w.state.frames->empty()) _w.state.frames->pop_back();
                 if (res.error == error_type::InterruptedError) {
                     hard_stop(&pro);
                     return variant();
@@ -1321,8 +1323,6 @@ namespace alx {
 
             try {
                 return _w.walk_tree(_tree[1].to<varvec>());
-            } catch (const yield_abort&) {
-                throw;
             } catch (const script_exception& _e) {
                 unwind_and_bind(error_type_name(_e.type), _e.info);
                 variant result = _w.walk_tree(catch_node[2].to<varvec>());

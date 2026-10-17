@@ -39,8 +39,13 @@ namespace alx {
             struct queue_settle {
                 walker& w;
                 ~queue_settle() {
-                    w.m_yq.drain(error_type::YieldError,
-                                 w.m_interrupted ? "hard-interrupted" : "not executed");
+                    if (!w.m_interrupted) {
+                        w.m_yq.drain(error_type::YieldError, "not executed");
+                        return;
+                    }
+                    w.m_yq.drain(error_type::InterruptedError,
+                                 w.m_interrupt_desc.empty() ? std::string("interrupted")
+                                                            : w.m_interrupt_desc);
                 }
             };
 
@@ -278,7 +283,12 @@ namespace alx {
             void set_overflow_check(bool _on) override { m_cfg.overflow_check = _on; }
             void set_debug_enable(bool _on) override { m_cfg.debug_enable = _on; }
             void set_max_vecfill(size_t _n) override { m_cfg.max_vecfill = _n; }
-            void set_max_yield(size_t _n) override { m_cfg.max_yield = _n; }
+            void set_max_yield(size_t _n) override {
+                m_cfg.max_yield = _n;
+                // the admission value the delivery threads read: synced, so a concurrent push
+                // cannot tear it
+                m_w.m_yq.set_max(_n);
+            }
             void set_search_paths(const std::list<std::string>& _paths) override {
                 m_cfg.search_paths = _paths;
             }

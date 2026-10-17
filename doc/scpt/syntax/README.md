@@ -4,7 +4,7 @@ This directory contains **core** syntax highlighting files for Alexis Script (.a
 
 ## Core vs Extended
 
-- **Core** (`doc/scpt/syntax/`): Base engine with zero extensions. Only includes built-in functions (`env`, `type`, `int`, `float`, `string`, `bool`, `bytes`, `vec`, `map`, `lst`, `here`, `eval`, `trap`) and keywords.
+- **Core** (`doc/scpt/syntax/`): Base engine with zero extensions. Only includes built-in functions (`env`, `type`, `int`, `float`, `string`, `bool`, `bytes`, `vec`, `map`, `lst`, `here`, `eval`, `trap`, `yield`) and keywords.
 
 - **Extended** (`example/Scpt/syntax/`): Includes host-registered `$xxx` extension functions (`$print`, `$input`, `$tojs`, `$fmjs`, `$exec`, `$fread`, `$fwrite`, `$datetime`, etc.). These are optional and provided by the host application.
 

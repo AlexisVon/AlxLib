@@ -74,7 +74,7 @@
     },
 
     "builtin-functions": {
-      "match": "\\b(env|type|int|float|string|bool|bytes|vec|map|lst|here|eval|trap)\\b(?=\\s*\\()",
+      "match": "\\b(env|type|int|float|string|bool|bytes|vec|map|lst|here|eval|trap|yield)\\b(?=\\s*\\()",
       "name": "support.function.builtin.axc"
     },
 

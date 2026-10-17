@@ -18,7 +18,7 @@
 ```mermaid
 flowchart TB
     subgraph Engine["Engine (ascript.cpp)"]
-        CTX["context_impl"]
+        CTX["engine_impl"]
         BT["op_table<br/>(s_ops[O_ENUMSIZE])"]
     end
 
@@ -63,7 +63,7 @@ flowchart TB
 - `walker::init()` — idempotently initialises the static `s_ops` table; called automatically from the walker constructor
 - `native_func` signature: `void (*)(fwrap&)` — fwrap provides args/freturn/load/store/bind
 - **fwrap arguments are pointer-held (2026-08-12)**: an argument is pointer-held (a `variant&` writable view); the call scans its arguments into records first (`scan_call_args`: values evaluated in place, bare names deferred), takes the callee's address afterwards, and resolves the deferred names to their slots in one pass (`native_arg_ptrs`, the vector reserved once), zero-copy. **Contract**: reads and writes are safe until the first `fw.call()` back into script (after that they are invalidated or the contents may change, and must not be used again); a write to a variable argument is visible to the caller; an out-of-bounds access raises `IndexError`. **Call semantics**: one rule for the whole language, "read at the end" — the arguments are evaluated left to right (side-effect order unchanged), the callee's path expressions run after them, the address is taken last, and the value of a variable argument is read only after every argument has been evaluated (identical for natives and defs); nothing runs script code between the address being taken and the invoke
-- `script_load / script_unload / script_free` — link `.so` entry points, `void (*)(fwrap&)`. load is called once per fly; unload is called when the fly's last reference is released (optional); free is called when each link instance is destroyed (optional)
+- `script_load / script_create / script_release / script_unload` — link `.so` entry points, `void (*)(fwrap&)`, all optional. load builds the template (once per fly) and create builds an instance; release runs when an instance is destroyed and unload when the fly's last reference is released
 - Path resolution (runtime import/link): an absolute path is looked up directly → the current instance's env list in order (**before any `env()` call the list holds the module's own directory as an absolute path**, in force while env() has not been called; an env() call replaces it; an explicit `env([])` empties it) → the list the host set with `engine::set_search_paths` (engine search paths) → a fallback relative to the CWD (when CLI/cache mode has no script path)
 
 ---
@@ -73,7 +73,7 @@ flowchart TB
 ```
 include/alxscpt/ascript.h          — public API (engine + fwrap + script_exception + error_type)
 source/alxscpt/
-  ascript.cpp                      — thin engine wrapper (holds res_mng + walker)
+  ascript.cpp                      — thin engine wrapper (holds mod_mng + walker)
   script/
     ascript_enum.h                 — op_enum + tk_enum definitions
     ascript_base.h                 — base types (data_store, call_able, link_area, fly/impl, scope_frame, walk_state)
@@ -96,6 +96,7 @@ gtest/alxscpt/src/
   gt_ascript_debug.cpp             — debug positions: O_DEBUG markers, row/col of uncaught errors, debug hook events
   gt_ascript_pipe.cpp              — host IO pipe unit tests (set_pipe routing via fwrap)
   gt_ascript_trace.cpp             — call-stack trace compression tests (compress_trace / format_trace)
+  gt_ascript_yield.cpp             — the yield service: queue, deliveries, nested yield, interrupt settlement
   gt_ascript_utils.cpp             — variant conversion / comparison / trace unit tests
   gt_ascript.cpp                   — Engine integration tests
 doc/scpt/bench.md                  — performance benchmark
@@ -145,12 +146,12 @@ here() → [O_HERE, {row, col, ofst, file}]   // varmap literal, built during pa
 
 ```
 No prefix:   a.b.c[0]     → all access segments — climb frames for var a → value chain .b.c[0]
-Prefixed:    ..a.b         → all locate segments — pure entity navigation, the result is an entity
+Prefixed:    ..a.b         → all locate segments — pure entity navigation; the tail names a member of that entity (a sub-entity, variable or function)
           ..a.b.(c.d)   → locate segment ..a.b, .(...) bridges, access segment c.d
           ::a.b.(c[0])  → locate segment ::a.b, bridge, index inlined as int_64
 ```
 
-**A prefixed dot chain must carry a bridge** — a locate segment standing alone returns only an entity (void at the script layer); `.(...)` is mandatory to reach variables/functions/link/area.
+**A prefixed dot chain reaches members without a bridge** — the locate segment plus trailing keys resolves through the entity tree to a variable / function / element (link data stays opaque); `.(...)` is an optional terminal re-entry that starts a fresh chain from the located value, and the grammar does not require it.
 
 **Name constraint (2026-08-06 decision, with computed-value cascades evaluated)**: an element in the middle of a dot chain must be **named** — a variable slot or a navigation token. A computed value (a temporary such as `f()`) does not enter `resolve_dot`: under value semantics a temporary has no persistent storage, and supporting it would need eval plus temporary-slot management (write path, aliasing, lifetime) — high complexity, low payoff, so it is refused by design. A computed value takes keys with `[]` (O_INDEX goes down the eval path, which supports it natively — step::field container navigation `f()["x"]["y"]` already covers the read path completely).
 
@@ -424,7 +425,7 @@ A module's top-level `var` writes straight into `m_store` (there is no main fram
 
 ### 3.2d The delete expression
 
-`delete` is an expression (not a statement), precedence 17 (the same as `@`), right-associative, returning `bool`. It is parsed in `parse_suffix`, and its operand is a `parse_suffix`.
+`delete` is an expression (not a statement), precedence 15 (the same as `@`), right-associative, returning `bool`. It is parsed in `parse_suffix`, and its operand is a `parse_suffix`.
 
 ```
 delete x        → [O_DEL, "x"]                    // simple name → the string immediately
@@ -573,7 +574,7 @@ walk_state {
 **Core principle: `@` is the pointer substitute — `@name` / `@(expr)` parse the string into an object alias (a reference to an existing variable/function) and act on it indirectly (read, write, delete, call). At a declaration site (`var`/`def`/`import`/`link`) `@` is forbidden: the name must be fixed at parse time.**
 
 **Parser rules:**
-- after `@` comes only a `NAME` or a `(expr)`; a bare dot chain is not allowed
+- after `@` comes a `NAME` or a `(expr)`; a bare dot chain is not read as a name — it is evaluated and its value used as the target name (`@a.b` ≡ `@(a.b)`), while a call through a literal dot chain (`@a.b(...)`) is a compile error
 - value position: `@name` → `[O_ILOAD, [O_LOAD, "name"]]`; `@(expr)` → `[O_ILOAD, expr]`
 - call position: `@name(args)` → `[O_ICALL, [O_LOAD, "name"], args...]`; `@(expr)(args)` → `[O_ICALL, expr, args...]`
 - declaration site (`var`/`def`/`import as`/`link as`): `parse_target_name` accepts a plain NAME only; `@` is a parse error
@@ -654,6 +655,7 @@ struct scope_frame {
     vector<size_t> free;                   // free offsets relative to base
     slot_map<4> var_map;                   // name → absolute index in ent->m_store.m_data
     const varvec* def = nullptr;  // owning function definition (null = block frame)
+    const slot_map<4>* prot = nullptr; // loop-head names this layer may not delete
     uint_8 flags = FF_NONE;                // frame flags: which control-flow flags the pop clears
     src_pos pos;                           // row/col/ofst last recorded in this frame
 
@@ -712,10 +714,12 @@ Module management is split into two layers (2026-08-06): the resource layer `res
 
 ```
 ref_fly_import(path, w, err)   // ① lookup/create + ref (mod_mng, single-threaded lock-free map)
-  - resolve (res_mng::resolve_runtime_path) fails → nullptr + err (ImportError --
-    every import/link failure is classified ImportError and propagates to the main
-    script (a script try/catch can catch it); ResourceError is for resource limits
-    only (vec fill and the like), and an allocation failure is MemoryError)
+  - resolve (res_mng::resolve_runtime_path) fails → nullptr + err (ImportError;
+    every import/link failure propagates up the walk — to the enclosing try when
+    the import/link runs in an eval body, otherwise to the entry. A module-init
+    failure is wrapped as ImportError; an instance-construction or link load/create
+    failure keeps its own class (MemoryError / NativeError / LinkError); the
+    interrupt stays the one uncatchable outcome)
   - the gate hook (an import event; a per-engine checkpoint -- dependency closures are
     isolated naturally, cf. the contrast in §4.9)
   - pool find + ref; on a miss → take the resource first (res_mng::ref_ast: parse/compile
@@ -862,16 +866,16 @@ Conversion matrix:
 
 | Category | Operator | Operand requirement | Error |
 |------|------|-----------|------|
-| arithmetic | `+` `-` `*` | `to_num` (`cov_int` → `cov_float` fallback) | `ConvError` |
-| arithmetic | `/` | as above | + divide by zero → `DivZeroError` |
-| arithmetic | `%` | `int_64` only | non-int → `ConvError`; divide by zero → `DivZeroError` |
+| arithmetic | `+` `-` `*` | int/float (int preferred, float fallback); `+` also string+string / vec+vec / lst+lst / map+map | anything else → `TypeError` |
+| arithmetic | `/` | as above | `TypeError`; divide by zero → `DivZeroError` |
+| arithmetic | `%` | `int_64` only | non-int → `TypeError`; divide by zero → `DivZeroError` |
 | comparison | `==` `!=` | a null special case / same type / int↔float | cross-type → `TypeError` |
 | comparison | `<` `>` `<=` `>=` | same type / int↔float | cross-type → `TypeError` |
 | logical | `&&` `\|\|` `!` `?:` | `to_bool_strict`: bool / int_64 / double (0/0.0 = falsy) | not bool/int/float → `TypeError` |
-| bitwise | `&` `\|` `^` `~` | `int_64` only | non-int → `ConvError` |
-| shift | `<<` `>>` | `int_64` only | non-int → `ConvError` |
+| bitwise | `&` `\|` `^` `~` | `int_64` only | non-int → `TypeError` |
+| shift | `<<` `>>` | `int_64` only | non-int → `TypeError` |
 | concatenation | `+` `+=` | string+string / vec+vec / lst+lst / map+map | not string/container → `TypeError` |
-| increment/decrement | `++` `--` | `int_64` only | non-int → `ConvError` |
+| increment/decrement | `++` `--` | `int_64` only | non-int → `TypeError` |
 | bytes | `==` `!=` | same type, byte-by-byte comparison | cross-type → `TypeError` |
 | bytes | everything else | — | `TypeError` |
 
@@ -889,7 +893,7 @@ The `compile_error` struct: `msg`, `row`/`col` (1-based, UTF-8 aware), `index` (
 
 ### 4.8 Runtime exceptions
 
-`script_exception{type, info}` — info is a **std::string** (an error message is always a string, with no type guessing; the value of `throw expr` is stringified through `cov_string`, and `fwrap::raise` likewise) — one per error type the enum declares, `NoError` and `UnknownError` excluded (see `include/alxscpt/ascript.h:52-103`):
+`script_exception{type, info}` — info is a **std::string** (an error message is always a string, with no type guessing; the value of `throw expr` is stringified through `cov_string`, and `fwrap::raise` likewise) — one per error type the enum declares, `NoError` and `UnknownError` excluded (see `include/alxscpt/ascript.h:53-106`):
 
 | type | Source |
 |------|------|
@@ -912,7 +916,8 @@ The `compile_error` struct: `msg`, `row`/`col` (1-based, UTF-8 aware), `index` (
 | `NativeError` | wrapping a C++ exception |
 | `NavError` | `..` beyond the depth of the entity tree |
 | `VersionError` | the .axp version tag does not match the engine |
-| `InterruptedError` | forced interrupt by a host hook (uncatchable, see §4.9) |
+| `InterruptedError` | the host stopped the run (`set_interrupt()` or a hook returning false); uncatchable, see §4.9 |
+| `YieldError` | the yield service refused or ended a delivery (`no main fiber` / `yield full` / `expired` / `not executed`), a serviced call's uncaught nested `yield()`, or a `yield()` during module init; see §4.9f |
 
 
 
@@ -920,7 +925,7 @@ The `compile_error` struct: `msg`, `row`/`col` (1-based, UTF-8 aware), `index` (
 - `throw expr` → `op_throw` raises `script_exception{error_type::RuntimeError, cov_string(val)}` (the value is stringified)
 - `try/catch`: the catch variable is bound to `varmap{"what": ..., "info": ...}` (info = the info string)
 - `std::exception&` and `...` are caught alike and wrapped as `NativeError`
-- **A sub-module init failure** (`run_init_walk`): the original ImportError is passed through as it is (not nested — **it already carries the deeper context and trace**); any other error is wrapped as `ImportError` with info = `"in module <path>: <type>: <info>"` + **the sub-walker's folded trace** (a module init runs on its own frame stack, so the trace can only come from `sub`; beyond the module name it also gives the row/col **inside** the module) — bubbling up to the main script (a script try/catch can catch it, or the engine reports it in the result)
+- **A sub-module init failure** (`run_init_walk`): the original ImportError is passed through as it is (not nested — **it already carries the deeper context and trace**); any other error is wrapped as `ImportError` with info = `"in module <path>: <type>: <info>"` + **the sub-walker's folded trace** (a module init runs on its own frame stack, so the trace can only come from `sub`; beyond the module name it also gives the row/col **inside** the module) — bubbling up to the main script (a script try/catch can catch it when the import runs inside an `eval` body, otherwise the engine reports it in the result)
 - An exception with no `try` aborts: it propagates up the C++ stack, and **no op pops a frame on the exception path** (frames and positions are left on the stack as they are, which is the only way the trace can read every level); `op_try` unwinds once at its own boundary (everything above `frame_snap` is popped, through `pop_frame()` ⇒ per-level store cleanup + flag reset), and an uncaught one is left on the stack for that trace — the next entry's cleanup clears it, and only an explicit `reset()` drops it otherwise
 - The shared entry ladder (`walker::run_entry`): `script_exception` → trace + `on_cerr` + return the result (no re-throw; no reset anywhere — every failure only ends that run)
 - The `max_stack` check is centralised in `walk_state::push_frame(impl_import*)`
@@ -1009,7 +1014,7 @@ engine::result walker::run_entry(t0, entry_fn _fn, void* _ud) {   // one copy, t
 ```
 
 - **run_init_walk is isomorphic**: a normal return plus the 3 catch paths check the flag first → `_err = InterruptedError` → the standard failure path marks it bad + records _err (a half-initialised template never enters the pool)
-- **The op_import / op_link failure branch** (after the 2026-08-06 pool split): **the infection branch is gone** — a per-engine pool has no cross-engine segment to infect; an interrupted module init → this engine receives InterruptedError → throw (the script may catch it, or the top level reports it). A module init's walk and the caller's exec share one walker: on a hook interrupt `m_interrupted` is already set for this walk, so nothing needs infecting
+- **The op_import / op_link failure branch** (after the 2026-08-06 pool split): **the infection branch is gone** — a per-engine pool has no cross-engine segment to infect; an interrupted module init → this engine receives InterruptedError and the failure branch short-circuits on the flag, without throwing (so a script `try` cannot catch it; the top level reports `InterruptedError`). A module init's walk and the caller's exec share one walker: on a hook interrupt `m_interrupted` is already set for this walk, so nothing needs infecting
 
 **Interrupt semantics**:
 
@@ -1032,7 +1037,7 @@ engine::result walker::run_entry(t0, entry_fn _fn, void* _ud) {   // one copy, t
 
 **An explicitly instrumented breakpoint**: the script's `trap()` wakes the hook and carries a position — it is deliberately a manual instrumentation point (no compile-time position injection); every debugging action such as step-over or step-out is implemented host-side, and the engine provides only the trigger point + queries + one reverse channel.
 
-- **AST**: `[O_TRAP, posmap, args_expr?, cond_expr?]` — posmap is folded the same way as `here()` (fixed during parse); 0-2 arguments, more than 2 is a compile-time error
+- **AST**: `[O_TRAP, posmap, arg1?, arg2?]` — posmap is folded the same way as `here()` (fixed during parse); one argument is the payload, two are the condition then the payload; more than 2 is a compile-time error
 - **op_trap**: an atomic hook check comes first (null → return at once, **evaluating no expression at all**); the no-argument `trap()` fires unconditionally; the one-argument `trap(args_expr)` evaluates args_expr into `args` and fires unconditionally; the two-argument `trap(cond_expr, args_expr)` first evaluates cond_expr with `to_bool_strict`, skipping a falsy one (args_expr is not evaluated), while a truthy one evaluates args_expr into `args` and fires. An evaluation exception propagates down the normal path (it is not inside a try, so a script try can catch it); the hook callback itself is protected by `call_hook`'s try (an exception → interrupt + desc)
 - **Firing**: with the condition met and a hook installed it fires `hook_event::trap` (not subject to the interval, like the import/link gates); with no set_hook it skips every evaluation; false → an uncatchable InterruptedError
 - **The freq reverse channel**: the callback writes `freq` (the engine fills in the current interval; m_insn was already zeroed before the callback, so applying the new value on return counts from zero — the next instruction fires on the new frequency; `freq = 0` turns off exec checkpoints without affecting trap). freq is a persistent setting the engine never restores on its own: after a script exception (not an interrupt) it stays until the host writes it next. **Step = write `freq = 1` and stop at the next checkpoint**; **step-out = write `freq = 1` and watch `wkfm_size()` shallow out at each checkpoint** (by the `wkfm_func() != "?"` function-frame boundary) — position/stepping semantics belong to the host, and there is deliberately no instruction-level position
@@ -1259,11 +1264,13 @@ void hb_detach(hb_target* _t);
 
 **Teardown**: a failed run keeps root, defs and modules (reset-on-failure died in ②) — the queue is drained at run exit (`not executed`), at a hard interrupt (`InterruptedError` for every delivery, the in-flight one short-circuited layer by layer), and at every entry's start (the safety net for a racing enqueue, mirroring the flag clears). The queue must be empty before the store and the module layer go: nodes hold args (possibly anyptrs) and unfulfilled promises. `reset()` is the only reaper.
 
-**Impact**: `O_YIELD` appends after `O_DEBUG` — **no engine-side vtype change** (old products never carry it; a product that uses yield is the host's own stamping call, the gate at `ascript.cpp:298` doing the refusing).
+**Impact**: `O_YIELD` appends after `O_DEBUG` — **no engine-side vtype change** (old products never carry it; a product that uses yield is the host's own stamping call, the gate at `check_version` (`ascript.cpp:343`) doing the refusing).
 
 ---
 
 ## 5. API
+
+> **Snapshot**: this sketch predates the yield service. `engine::yield` (both overloads), `fwrap::currying` and `set_max_yield`, and the hoist of `result` to `script::result` (with `engine::result` as an alias), landed in 1.3.0 — see §4.9f and the header, which is authoritative.
 
 ```cpp
 class fwrap {
@@ -1382,7 +1389,7 @@ public:
 
 | # | Decision | Key point |
 |---|------|------|
-| 1 | **Cross-node return value lifetime** | `op_return` writes into the callee's `ret_slot`, and the slot is invalid once the scope_frame is destructed. The caller must copy the variant before the pop |
+| 1 | **Cross-node return value lifetime** | *(superseded: values travel back as `variant` returns through `walk_forest`; `ret_slot` survives only as fwrap's native return slot)* |
 | 3 | **scope_frame RAII** | the destructor fires automatically; the `node` pointer must stay valid for the frame's lifetime, so a node must not be moved |
 | 10 | **flyweight lifecycle** | an impl_import destructor calls `m_mng->release_fly(m_fly)`, managing the fly reference passively. The root is cleaned up by walker::reset |
 | 12 | **Template pointer stability** | `fly_import::m_ast` is a value member on the heap, so the `const varvec*` held in `call_able::m_def` stays valid for the fly's lifetime (an impl holds a fly ref) |
@@ -1396,13 +1403,13 @@ public:
 | # | Decision | Key point |
 |---|------|------|
 | 11 | **Exception across entities** | as a `script_exception` passes through, the scope_frame destructor chain rolls back entity by entity. The global frame stack unwinds uniformly |
-| 14 | **max_stack** | checked in `push_frame`, 0 = unlimited, over the limit raises StackError. Every frame-push path goes through this one entry |
+| 14 | **max_stack** | checked in `push_frame`, 0 = unlimited, over the limit raises StackError. Every frame-push path goes through this entry except the try/catch frame, which is pushed directly with its pre-built catch slot and is not counted |
 | 23 | **ArgError** | `invoke_def` raises ArgError when a parameter is left unspecified and has no default. The function clears break_flag + cont_flag before returning |
 | 24 | **Integer division overflow guard** | `INT64_MIN / -1` triggers a hardware SIGFPE that a C++ try-catch cannot catch. Every integer division/modulo/negation must check the overflow condition first |
 | 27 | **the ret_flag check** | the body of `op_while`/`op_for`/`op_foreach` must check `ret_flag`, or a return does not stop that loop |
 | 4 | **Circular import** | `a → b → a` raises ImportError. Cycle detection (after the 2026-08-06 pool split): a per-engine loading_stack duplicate check (nested init recursion within one engine; self at the top / circular deeper) — no fly is shared across engines, so there is no cross-thread cycle |
 | 38 | **engine::result** | exec() returns `{value, elapsed_us, error}`, and the error_type enum carries `UnknownError` and `NoError` alongside the error types. On an exception the exit code = int(error_type). Also: `engine::set_hook(fn, ud, interval)` is the single resource-control hook — instruction checkpoints (interrupt) + import/link gates (reject) (§4.9) |
-| 49 | **Interrupt coverage at the exits** | the interrupt verdict must check the flag first at **every** exit (exec's normal return + 3 catches, run_init_walk's normal return + 3 catches) — an in-flight throw must not mask an interrupt; missing one exit mislabels the fly ImportError (§4.9) |
+| 49 | **Interrupt coverage at the exits** | the interrupt verdict must check the flag first at **every** exit (exec's normal return + 5 catch arms, run_init_walk's normal return + 3 catches) — an in-flight throw must not mask an interrupt; missing one exit mislabels the fly ImportError (§4.9) |
 | 50 | **Interrupt null safety** | an in-flight op running on with a null operand is expected behaviour: every op either checks with is<> and throws a script_exception (covered at the exit) or uses to\<T\>()'s type-safe default — no UB, no crash (§4.9) |
 | 51 | **Cross-thread control** | `engine::running()` + `engine::set_interrupt()`: `m_interrupted` was upgraded to an `atomic<bool>` and `m_running` is a new atomic. `exec` and `call` manage its lifetime with one RAII guard, so an outside thread can query or interrupt safely (§4.9) |
 | 52 | **engine::call** | the single C++ entry point for calling a script def. A root store lookup for the call_able → build a temporary `[O_CALL, name, [arg]...]` tree → `walker::invoke_def` through the shared ladder (`walker::run_entry`). defs only (a native function is called directly from C++, with no need to go through the engine). Its ladder is exec's, so a failure ends the run only — nothing is reset. Callable between two execs (`state.current` points at the root and frames is empty) |
@@ -1633,7 +1640,7 @@ Before the call the walker hands the call_able's `m_area` to the fwrap (`fw.m_ar
 |---------|------|
 | compile error | → on_cmpl (compile_error, row/col/msg) |
 | runtime error | script_exception up the call stack → a script try/catch → uncaught → exec's top level → result.error + on_cerr |
-| an undefined opcode / a failed import and the like | → on_cerr |
+| an undefined opcode / another internal complaint the engine cannot report as a value | → on_cerr |
 | a native exception (exfunc/link handler) | exec's top-level catch → NativeError → on_cerr |
 
 exfunc is the host's responsibility: a handler is exempt from the red line just as link is (the host's responsibility); the engine side covers it with fwrap::raise() entering the script exception system, plus exec's top level turning any other exception into a reported NativeError.
@@ -1646,7 +1653,7 @@ exfunc is the host's responsibility: a handler is exempt from the red line just 
 
 ### 10.1 Design goals
 
-The base engine has **zero extensions** — any `$xxx` call is a compile error. A host registers extension functions and predefined constants on demand through `engine::set_extend()` and `engine::set_define()`, giving a script a superset of the engine platform's capabilities.
+The base engine has **zero extensions** — any `$xxx` call is a compile error in the normal compile path (eval and `@` resolve at run time). A host registers extension functions and predefined constants on demand through `engine::set_extend()` and `engine::set_define()`, giving a script a superset of the engine platform's capabilities.
 
 Two layers of motivation:
 1. **System/IO interaction**: a script function (def) cannot do file I/O or run commands, and previously all of that depended on `link "base"`. `$xxx` lifts those capabilities into host-registered extension functions with no link needed. **The engine maintains the mechanism only** (lexer/parser/walker/ext_table); the functions themselves are all registered by the host on demand — the host decides the capability set and the engine has zero IO dependencies.
@@ -1828,9 +1835,9 @@ Version ALXLIB 1.1.0 → 1.2.0.
 **Migration log (2026-10-10, version 1.2.2: the call order, the callable surface and link copies)**:
 
 - **`@` is an object alias — the rule never changed**: reflection is the language's pointer substitute, the string parsed into a reference to an existing object (a simple name or a dot/index chain) for read / write / delete / call. A detour that evaluated arbitrary expressions inside the string (`@("1+2")`, a call, a slice) was a defect and is refused now with `NameError`; evaluating source strings is `eval`'s job.
-- **The engine-state rule, now in writing**: any run that fails during execution — an uncaught error or an interrupt — resets the engine (root variables and loaded modules are gone, the next entry starts empty); `call()` also discards an idle-period interrupt request at its entry, like `exec()`.
+- **The engine-state rule, now in writing** *(superseded 2026-10-17 — a failed run no longer resets; see the 1.3.0 entry)*: any run that fails during execution — an uncaught error or an interrupt — resets the engine (root variables and loaded modules are gone, the next entry starts empty); `call()` also discards an idle-period interrupt request at its entry, like `exec()`.
 - **Alias values (2026-10-10)**: an `import`/`link` `as` alias is an ordinary value — `var x = alias` copies the instance (data only; the fly and its resources are shared) and `alias = v` discards the instance for the value, so containers and maps of instances work like any value (read an element out into a binding to use it); a link alias stored in another module reads the same way, and a copied instance's areas re-point to the copy, so its methods never reach the original's host objects. The only opacity left is a link's sub-data: unreadable and unwritable, with its functions and data variables undeletable (areas stay deletable — the §13.4 rules stand).
-- **The exec gate (2026-10-10)**: `exec()`'s result must be retainable data — basic types and containers; a result holding an anyptr anywhere is refused (`TypeError: exec result: <type> cannot be returned`), the value released on the spot and the engine reset. `call()` stays the unrestricted channel (host-managed values, see `api.md`).
+- **The exec gate (2026-10-10)**: `exec()`'s result must be retainable data — basic types and containers; a result holding an anyptr anywhere is refused (`TypeError: exec result: <type> cannot be returned`), the value released on the spot (the reset-on-failure it used to pair with was superseded 2026-10-17). `call()` stays the unrestricted channel (host-managed values, see `api.md`).
 - **The call order (2026-10-10)**: a call scans its arguments first (in text order), then the callee's path expressions run and the address is taken, and the invoke follows — the resolver's take-the-address-last discipline, now uniform (§3.2b), with nothing running script code between the address being taken and the invoke. The old order was undefined behaviour in exactly the shapes the sweep reproduced (an argument that discarded the callee's owner — `m.f(delete m)` — reached the call through a freed instance), so there is no compatibility to preserve: they report cleanly now, while the callee path resolves. The machinery followed: `collect_native_args` became `scan_call_args` / `native_arg_ptrs`, and a callee expression evaluating to a non-callable is `NameError: not a function: <type>` instead of a silent no-op.
 - **A callable is not a value (2026-10-10)**: the refusal lives in the type — `call_able`'s copy throws (`TypeError: function cannot be read as a value`), so the walk carries no defensive gate for it: wherever a copy would materialize — a binding, a container, an expression handed to a call, a script def's parameter, `type()`'s argument — it is refused on the spot, present and future read paths alike. An `import`/`link` instance is a whole entity and its copy carries its own lifetime (fly ref, children rebound); a callable is only a facet of the entity that defined it, so a copy would be a fragment with no lifetime of its own — a def handle outlived the reset that dropped its AST, or its source module's deletion. The engine's own duplications take explicit clones instead (`call_able::clone` / `link_area::clone` behind `copy_store`, which every prefab→instance and value-copy store walk uses) — a link area is non-copyable for the same reason. Calling is unaffected wherever a callable is reached by a name — a direct call, a dot call, `@(name)` or `@(path)` — and a function table is addressed by the name it holds: `@(table["add"])(2, 3)`. The host's `fwrap` channel is untouched: a `$`/link native takes a bare-name argument as a slot pointer, so a callable still reaches native code **by reference**.
 - **One binding, one delete rule (2026-10-10)**: a callable slot cannot be overwritten through any port — `@("g") = 5` / `::g = 5` / `m.g = 5` report `NameError: Cannot assign to function` now, exactly like the bare name always did (the compound and inc/dec ports already refused with their operand check); and under a link only the area instance/namespace stays deletable — a function or a data value (a handle stored into the data included) reports `TypeError`, whatever the depth.
@@ -2044,7 +2051,7 @@ The decomposition method: a **zero-iteration variant of the same AST shape** iso
 | B″ | name interning to integer ids (the AST carries an id, a dynamic name falls back to a string) | **expectation revised down**: `slot_map`'s slot scan measures only **1.5ns/lookup**, so name-ids save ~1ns at most; the remaining 15ns of access cost is not in this layer | it would mean touching the AST/serialisation + eval/@/reflection fallbacks — the same class of bet as the compile-time slots in 12.2 |
 | E | **rewriting the execution model**: a stack VM / direct threading (an explicit operand stack + computed goto, removing the per-node call/ret and the return round trip) | the only route left that can still "move the structure"; but by 12.2's sret measurement (11 nodes at 19.0ns = 1.7ns/node), the "return + dispatch" part is already pressed very low → **the ceiling on the benefit likewise needs re-estimating** | the prior question: **why will this not die like the compile-time slots?** The only convincing answer so far is "a linear IR as a runtime cache only, never into a `.axp`", unverified |
 | L | **semantically neutral optimisation of the link path**: fold the `O_DOT` prefix into the AST key vector at compile time (today `op_ncall` rebuilds `dot_ast` on every call → N segments = N variant copies + N heap allocations) and resolve directly from `_tree[1]` at runtime. The same class of rewrite as `O_ASS_*`: inside the same varvec format, **introducing no second representation** | estimated **8~10ns per segment** (from a small-block malloc of 5~8ns plus the copy; two segments ≈ 20ns, ~17% of the 114ns unpacking) — **not measured on its own**, so measure before touching it, per 12.5 | **hard constraint: it must not bypass the bounds check** (12.0-5). Caching a resolved `call_able*` is forbidden — that would let a native pointer outlive the check, which is tearing up a red line. Only a semantically neutral rewrite such as "rebuild the temporary vector" is allowed |
-| P3 | `op_concat` reserve + recognising `s = s # x` as an in-place append | ~40% of all concat work | aliasing / evaluation order |
+| P3 | *(stale wording: the operator is `+` / `op_add`, not `#` / `op_concat`)* reserve + recognising `s = s + x` as an in-place append | ~40% of all concat work | aliasing / evaluation order |
 | P2 | `eval_arg`'s leaf moves/lends a string view; `string(i)` computing a key with one allocation less | 10-20% on the concat cases | move only temporaries, and do not break the AST |
 | P5 | merging `contain`+`value`'s double find; the same copy elimination in op_slice | 50-150ns each | small |
 | — | ~~P1 varmap → a hash container~~ | — | **void**: the in-frame name→idx was replaced by the `slot_map<4>` (see 12.1); the `data_store` side was rejected (see 12.2). If the residual worry is the public `varmap` type (map literals / ordered iteration) itself, that has to be re-scoped first |

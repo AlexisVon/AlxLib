@@ -51,7 +51,7 @@ syn match   alexisType "\<\%(int\|float\|bool\|string\|bytes\|vec\|map\|lst\)\>\
 " ============================================================================
 " Builtin functions — same names, only match when followed by (
 " ============================================================================
-syn match alexisBuiltin "\<\(env\|type\|int\|float\|string\|bool\|bytes\|vec\|map\|lst\|here\|eval\|trap\)\>\ze\s*("
+syn match alexisBuiltin "\<\(env\|type\|int\|float\|string\|bool\|bytes\|vec\|map\|lst\|here\|eval\|trap\|yield\)\>\ze\s*("
 
 " ============================================================================
 " Numbers — plain decimal first, then hex/oct/bin override, then float

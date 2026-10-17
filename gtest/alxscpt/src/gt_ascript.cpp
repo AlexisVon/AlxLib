@@ -640,6 +640,32 @@ TEST(gt_ascript_engine, LinkError_InvalidSo) {
     EXPECT_EQ(res.error, error_type::ImportError) << "link failure propagates, no crash";
 }
 
+#ifdef ALX_TEST_LINK_LOAD_SO
+TEST(gt_ascript_engine, LinkLoadNativeErrorPropagates) {
+
+    auto* eng = engine::create();
+    auto res = eng->exec(alx::bytes_view(alx::bytes(
+                             std::string("link \"") + ALX_TEST_LINK_LOAD_SO + "\" as t; 1;")),
+                         "");
+    delete eng;
+    EXPECT_EQ(res.error, error_type::NativeError) << "a load entry's C++ exception must propagate";
+    EXPECT_NE(res.value.to<std::string>().find("load boom"), std::string::npos);
+}
+#endif
+
+#ifdef ALX_TEST_LINK_CREATE_SO
+TEST(gt_ascript_engine, LinkCreateNativeErrorPropagates) {
+
+    auto* eng = engine::create();
+    auto res = eng->exec(alx::bytes_view(alx::bytes(
+                             std::string("link \"") + ALX_TEST_LINK_CREATE_SO + "\" as t; 1;")),
+                         "");
+    delete eng;
+    EXPECT_EQ(res.error, error_type::NativeError) << "a create entry's C++ exception must propagate";
+    EXPECT_NE(res.value.to<std::string>().find("create boom"), std::string::npos);
+}
+#endif
+
 TEST(gt_ascript_engine, ParseDepthDefault) {
     auto* eng = engine::create();
     EXPECT_EQ(eng->config().parse_depth, 1024u);

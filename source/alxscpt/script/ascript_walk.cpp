@@ -1691,10 +1691,6 @@ namespace alx {
                     _w.m_interrupted = true;
                     return variant();
                 }
-                if (err.type == error_type::ResourceError || err.type == error_type::MemoryError || err.type == error_type::NativeError) {
-                    if (_w.state.on_cerr) _w.state.on_cerr->exec(err.info);
-                    return variant();
-                }
                 throw err;
             }
 
@@ -1721,10 +1717,6 @@ namespace alx {
 
                 if (err.type == error_type::InterruptedError) {
                     _w.m_interrupted = true;
-                    return variant();
-                }
-                if (err.type == error_type::ResourceError || err.type == error_type::MemoryError || err.type == error_type::NativeError) {
-                    if (_w.state.on_cerr) _w.state.on_cerr->exec(err.info);
                     return variant();
                 }
                 throw err;

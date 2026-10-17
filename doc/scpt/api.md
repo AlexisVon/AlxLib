@@ -59,7 +59,7 @@ eng->reset();                  // drop the intermediate state of a run: the root
 
 `reset()` is also the only reaper: a run that fails during execution leaves root variables, defs and loaded modules standing — and with them the parsed ASTs behind the defs — so a long-lived engine holds that memory until an explicit `reset()`.
 
-`engine` is **single-threaded and not reentrant**: one instance runs on one thread at a time. Only three interfaces are meant to cross threads: `running()` and `set_interrupt()` (§10), and `yield()` (§3.2b).
+`engine` is **single-threaded and not reentrant**: one instance runs on one thread at a time. Only four interfaces are meant to cross threads: `running()` and `set_interrupt()` (§10), `yield()` (§3.2b), and `set_max_yield()` (its admission capacity is atomic and synced immediately).
 
 ---
 
@@ -78,7 +78,7 @@ The three fields of `result`:
 |---|---|
 | `value` | the last statement's value (not a valid result when `error != NoError`) |
 | `error` | `error_type`; `NoError` means the run finished normally |
-| `elapsed_us` | wall time, in microseconds |
+| `elapsed_us` | wall time, in microseconds; 0 for failures that precede the walk (a parse error, a version-gate refusal, a corrupt product) |
 
 `home_dir` is **the base relative imports resolve against**, and the anchor of the module namespace.
 
@@ -126,7 +126,7 @@ bytes compile(const std::string& _path, bool _cmps = false, bool _embed = false,
 
 - `_cmps`: compress the payload.
 - `_embed`: resolve and **inline** every `import` into one self-contained product; `link` and `env` are compile errors then, a relative import resolves against the importing module's own directory only, and an import that resolves to nothing is a compile error too. The key of an embedded module is `"@" + sha16(absolute path + content)`.
-- `_hint`: the host payload. The `compile(source, ...)` overload **stores it as given and never interprets it**; the `compile(path, ...)` overload reads it as a **file path** (`source/alxscpt/ascript.cpp:456`), so passing raw JSON yields an empty hint. An empty one leaves no `hint` key in the product (backward compatible).
+- `_hint`: the host payload. The `compile(source, ...)` overload **stores it as given and never interprets it**; the `compile(path, ...)` overload reads it as a **file path** (`source/alxscpt/ascript.cpp:425`), so passing raw JSON yields an empty hint. An empty one leaves no `hint` key in the product (backward compatible).
 
 ### 3.4 Reading a product back
 
@@ -145,7 +145,7 @@ The keys `unpack` puts into `_out`: `"ast"` (AST dump), `"modules"` (module key 
 |---|---|---|
 | `on_cerr` | `const std::string&` | engine diagnostics (runtime error messages and the like) |
 | `on_cmpl` | `const compile_error&` | a compile error (with row, col and byte offset) |
-| `get_csys()` | `signal<uint_64, const std::string&>&` | pool-level events (module load/unload, link failures and the like); the callback gets (thread id, message). The yield service's background pass adds `heartbeat overrun: …` / `heartbeat error: …` — the only entries emitted off the running thread, so a slot must tolerate another thread and must not block |
+| `get_csys()` | `signal<uint_64, const std::string&>&` | pool-level events (module load/unload, link failures and the like); the callback gets (thread id, message). The yield service's background pass adds `heartbeat overrun: …` / `heartbeat error: …` — the only entries emitted from the pool's own thread (every other entry comes from whichever engine thread produced it, so a slot must tolerate another thread and must not block) |
 
 `get_csys()` returns a reference to a **pool-level shared signal** that outlives any single engine, so it is safe to keep across engines.
 
@@ -207,10 +207,10 @@ eng->set_extend("print", [](alx::script::fwrap& _fw) {
 | `size()` / `operator[](i)` | read an argument (`variant&`; a bare variable name aliases the script's variable, any other argument is a temporary; **dead once the call returns**; throws IndexError past the last argument) |
 | `freturn(v)` / `freturn()` | set the return value |
 | `raise(info, error_type)` | throw an exception the script can catch |
-| `call(func, args)` | call a script function from the native (`func` may be a function name or a `.` path); the path lookup is read-only — a path that does not resolve leaves nothing behind |
+| `call(func, args)` | call a script function from the native (`func` may be a function name, a `.` path, or a callable value); the path lookup is read-only — a path that does not resolve leaves nothing behind |
 | `iload(key)` | resolve a name or `.` path in the calling scope to a **slot address or nothing** — the script-level read semantics (a `[null]` size, an element's value) do not apply here, and a shape that is not an address (a slice, an out-of-range index, a byte element, a bare name that is not there) is simply `nullptr`; the promise covers the resolved outcome — a `.` path whose intermediate step does not resolve still reports that step's error (`Undefined: <name>`, a missing map key). **The host's one slot handle, in write posture**: it hands back a writable slot, so a missing terminal map key (and a `[null]` append position) is created — write into the returned slot to bind a value; the pointer follows the engine-side `load()` rule — invalidated by any addition to the store and by any reset |
-| `bind(name, func, area)` | register a native function into an area (what a link module uses) |
-| `load/store/remove(name)` | reach the calling link instance's own data store; a returned pointer follows the same rule (any addition to the store, any reset) |
+| `bind(name, func, area)` | register a native function into an area (what a link module uses); an empty `area` registers into the call's plain data scope, and an existing name is replaced either way |
+| `load/store/remove(name)` | reach the call's data scope: the calling link instance's own store, or the current entity's store for an extension handler (where `load`/`store` are misuse — use `iload`, `lang.md` §12.4); a returned pointer follows the same rule (any addition to the store, any reset) |
 | `object()` / `unwrap<T>()` | the C++ object bound to the current area — **area natives only**: outside an area dispatch (an extend handler, a load/unload callback, a `bind` with no area) no area is set, and calling it there is outside the contract — nothing is set to hand back |
 | `config()` | read the engine configuration (the pipe pointers included) |
 | `currying(name)` | mint a **delivery handle** (`fwrap::callback*`) naming a def — each `cb->call(args, priority, expiry)` is `engine::yield` under that name (§3.2b), the native's channel to its worker threads. **The caller owns the handle and deletes it**, before the engine dies (using one afterwards is UB). A load/unload entry point has no engine to name, so calling it there throws `LinkError` |
@@ -344,8 +344,8 @@ A link module is a dynamic library that gives a script three layers: **a namespa
 
 | Symbol | Signature | When |
 |---|---|---|
-| `alexis_script_load` | `void (*)(fwrap&)` | library level: once, at load |
-| `alexis_script_unload` | `void (*)(fwrap&)` | library level: once, at unload |
+| `alexis_script_load` | `void (*)(fwrap&)` | library level: once per engine's link, at load (the dlopen is shared process-wide) |
+| `alexis_script_unload` | `void (*)(fwrap&)` | library level: once per engine's link, at unload (before the shared `dlclose`) |
 | `alexis_script_create` | `void (*)(fwrap&)` | instance level: for every link instance created |
 | `alexis_script_release` | `void (*)(fwrap&)` | instance level: when an instance is destroyed |
 
@@ -421,11 +421,11 @@ A script-side `throw`, a host-side `raise` and an engine-internal failure all la
 | Resource | `StackError`, `ResourceError`, `MemoryError` |
 | Compile | `ParseError` |
 | Module | `ImportError`, `LinkError`, `VersionError` |
-| Host | `NativeError` (a wrapped C++ exception), `InterruptedError` (an interrupt, uncatchable) |
+| Host | `NativeError` (a wrapped C++ exception), `InterruptedError` (an engine interrupt, uncatchable) |
 | Delivery | `YieldError` — `no main fiber` / `yield full` / `expired` / `not executed` / `nested yield` arrive inside a delivery's future; a `yield()` during module init throws it into the script and is catchable. A delivery torn down by an interrupt reports `InterruptedError` (the interrupt's, not a `YieldError`) |
 | Fallback | `UnknownError` |
 
-- A script-side `try/catch` catches only what is catchable; `InterruptedError`, and the interrupt an import/link hook returning `false` in §8 causes, both **pass through the script's catch**.
+- A script-side `try/catch` catches only what is catchable; the engine's `InterruptedError` (a hook returning `false` in §8, or `set_interrupt()`), **passes through the script's catch**. A native that raises `InterruptedError` itself through `fwrap::raise` without the interrupt flag is just an ordinary failed call — that one is catchable.
 - For a string, use `error_type_name(type)`.
 - A compile error goes through `compile_error` instead (`msg` / `loc.row` / `loc.col` / `loc.index`), reported through `on_cmpl`.
 - An **uncaught error** is reported through `on_cerr`: the first line is `Uncaught: [type] msg`, and after it the folded call stack (one `[file] func:row:col` per line, a recursion folded into `(Nx)`). The row and col come from the position markers of §8.2 — **with the switch off or an AST without markers there is no row/col** (the trace keeps its old shape).

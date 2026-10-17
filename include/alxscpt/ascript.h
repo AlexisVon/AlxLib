@@ -193,7 +193,7 @@ namespace alx {
          * \brief Everything an engine is configured with
          *
          * engine::create() copies it, engine::config() shows the live copy back, and the engine's
-         * set_*() methods write into it. The runtime knobs (max_stack, max_vecfill,
+         * set_*() methods write into it. The runtime knobs (max_stack, max_vecfill, max_yield,
          * overflow_check, search_paths) are read as the script runs, the parse-time ones
          * (parse_depth, debug_enable) apply to the next compile.
          */
@@ -516,11 +516,12 @@ namespace alx {
          * \brief The script engine: a compilation environment, an interpreter, and variables
          *
          * create() hands back an engine the caller owns and deletes. An engine is single-threaded
-         * and not reentrant: exec(), call(), compile(), load() and the set_*() methods must never
-         * be entered from two threads at once, while running(), set_interrupt() and yield() are
-         * meant to be called from another thread. A native registered here runs on whichever
-         * thread executes the script, so one handler registered in several engines must be
-         * thread-safe itself.
+         * and not reentrant: exec(), call(), compile(), load() and the other set_*() methods must
+         * never be entered from two threads at once, while running(), set_interrupt(), yield() and
+         * set_max_yield() are meant to be called from another thread — set_max_yield for admission
+         * only (reading the config's max_yield concurrently is outside the contract). A native registered here
+         * runs on whichever thread executes the script, so one handler registered in several
+         * engines must be thread-safe itself.
          *
          * What a run leaves behind stays: root variables, defs and loaded modules survive into the
          * next exec(), which is what lets a REPL be an exec() in a loop. reset() takes that away.
@@ -623,7 +624,7 @@ namespace alx {
             virtual void set_overflow_check(bool _on) = 0;
             /// Elements a single vec/lst fill may produce; 0 = unlimited
             virtual void set_max_vecfill(size_t _n) = 0;
-            /// Deliveries one yield queue may hold; 0 = unlimited
+            /// Deliveries one yield queue may hold; 0 = unlimited. Cross-thread safe for admission; a concurrent config read of max_yield is not synchronized
             virtual void set_max_yield(size_t _n) = 0;
             /// Directories import and link targets are looked up in, replacing the previous list
             virtual void set_search_paths(const std::list<std::string>& _paths) = 0;
@@ -835,8 +836,9 @@ namespace alx {
              *
              * Module load and unload and link failures are reported here as (thread id, message)
              * instead of through on_cerr; the yield service's background pass adds
-             * `heartbeat overrun: …` / `heartbeat error: …`, the only entries emitted off the
-             * running thread. It belongs to the process-wide resource pool, which the first
+             * `heartbeat overrun: …` / `heartbeat error: …`, the only entries emitted from the
+             * pool's own thread (every other entry comes from whichever engine produced it). It
+             * belongs to the process-wide resource pool, which the first
              * engine creates and the last one destroys, so a reference kept past that point
              * dangles.
              */

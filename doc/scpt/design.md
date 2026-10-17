@@ -1207,20 +1207,21 @@ public:
     // comparison, the execution and the fulfillment
     yield_request* pop_max();
     // liquidation (heartbeat): expired nodes removed, fulfilled `expired` outside the lock
-    size_t expire(std::chrono::steady_clock::time_point _now);
+    void expire(std::chrono::steady_clock::time_point _now);
     // teardown: everything removed, fulfilled as _type/_msg outside the lock -- run exit
     // `not executed`, a torn-down interrupt `InterruptedError`, the entry-start net
-    size_t drain(error_type _type, const std::string& _msg);
-    // the residency wait: true = an item is available, false = deadline; the interrupt is
-    // judged by the caller after the wake
-    bool wait_for_item(std::chrono::steady_clock::time_point _deadline, const std::atomic<bool>& _stop);
+    void drain(error_type _type, const std::string& _msg);
+    // the residency wait: returns at an item or the deadline; the interrupt is judged by the
+    // caller after the wake
+    void wait_for_item(std::chrono::steady_clock::time_point _deadline, const std::atomic<bool>& _stop);
     // the external wake (set_interrupt): the flag is stored first, then this
     void wake();
+    void set_max_yield(size_t _n);
 
 private:
-    std::atomic<size_t> m_max;    // capacity = max_yield, synced by set_max_yield
-    std::mutex m_mut;
-    std::list<yield_request*> m_que;
+    std::atomic<size_t> m_max_yield;   // capacity = max_yield, synced by set_max_yield
+    std::mutex m_mtx;
+    std::list<yield_request*> m_queue;
     std::condition_variable m_cv;
 };
 ```

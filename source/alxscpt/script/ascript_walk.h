@@ -38,7 +38,7 @@ namespace alx {
         // spans structural instants only -- never across execution, never across a wait.
         class yield_queue {
         public:
-            explicit yield_queue(const engine_config& _cfg) : m_max(_cfg.max_yield) {}
+            explicit yield_queue(const engine_config& _cfg) : m_max_yield(_cfg.max_yield) {}
             // the last net: leftovers drain as `not executed`, so no promise ever dies unset
             ~yield_queue();
 
@@ -53,22 +53,22 @@ namespace alx {
             }
             // liquidation (heartbeat): expired nodes removed, fulfilled `expired` outside the
             // lock; try_lock only, a locked queue is skipped and the next pass catches up
-            size_t expire(std::chrono::steady_clock::time_point _now);
+            void expire(std::chrono::steady_clock::time_point _now);
             // teardown: everything removed, fulfilled as _type/_msg outside the lock
-            size_t drain(error_type _type, const std::string& _msg);
-            // the residency wait: true = an item is available, false = deadline; the caller
-            // judges the interrupt after the wake
-            bool wait_for_item(std::chrono::steady_clock::time_point _deadline, const std::atomic<bool>& _stop);
+            void drain(error_type _type, const std::string& _msg);
+            // the residency wait: returns at an item or the deadline; the caller judges the
+            // interrupt after the wake
+            void wait_for_item(std::chrono::steady_clock::time_point _deadline, const std::atomic<bool>& _stop);
             // the external wake (set_interrupt): the flag is stored first, then this
             void wake();
             // capacity, synced by set_max_yield: a delivery thread's push races that setter,
             // so the admission value lives here as an atomic instead of in the config
-            void set_max(size_t _n) { m_max.store(_n, std::memory_order_relaxed); }
+            void set_max_yield(size_t _n) { m_max_yield.store(_n, std::memory_order_relaxed); }
 
         private:
-            std::atomic<size_t> m_max; // 0 = unlimited
-            std::mutex m_mut;
-            std::list<yield_request*> m_que;
+            std::atomic<size_t> m_max_yield; // 0 = unlimited
+            std::mutex m_mtx;
+            std::list<yield_request*> m_queue;
             std::condition_variable m_cv;
         };
 

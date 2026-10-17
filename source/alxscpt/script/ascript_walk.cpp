@@ -200,22 +200,22 @@ namespace alx {
             std::future<result> fut = pro.get_future();
             bool accepted = false;
             {
-                std::lock_guard<std::mutex> lk(m_mut);
-                size_t max = m_max.load(std::memory_order_relaxed);
-                if (!max || m_que.size() < max) {
+                std::lock_guard<std::mutex> lk(m_mtx);
+                size_t max = m_max_yield.load(std::memory_order_relaxed);
+                if (!max || m_queue.size() < max) {
                     std::chrono::steady_clock::time_point ttd{};
                     if (_expiry_ms)
                         ttd = std::chrono::steady_clock::now() + std::chrono::milliseconds(_expiry_ms);
                     // the list node first, the request second: whichever allocation fails leaves the
                     // args untouched (new allocates before it initializes; the moves are noexcept)
-                    m_que.push_back(nullptr);
+                    m_queue.push_back(nullptr);
                     try {
-                        m_que.back() = new yield_request{std::move(_name), std::move(_args), ttd,
-                                                         std::move(pro), _pri};
+                        m_queue.back() = new yield_request{std::move(_name), std::move(_args), ttd,
+                                                           std::move(pro), _pri};
                     } catch (...) {
-                        auto it = m_que.end();
+                        auto it = m_queue.end();
                         --it;
-                        m_que.erase(it);
+                        m_queue.erase(it);
                         throw;
                     }
                     accepted = true;
@@ -230,31 +230,31 @@ namespace alx {
         }
 
         yield_request* yield_queue::pop_max() {
-            std::lock_guard<std::mutex> lk(m_mut);
-            auto best = m_que.end();
-            for (auto it = m_que.begin(); it != m_que.end(); ++it) {
-                if (best == m_que.end() || (*it)->pri > (*best)->pri) {
+            std::lock_guard<std::mutex> lk(m_mtx);
+            auto best = m_queue.end();
+            for (auto it = m_queue.begin(); it != m_queue.end(); ++it) {
+                if (best == m_queue.end() || (*it)->pri > (*best)->pri) {
                     best = it;
                     // nothing can outrank it, so the earliest maximum is already in hand
                     if ((*it)->pri == std::numeric_limits<uint_32>::max()) break;
                 }
             }
-            if (best == m_que.end()) return nullptr;
+            if (best == m_queue.end()) return nullptr;
             yield_request* req = *best;
-            m_que.erase(best);
+            m_queue.erase(best);
             return req;
         }
 
-        size_t yield_queue::expire(std::chrono::steady_clock::time_point _now) {
+        void yield_queue::expire(std::chrono::steady_clock::time_point _now) {
             std::list<yield_request*> dead;
             {
-                std::unique_lock<std::mutex> lk(m_mut, std::try_to_lock);
+                std::unique_lock<std::mutex> lk(m_mtx, std::try_to_lock);
                 // a locked queue is skipped; the next pass catches up
-                if (!lk.owns_lock()) return 0;
-                for (auto it = m_que.begin(); it != m_que.end();) {
+                if (!lk.owns_lock()) return;
+                for (auto it = m_queue.begin(); it != m_queue.end();) {
                     if (expired(**it, _now)) {
                         dead.push_back(*it);
-                        it = m_que.erase(it);
+                        it = m_queue.erase(it);
                     } else {
                         ++it;
                     }
@@ -264,36 +264,33 @@ namespace alx {
                 req->ret.set_value(result{variant(std::string("expired")), 0, error_type::YieldError});
                 delete req;
             }
-            return dead.size();
         }
 
-        size_t yield_queue::drain(error_type _type, const std::string& _msg) {
+        void yield_queue::drain(error_type _type, const std::string& _msg) {
             std::list<yield_request*> all;
             {
-                std::lock_guard<std::mutex> lk(m_mut);
-                all.swap(m_que);
+                std::lock_guard<std::mutex> lk(m_mtx);
+                all.swap(m_queue);
             }
             for (yield_request* req : all) {
                 req->ret.set_value(result{variant(_msg), 0, _type});
                 delete req;
             }
-            return all.size();
         }
 
-        bool yield_queue::wait_for_item(std::chrono::steady_clock::time_point _deadline,
+        void yield_queue::wait_for_item(std::chrono::steady_clock::time_point _deadline,
                                         const std::atomic<bool>& _stop) {
-            std::unique_lock<std::mutex> lk(m_mut);
+            std::unique_lock<std::mutex> lk(m_mtx);
             m_cv.wait_until(lk, _deadline, [&] {
-                return !m_que.empty() || _stop.load(std::memory_order_relaxed);
+                return !m_queue.empty() || _stop.load(std::memory_order_relaxed);
             });
-            return !m_que.empty();
         }
 
         void yield_queue::wake() {
             // the lock round-trip pairs with the caller's flag store: a wakeup cannot slip between
             // a waiter's predicate check and its sleep
             {
-                std::lock_guard<std::mutex> lk(m_mut);
+                std::lock_guard<std::mutex> lk(m_mtx);
             }
             m_cv.notify_all();
         }

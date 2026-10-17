@@ -36,9 +36,9 @@ namespace alx {
 
             // settle whatever a run leaves queued; declared before a running_guard so the guard
             // clears first and no delivery can land after the flag clears
-            struct queue_settle {
+            struct settle_guard {
                 walker& w;
-                ~queue_settle() {
+                ~settle_guard() {
                     if (!w.m_interrupted) {
                         w.m_yq.drain(error_type::YieldError, "not executed");
                         return;
@@ -160,7 +160,7 @@ namespace alx {
                 call_able* ca = walker::resolve_def(m_w.m_root, _name, err);
                 if (!ca) return {variant(err), 0, error_type::NameError};
 
-                queue_settle _qs{m_w};
+                settle_guard _qs{m_w};
                 auto t0 = std::chrono::steady_clock::now();
                 running_guard _rg(m_running);
                 walker::call_ctx cw;
@@ -192,7 +192,7 @@ namespace alx {
                         const std::string& _home_dir) override {
                 // settle deliveries a previous run left behind before this entry may accept new ones
                 m_w.m_yq.drain(error_type::YieldError, "not executed");
-                queue_settle _qs{m_w};
+                settle_guard _qs{m_w};
                 auto t0 = std::chrono::steady_clock::now();
                 result res;
                 running_guard _rg(m_running);
@@ -287,7 +287,7 @@ namespace alx {
                 m_cfg.max_yield = _n;
                 // the admission value the delivery threads read: synced, so a concurrent push
                 // cannot tear it
-                m_w.m_yq.set_max(_n);
+                m_w.m_yq.set_max_yield(_n);
             }
             void set_search_paths(const std::list<std::string>& _paths) override {
                 m_cfg.search_paths = _paths;

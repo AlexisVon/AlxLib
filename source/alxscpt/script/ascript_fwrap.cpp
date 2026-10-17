@@ -95,14 +95,6 @@ namespace alx {
             return walker::resolve_iload(iload, *m_ws);
         }
 
-        fwrap::callback* fwrap_impl::currying(const std::string& _name) {
-            // The caller owns the returned handle; a load/unload entry point has no engine to name
-            if (!m_ws || !m_ws->state.m_engine)
-                throw script_exception{error_type::LinkError,
-                                       std::string("currying not available during load/unload")};
-            return new currying_handle(m_ws->state.m_engine, _name);
-        }
-
         variant fwrap_impl::call(const variant& _func, const varvec& _args) {
             if (!m_ws) throw script_exception{error_type::LinkError,
                                               std::string("call not available during load/unload")};
@@ -196,6 +188,14 @@ namespace alx {
 
         anyptr* fwrap_impl::object() {
             return &m_area->m_object;
+        }
+
+        fwrap::callback* fwrap_impl::currying(const std::string& _name) {
+            // The caller owns the returned handle; a load/unload entry point has no engine to name
+            if (!m_ws || !m_ws->state.m_engine)
+                throw script_exception{error_type::LinkError,
+                                       std::string("currying not available during load/unload")};
+            return new currying_handle(m_ws->state.m_engine, _name);
         }
 
     }

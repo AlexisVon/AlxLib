@@ -1846,6 +1846,14 @@ Version ALXLIB 1.2.0 → 1.2.2.
 
 Version ALXLIB 1.2.2 → 1.2.3.
 
+**Migration log (2026-10-17, version 1.3.0: the yield service)**:
+
+- **yield 让出点（F-1，③④ 已提交 `0635197` / `02a764f`）**：脚本内置 `yield(time_ms = 0, maxcnt = 0)`（第 14 个保留字，`O_YIELD` 追加在 `O_DEBUG` 之后）——在脚本主动写的让出点受理宿主投递的调用（`engine::yield` / `fwrap::currying` 调用方持有的句柄），被受理调用以根姿态执行；`yield(n)` 兼作 sleep（睡满 n ms，期间照常受理投递）。嵌套 yield 抛脚本层 `YieldError("nested yield")`（可被受理调用 catch）；中断以 `InterruptedError` 结算全部投递（带 hook 拒绝理由）；`error_type` 尾追 `YieldError`；`result` 提到 `script` 命名空间（`engine::result` 留别名）；`engine_config` 尾追 `max_yield`（默认 256、0=不限）与 `set_max_yield`。res 层起 scpt 第一个后台线程（50ms 心跳，清算过期投递；其 `on_csys` 条目从心跳线程发射，信号槽只取文本、不阻塞、不抛、不重入）。
+- **失败的 run 不再 reset（F-1 ②，`d041b5a`）**：执行期失败只终止本次 run——root 变量、def、已载模块全部留存（与脚本内 catch 一致）；`reset()` 是唯一回收口。全部失败类同一口径（未捕获错误 / StackError / NativeError / ImportError / 门禁 TypeError / 中断）。
+- **Migration note**：opcode 表在 `O_DEBUG` 之后追加 `O_YIELD`——**不重编号，旧产物不受影响**；含 `yield` 的产物由宿主自行 stamp vtype（引擎侧不动）。`yield` 进保留字表 ⇒ `set_extend("yield")` 起拒绝，以 `yield` 作标识符的脚本不再解析。库版本 1.2.3 → 1.3.0（minor：新 API + 行为变更），SONAME 变为 **`.so.1.3`**。
+
+Version ALXLIB 1.2.3 → 1.3.0.
+
 ### 10.2 Syntax
 
 `$foo(args)` → `T_DOLLAR` + `T_NAME` (the value is the bare name `foo`) + the `O_EXCALL` opcode.

@@ -55,6 +55,8 @@ eng->set_overflow_check(...);  eng->set_search_paths({"mods", "lib"});
 eng->reset();                  // drop the intermediate state of a run: the root store is rebuilt and loaded modules are released with it (hot reload)
 ```
 
+`reset()` is also the only reaper: a run that fails during execution leaves root variables, defs and loaded modules standing — and with them the parsed ASTs behind the defs — so a long-lived engine holds that memory until an explicit `reset()`.
+
 `engine` is **single-threaded and not reentrant**: one instance runs on one thread at a time. Only two interfaces are meant to cross threads (§10 interrupt).
 
 ---

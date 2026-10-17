@@ -1390,7 +1390,7 @@ str.upper("hi");  // "HI"
 | `args.unwrap<T>()` | `anyptr_ex<T>::as(*object())` — type-safe access to the C++ object (area natives only, like `object()`) |
 | `args.wrap<T>(ptr, "area", {{"m1", fn1}, ...})` | store the obj + register methods into the area |
 
-> **Pointer validity (one contract)**: everything this interface hands back — the `args[i]` view, an `iload`/`load` slot, the `m_area` behind `object()`/`unwrap<T>()` — dies the moment script code runs again: a `fw.call()` back into the script (the script may `delete` the area, the instance or the module) or a failed run's reset invalidates them all, after which they must not be touched. `object()`/`unwrap<T>()` are for area natives only — outside an area dispatch (an extend handler, a load/unload callback, a `bind` with no `_area`) no area is set, and calling them there is outside the contract — nothing is set to hand back.
+> **Pointer validity (one contract)**: everything this interface hands back — the `args[i]` view, an `iload`/`load` slot, the `m_area` behind `object()`/`unwrap<T>()` — dies the moment script code runs again: a `fw.call()` back into the script, a run that fails during execution (the walk tears mid-op), or an explicit `reset()` invalidates them all, after which they must not be touched. `object()`/`unwrap<T>()` are for area natives only — outside an area dispatch (an extend handler, a load/unload callback, a `bind` with no `_area`) no area is set, and calling them there is outside the contract — nothing is set to hand back.
 
 > **The `iload` path**: a simple name → data_store (`O_ILOAD` → `resolve_dot`).
 
@@ -2011,7 +2011,7 @@ Design points:
 - **root scope only**: the root store is the only one consulted, the same path as `load(name)`
 - **a temporary call tree**: every call builds an `[O_CALL, name, [arg]...]` tree which `invoke_def` destroys automatically once it has run, so no AST accumulates
 - **recursion safe**: a def may recursively call other defs (tail-recursion TCO included); verified
-- **exception handling**: isomorphic to exec (`script_exception` → `std::exception` → `...`), and the exception path resets the walker
+- **exception handling**: the shared ladder of exec (`walker::run_entry` — `script_exception` → `std::exception` → `...`), and the exception path only ends that run: nothing is reset
 - **callable between two execs**: once an exec has finished, `state.current` points at the root and frames is empty
 
 **Version gate**: before executing an .axp its compile-time version tag is checked (a default engine — no `set_etype`/`set_vtype` — leaves the gate off entirely; once either is set it cannot be turned off):

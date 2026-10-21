@@ -21,7 +21,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Build type - use empty to avoid adding default flags
 set(CMAKE_BUILD_TYPE "" CACHE STRING "" FORCE)
 
-# Optimization level
+# Optimization level (declared before its expansion: a fresh configure has no cache value yet)
+set(ALXLIB_OPT_LEVEL "3" CACHE STRING "Optimization level (0/1/2/3)")
+set_property(CACHE ALXLIB_OPT_LEVEL PROPERTY STRINGS 0 1 2 3)
 add_compile_options(-O${ALXLIB_OPT_LEVEL})
 if(ALXLIB_SPLIT_DEBUG)
     add_compile_options(-g)
@@ -61,8 +63,6 @@ set(ALXLIB_SOVERSION "${ALXLIB_VERSION_MAJOR}.${ALXLIB_VERSION_MINOR}")
 # ---------------------------------------------------------------------------
 option(ALXCOMM_TLS "Enable TLS support for alxcomm" ON)
 option(ALXLIB_SPLIT_DEBUG "Separate debug info into .debug files" OFF)
-set(ALXLIB_OPT_LEVEL "3" CACHE STRING "Optimization level (0/1/2/3)")
-set_property(CACHE ALXLIB_OPT_LEVEL PROPERTY STRINGS 0 1 2 3)
 
 option(ALXBASE_ENABLE "Build alxbase" ON)
 option(ALXCORE_ENABLE "Build alxcore" ON)

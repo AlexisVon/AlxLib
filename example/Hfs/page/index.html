@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hfs · AlxLib HTTP example</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%232563eb' d='M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="/app.css">
+    <script>
+        try {
+            if (localStorage.getItem('hfs.theme') === 'dark')
+                document.documentElement.setAttribute('data-theme', 'dark');
+        } catch (e) { }
+    </script>
+</head>
+<body>
+    <header class="app-header">
+        <div class="brand">
+            <span class="brand-mark">◈</span>
+            <span class="brand-name">Hfs</span>
+            <span class="brand-sub" data-i18n="brand.sub">AlxLib HTTP example</span>
+        </div>
+        <div class="header-actions">
+            <span class="host" id="hostLabel"></span>
+            <span class="status-dot" title="online"></span>
+            <button class="icon-btn" id="themeToggle" data-i18n-title="theme.toggle" title="Toggle theme" aria-label="Toggle theme">◐</button>
+            <button class="icon-btn lang-btn" id="langToggle" data-i18n-title="lang.toggle" title="Switch language" aria-label="Switch language">中</button>
+        </div>
+    </header>
+
+    <div class="toolbar">
+        <nav class="breadcrumb" id="breadcrumb" aria-label="Breadcrumb"></nav>
+        <div class="toolbar-actions">
+            <button class="btn btn-ghost" id="upBtn" data-i18n="toolbar.up">↑ Up</button>
+            <button class="btn btn-ghost" id="refreshBtn" data-i18n="toolbar.refresh">↻ Refresh</button>
+            <button class="btn btn-primary" id="uploadBtn" data-i18n="toolbar.upload">⇧ Upload</button>
+            <button class="btn btn-ghost" id="previewToggle" data-i18n="toolbar.preview" data-i18n-title="preview.toggle" title="Toggle preview pane">▤ Preview</button>
+        </div>
+    </div>
+
+    <div class="workspace">
+        <main class="list-pane" id="listPane">
+            <div class="table-wrap">
+                <table class="file-table" id="fileTable">
+                    <thead>
+                        <tr>
+                            <th class="col-name sortable" data-sort="name">
+                                <span data-i18n="col.name">Name</span><span class="sort-ind" id="sort-name"></span>
+                            </th>
+                            <th class="col-size sortable" data-sort="size">
+                                <span data-i18n="col.size">Size</span><span class="sort-ind" id="sort-size"></span>
+                            </th>
+                            <th class="col-time sortable" data-sort="time">
+                                <span data-i18n="col.modified">Modified</span><span class="sort-ind" id="sort-time"></span>
+                            </th>
+                            <th class="col-actions" data-i18n="col.action">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="fileList"></tbody>
+                </table>
+            </div>
+            <div class="state" id="stateBox" hidden></div>
+        </main>
+
+        <aside class="preview-pane" id="previewPane" hidden>
+            <div class="pane-head">
+                <span class="pane-icon" id="paneIcon">📄</span>
+                <div class="pane-title" id="paneTitle"></div>
+                <button class="icon-btn" id="paneClose" data-i18n-title="preview.hide" title="Hide preview pane" aria-label="Hide preview pane">✕</button>
+            </div>
+            <div class="pane-stage" id="paneStage"></div>
+            <dl class="pane-info" id="paneInfo"></dl>
+            <div class="pane-actions" id="paneActions"></div>
+        </aside>
+    </div>
+
+    <footer class="status-bar">
+        <span id="statusItems"></span>
+        <span id="statusSelection"></span>
+    </footer>
+
+    <div class="drop-overlay" id="dropOverlay" hidden>
+        <div class="drop-card" data-i18n="drop.hint">Drop files to upload</div>
+    </div>
+
+    <div class="viewer-backdrop" id="viewer" hidden>
+        <div class="viewer" role="dialog" aria-modal="true">
+            <div class="viewer-head">
+                <span class="viewer-icon" id="viewerIcon"></span>
+                <div class="viewer-title" id="viewerTitle"></div>
+                <button class="icon-btn" id="viewerClose" data-i18n-title="preview.close" title="Close" aria-label="Close">✕</button>
+            </div>
+            <div class="viewer-body" id="viewerBody"></div>
+            <div class="viewer-foot">
+                <span class="viewer-meta" id="viewerMeta"></span>
+                <button class="btn btn-secondary" id="viewerDownload" data-i18n="preview.download">Download</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="dock" id="dock" hidden></div>
+    <div class="toast-container" id="toasts"></div>
+
+    <input type="file" id="filePicker" multiple hidden>
+
+    <div class="modal-backdrop" id="modal" hidden>
+        <div class="modal" role="dialog" aria-modal="true">
+            <div class="modal-title" id="modalTitle"></div>
+            <div class="modal-text" id="modalText"></div>
+            <div class="modal-path" id="modalPath" hidden></div>
+            <div class="modal-actions">
+                <button class="btn btn-ghost" id="modalCancel" data-i18n="modal.cancel">Cancel</button>
+                <button class="btn btn-danger" id="modalOk" data-i18n="modal.confirm">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/i18n.js"></script>
+    <script src="/api.js"></script>
+    <script src="/ui.js"></script>
+    <script src="/app.js"></script>
+</body>
+</html>

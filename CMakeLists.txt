@@ -80,6 +80,7 @@ option(BUILD_TESTS "Build tests" ON)
 option(BUILD_EXAMPLES "Build examples" ON)
 option(BUILD_EXAMPLE_SCPT "Build Scpt example" ON)
 option(BUILD_EXAMPLE_LZA "Build Lza example" ON)
+option(BUILD_EXAMPLE_HFS "Build Hfs example" ON)
 
 # ---------------------------------------------------------------------------
 # Dependency resolution
@@ -100,6 +101,9 @@ if(BUILD_EXAMPLES)
     if(BUILD_EXAMPLE_LZA)
         set(ALXBASE_ENABLE ON)
         set(ALXCORE_ENABLE ON)
+    endif()
+    if(BUILD_EXAMPLE_HFS)
+        set(ALXCOMM_ENABLE ON)
     endif()
 endif()
 
@@ -160,6 +164,9 @@ if(BUILD_EXAMPLES)
     endif()
     if(BUILD_EXAMPLE_LZA)
         add_subdirectory(${CMAKE_SOURCE_DIR}/example/Lza ${CMAKE_BINARY_DIR}/example/Lza)
+    endif()
+    if(BUILD_EXAMPLE_HFS)
+        add_subdirectory(${CMAKE_SOURCE_DIR}/example/Hfs ${CMAKE_BINARY_DIR}/example/Hfs)
     endif()
 endif()
 

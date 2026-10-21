@@ -130,7 +130,8 @@ AlxLib/
 ├── gtest/            Google Test suites
 ├── example/          example programs
 │   ├── Scpt/         script engine CLI
-│   └── Lza/          LZ4 compression tool (Qt GUI)
+│   ├── Lza/          LZ4 compression tool (Qt GUI)
+│   └── Hfs/          HTTP file manager (private-LAN file exchange)
 ├── bindings/         language bindings (Node.js, Python)
 ├── doc/              documentation
 │   ├── architecture.svg  architecture diagram

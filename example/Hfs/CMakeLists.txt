@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(Hfs VERSION 1.0.0 LANGUAGES CXX)
 
+option(HFS_ENABLE_DELETE "Enable the delete API and its page buttons" OFF)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -14,6 +16,10 @@ add_executable(${PROJECT_NAME}
     src/main.cpp
     src/res.cpp
     src/filesys.cpp
+)
+
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    HFS_ENABLE_DELETE=$<BOOL:${HFS_ENABLE_DELETE}>
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE

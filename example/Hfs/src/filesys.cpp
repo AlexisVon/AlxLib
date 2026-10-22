@@ -12,6 +12,10 @@
 #endif
 #include <vector>
 
+#ifndef HFS_ENABLE_DELETE
+#    define HFS_ENABLE_DELETE 0
+#endif
+
 namespace {
     constexpr alx::uint_64 block_size{4 * 1024 * 1024};
 
@@ -202,6 +206,7 @@ alx::http::reply filesys::root(const alx::http::request& _req) {
 
     alx::json_object json;
     json.insert("virtual", g_root.empty());
+    json.insert("delete", 0 != HFS_ENABLE_DELETE);
     json.insert("name", g_root.empty() ? std::string("Root") : to_web(g_root_name));
     json.insert("path", g_root.empty() ? std::string("/") : to_web(g_root));
     return ok_json(_req, json);
@@ -303,6 +308,7 @@ alx::http::reply filesys::upload(const alx::http::request& _req) {
 }
 
 alx::http::reply filesys::remove(const alx::http::request& _req) {
+#if HFS_ENABLE_DELETE
     if (alx::http::action::DELETE != _req.get_action())
         return fail(_req, alx::http::state::FORBIDDEN, "forbidden");
 
@@ -325,4 +331,7 @@ alx::http::reply filesys::remove(const alx::http::request& _req) {
     alx::json_object json;
     json.insert("ok", true);
     return ok_json(_req, json);
+#else
+    return fail(_req, alx::http::state::METHOD_NOT_ALLOWED, "not_supported");
+#endif
 }

@@ -2,7 +2,8 @@
 
 One page, one process: browse the host filesystem over `alx::http`, select an item to
 inspect it in a persistent right-hand pane, open folders, view text and images in a
-large overlay, download in 4 MB blocks, upload and delete. Light theme by default, a
+large overlay, download in 4 MB blocks, upload, and delete when compiled in (off by
+default). Light theme by default, a
 dark theme and an English/Chinese toggle in the header. No external fonts, CDNs or JS
 libraries.
 
@@ -39,6 +40,10 @@ cmake -B build-hfs -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=ON \
 cmake --build build-hfs --target Hfs -j7
 ```
 
+Delete is compiled out by default: the page hides every delete button,
+`/filesys/root` reports `"delete":false`, and `/filesys/remove` answers `405` with
+`{"error":"not_supported"}`. Pass `-DHFS_ENABLE_DELETE=ON` to compile it in.
+
 ## Run
 
 ```
@@ -53,7 +58,7 @@ directory used as the file-manager root. A missing or non-directory root is a st
 error (non-zero exit). With no root, the virtual root lists common directories on POSIX
 and drive letters on Windows; uploads are disabled there because it is not a real
 directory. With a root, `/` is a real directory and accepts uploads, while the root
-itself cannot be deleted.
+itself cannot be deleted when the feature is compiled in.
 
 Type `exit` and press Enter to stop; with no interactive stdin the process keeps
 running until Ctrl+C.
@@ -68,7 +73,8 @@ running until Ctrl+C.
 - The pane can be hidden with the toolbar toggle or its own close button; the choice is
   remembered. Nothing selected shows the current folder summary and its item count.
 - Delete and overwrite confirmations show the full path in a monospace block before the
-  action. Delete removes files and empty folders only.
+  action. Delete removes files and empty folders only; its buttons disappear when the
+  server reports delete as unavailable.
 - The status bar shows the item count and the current selection.
 - Keyboard: Up/Down select, Enter opens, Backspace goes up, Esc clears the selection or
   closes the viewer.
@@ -79,11 +85,11 @@ running until Ctrl+C.
 |--------|------|-------|
 | GET | `/` | `index.html`, also served at `/index.html` |
 | GET | `/app.css`, `/i18n.js`, `/api.js`, `/ui.js`, `/app.js` | static assets |
-| GET | `/filesys/root` | `{"virtual":bool,"name":"…","path":"…"}` |
+| GET | `/filesys/root` | `{"virtual":bool,"delete":bool,"name":"…","path":"…"}` |
 | GET | `/filesys/list?path=` | directory listing as JSON |
 | GET | `/filesys/read?path=` + `FileBlockIndex` header | one 4 MB block, with `FileBlockIndex` / `FileBlockTotal` reply headers |
 | POST | `/filesys/upload?path=&name=[&overwrite=1]` | raw body as the file content, 64 MB cap |
-| DELETE | `/filesys/remove?path=` | file or empty folder |
+| DELETE | `/filesys/remove?path=` | file or empty folder; `405 not_supported` when built with `HFS_ENABLE_DELETE=OFF` |
 
 Errors are JSON `{"error":"code"}` with a matching HTTP status; the page maps the code
 to the current language.
@@ -113,7 +119,8 @@ so the asset copy runs.
   pixel dimensions; larger images show a type card and a download button.
 - Upload sends the raw body with the filename in the query string. A name collision
   returns `exists`; the page asks, then retries with `overwrite=1`.
-- Symlinks are skipped in listings and refused by read, upload and delete.
+- Symlinks are skipped in listings and refused by read, upload and delete (the last
+  when compiled in).
 - On Windows, paths follow the process ANSI code page: `file_info` and `fopen` use the
   A APIs, and the root argument arrives through `argv` in the same code page. Web paths
   are converted to it per request and refused if they contain a backslash.

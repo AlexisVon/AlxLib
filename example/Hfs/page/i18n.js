@@ -77,6 +77,7 @@ var I18N = (function () {
             'err.too_large': 'File exceeds the 64 MB limit',
             'err.write_failed': 'Write failed',
             'err.remove_failed': 'Delete failed',
+            'err.not_supported': 'Delete is not supported by this build',
             'err.aborted': 'Cancelled',
             'err.network': 'Network error',
             'err.unknown': 'Unknown error'
@@ -156,6 +157,7 @@ var I18N = (function () {
             'err.too_large': '文件超过 64 MB 限制',
             'err.write_failed': '写入失败',
             'err.remove_failed': '删除失败',
+            'err.not_supported': '此版本不支持删除',
             'err.aborted': '已取消',
             'err.network': '网络错误',
             'err.unknown': '未知错误'

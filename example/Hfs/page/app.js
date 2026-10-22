@@ -15,6 +15,7 @@
     const state = {
         path: '/',
         root: { virtual: true, name: 'Root', path: '/' },
+        canDelete: true,
         entries: [],
         sortBy: 'name',
         sortOrder: 'asc',
@@ -72,6 +73,7 @@
                 name: info.name || 'Root',
                 path: info.path || '/'
             };
+            state.canDelete = info.delete !== false;
         } catch (e) { }
 
         state.paneVisible = readPanePref();
@@ -386,7 +388,7 @@
         actionCell.className = 'col-actions';
         if (entry.type === 'file')
             actionCell.appendChild(actionButton('⇩', I18N.t('action.download'), 'download', false));
-        if (entry.type !== 'disk')
+        if (entry.type !== 'disk' && state.canDelete)
             actionCell.appendChild(actionButton('🗑', I18N.t('action.delete'), 'delete', true));
 
         row.appendChild(nameCell);

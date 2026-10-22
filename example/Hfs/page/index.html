@@ -93,6 +93,14 @@
             <div class="viewer-body" id="viewerBody"></div>
             <div class="viewer-foot">
                 <span class="viewer-meta" id="viewerMeta"></span>
+                <div class="viewer-tools" id="viewerTools" hidden>
+                    <button class="icon-btn" id="zoomOut" data-i18n-title="zoom.out" title="Zoom out" aria-label="Zoom out">−</button>
+                    <span class="zoom-label" id="zoomLabel">100%</span>
+                    <button class="icon-btn" id="zoomIn" data-i18n-title="zoom.in" title="Zoom in" aria-label="Zoom in">+</button>
+                    <button class="btn btn-ghost" id="zoomFit" data-i18n="zoom.fit">Fit</button>
+                    <button class="btn btn-ghost" id="zoomActual" data-i18n-title="zoom.actual" title="Actual size" aria-label="Actual size">1:1</button>
+                    <span class="pixel-readout" id="pixelReadout"></span>
+                </div>
                 <button class="btn btn-secondary" id="viewerDownload" data-i18n="preview.download">Download</button>
             </div>
         </div>

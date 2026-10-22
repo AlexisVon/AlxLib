@@ -667,12 +667,96 @@ button {
     word-break: break-word;
 }
 
+.viewer-body .code-block pre {
+    flex: 1 1 auto;
+    margin-left: 12px;
+    white-space: pre;
+    word-break: normal;
+}
+
+.code-block {
+    display: flex;
+    align-items: flex-start;
+    width: max-content;
+    min-width: 100%;
+}
+
+.code-gutter {
+    position: sticky;
+    left: 0;
+    flex: 0 0 auto;
+    padding-right: 10px;
+    border-right: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text-2);
+    text-align: right;
+    white-space: pre;
+    user-select: none;
+    font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
 .viewer-body img {
     display: block;
     max-width: 100%;
     max-height: calc(88vh - 140px);
     margin: 0 auto;
     object-fit: contain;
+}
+
+.viewer-body.image-mode {
+    padding: 0;
+    overflow: hidden;
+    display: flex;
+}
+
+.viewer-body .zoom-img {
+    position: absolute;
+    top: 0;
+    left: 0;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    transform-origin: 0 0;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+.zoom-stage {
+    position: relative;
+    flex: 1;
+    overflow: hidden;
+    cursor: grab;
+    touch-action: none;
+    background: var(--bg);
+}
+
+.zoom-stage.dragging {
+    cursor: grabbing;
+}
+
+.viewer-tools {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.zoom-label {
+    min-width: 44px;
+    text-align: center;
+    color: var(--text-2);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.pixel-readout {
+    min-width: 0;
+    margin-left: 8px;
+    overflow: hidden;
+    color: var(--text-2);
+    font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: nowrap;
+    text-overflow: ellipsis;
 }
 
 .viewer-foot {
@@ -950,5 +1034,20 @@ button {
 
     .toolbar-actions .btn {
         padding: 7px 9px;
+    }
+
+    .viewer-foot {
+        flex-wrap: wrap;
+    }
+
+    .viewer-tools {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+
+    .pixel-readout {
+        flex: 1 1 100%;
+        margin-left: 0;
+        text-align: right;
     }
 }

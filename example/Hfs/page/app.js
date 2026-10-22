@@ -35,6 +35,7 @@
     let previewSeq = 0;
     let previewAbort = null;
     let uploadQueue = Promise.resolve();
+    let zoomApi = null;
 
     function byId(id) {
         return document.getElementById(id);
@@ -113,6 +114,10 @@
         byId('refreshBtn').addEventListener('click', function () { navigate(state.path); });
         els.uploadBtn.addEventListener('click', function () { els.filePicker.click(); });
         els.previewToggle.addEventListener('click', togglePane);
+        byId('zoomIn').addEventListener('click', function () { if (zoomApi) zoomApi.zoomIn(); });
+        byId('zoomOut').addEventListener('click', function () { if (zoomApi) zoomApi.zoomOut(); });
+        byId('zoomFit').addEventListener('click', function () { if (zoomApi) zoomApi.fit(); });
+        byId('zoomActual').addEventListener('click', function () { if (zoomApi) zoomApi.actual(); });
         byId('paneClose').addEventListener('click', function () {
             state.paneVisible = false;
             applyPane();
@@ -130,7 +135,6 @@
             header.addEventListener('click', function () { setSort(header.getAttribute('data-sort')); });
         });
         els.fileList.addEventListener('click', onListClick);
-        els.fileList.addEventListener('dblclick', onListDblClick);
         els.listPane.addEventListener('click', function (event) {
             if (event.target.closest('tr.file-row')) return;
             if (event.target.closest('thead')) return;
@@ -413,28 +417,29 @@
         if (!row) return;
         const entry = findEntry(row.dataset.name);
         if (!entry) return;
-        selectEntry(entry);
-
+        const again = state.selected === entry.name;
         const button = event.target.closest('button.row-btn');
-        if (!button) return;
-        if (button.dataset.action === 'download') download(entry);
-        else if (button.dataset.action === 'delete') removeEntry(entry);
-    }
-
-    function onListDblClick(event) {
-        if (event.target.closest('button.row-btn')) return;
-        const row = event.target.closest('tr.file-row');
-        if (!row) return;
-        const entry = findEntry(row.dataset.name);
-        if (entry) openEntry(entry);
+        selectEntry(entry);
+        if (button) {
+            if (button.dataset.action === 'download') download(entry);
+            else if (button.dataset.action === 'delete') removeEntry(entry);
+            return;
+        }
+        if (again) openEntry(entry);
     }
 
     function onKeyDown(event) {
         if (UI.isModalOpen() || UI.isViewerOpen()) return;
         const target = event.target;
-        if (target && target.closest && target.closest('.app-header, .toolbar, .pane-actions')) return;
         const tag = (target && target.tagName || '').toLowerCase();
         if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
+
+        if (event.key === 'Escape' || event.key === 'Backspace') {
+            event.preventDefault();
+            up();
+            return;
+        }
+        if (target && target.closest && target.closest('.app-header, .toolbar, .pane-actions')) return;
 
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
             const list = sorted();
@@ -455,11 +460,6 @@
                 event.preventDefault();
                 openEntry(entry);
             }
-        } else if (event.key === 'Backspace') {
-            event.preventDefault();
-            up();
-        } else if (event.key === 'Escape') {
-            clearSelection();
         }
     }
 
@@ -676,24 +676,19 @@
         return button;
     }
 
-    function renderPreviewStage(container, entry, preview, textLimit) {
+    function renderPreviewStage(container, entry, preview, textLimit, viewerMode) {
+        container.classList.toggle('image-mode', !!viewerMode && preview.kind === 'image');
         if (preview.kind === 'text') {
-            const truncated = preview.fileTruncated || preview.text.length > textLimit;
-            if (truncated)
-                container.appendChild(UI.el('div', 'preview-note',
-                    I18N.t('preview.truncated', { size: UI.formatSize(textLimit) })));
-            if (!preview.text) {
-                container.appendChild(UI.el('div', 'preview-empty', I18N.t('preview.empty')));
-                return;
-            }
-            const pre = document.createElement('pre');
-            pre.textContent = preview.text.slice(0, textLimit);
-            container.appendChild(pre);
+            renderTextStage(container, preview, textLimit, !!viewerMode);
         } else if (preview.kind === 'image') {
-            const img = document.createElement('img');
-            img.src = preview.url;
-            img.alt = entry.name;
-            container.appendChild(img);
+            if (viewerMode) {
+                renderZoomStage(container, entry, preview);
+            } else {
+                const img = document.createElement('img');
+                img.src = preview.url;
+                img.alt = entry.name;
+                container.appendChild(img);
+            }
         } else if (preview.kind === 'none') {
             container.appendChild(UI.el('div', 'pane-type-badge', extensionOf(entry.name).toUpperCase() || '?'));
             container.appendChild(UI.el('div', 'preview-note',
@@ -702,6 +697,180 @@
         } else if (preview.kind === 'error') {
             container.appendChild(UI.el('div', 'preview-note', errorText(preview.error)));
         }
+    }
+
+    function renderTextStage(container, preview, textLimit, withLines) {
+        const truncated = preview.fileTruncated || preview.text.length > textLimit;
+        if (truncated)
+            container.appendChild(UI.el('div', 'preview-note',
+                I18N.t('preview.truncated', { size: UI.formatSize(textLimit) })));
+        if (!preview.text) {
+            container.appendChild(UI.el('div', 'preview-empty', I18N.t('preview.empty')));
+            return;
+        }
+        const text = preview.text.slice(0, textLimit);
+        const pre = document.createElement('pre');
+        pre.textContent = text;
+        if (!withLines) {
+            container.appendChild(pre);
+            return;
+        }
+        let lines = 1;
+        for (let i = 0; i < text.length; i++) {
+            const ch = text.charCodeAt(i);
+            if (10 === ch) lines++;
+            else if (13 === ch && 10 !== text.charCodeAt(i + 1)) lines++;
+        }
+        const numbers = new Array(lines);
+        for (let i = 0; i < lines; i++) numbers[i] = String(i + 1);
+        const block = UI.el('div', 'code-block');
+        block.appendChild(UI.el('div', 'code-gutter', numbers.join('\n')));
+        block.appendChild(pre);
+        container.appendChild(block);
+    }
+
+    function renderZoomStage(container, entry, preview) {
+        const stage = UI.el('div', 'zoom-stage');
+        const img = document.createElement('img');
+        img.className = 'zoom-img';
+        img.src = preview.url;
+        img.alt = entry.name;
+        img.draggable = false;
+        stage.appendChild(img);
+        container.appendChild(stage);
+
+        const readout = byId('pixelReadout');
+        const label = byId('zoomLabel');
+        const probe = document.createElement('canvas');
+        probe.width = 1;
+        probe.height = 1;
+        const probeCtx = probe.getContext('2d', { willReadFrequently: true });
+        const view = { scale: 1, x: 0, y: 0, fitScale: 1 };
+        let lastPointer = null;
+
+        function apply() {
+            img.style.transform =
+                'translate(' + view.x + 'px, ' + view.y + 'px) scale(' + view.scale + ')';
+            label.textContent = Math.round(view.scale * 100) + '%';
+            if (lastPointer) pixelAt(lastPointer);
+        }
+
+        function fit() {
+            const width = stage.clientWidth;
+            const height = stage.clientHeight;
+            const naturalW = img.naturalWidth;
+            const naturalH = img.naturalHeight;
+            if (!width || !height || !naturalW || !naturalH) return;
+            view.fitScale = Math.min(width / naturalW, height / naturalH, 1);
+            view.scale = view.fitScale;
+            view.x = (width - naturalW * view.scale) / 2;
+            view.y = (height - naturalH * view.scale) / 2;
+            apply();
+        }
+
+        function zoomAt(cx, cy, factor) {
+            const lowest = Math.min(0.02, view.fitScale);
+            const next = Math.min(32, Math.max(lowest, view.scale * factor));
+            if (next === view.scale) return;
+            view.x = cx - (cx - view.x) * (next / view.scale);
+            view.y = cy - (cy - view.y) * (next / view.scale);
+            view.scale = next;
+            apply();
+        }
+
+        function centerZoom(factor) {
+            zoomAt(stage.clientWidth / 2, stage.clientHeight / 2, factor);
+        }
+
+        function pixelAt(event) {
+            const naturalW = img.naturalWidth;
+            const naturalH = img.naturalHeight;
+            if (!naturalW || !naturalH) return;
+            const rect = stage.getBoundingClientRect();
+            const x = Math.floor((event.clientX - rect.left - view.x) / view.scale);
+            const y = Math.floor((event.clientY - rect.top - view.y) / view.scale);
+            if (x < 0 || y < 0 || x >= naturalW || y >= naturalH) {
+                readout.textContent = '';
+                return;
+            }
+            probeCtx.drawImage(img, x, y, 1, 1, 0, 0, 1, 1);
+            const data = probeCtx.getImageData(0, 0, 1, 1).data;
+            const color = data[0] === data[1] && data[1] === data[2]
+                ? 'gray(' + data[0] + ')'
+                : 'rgb(' + data[0] + ', ' + data[1] + ', ' + data[2] + ')';
+            readout.textContent = x + ', ' + y + ' · ' + color + (data[3] < 255 ? ' a' + data[3] : '');
+        }
+
+        let drag = null;
+        stage.addEventListener('wheel', function (event) {
+            event.preventDefault();
+            const rect = stage.getBoundingClientRect();
+            const unit = WheelEvent.DOM_DELTA_LINE === event.deltaMode
+                ? 16
+                : (WheelEvent.DOM_DELTA_PAGE === event.deltaMode ? stage.clientHeight : 1);
+            zoomAt(event.clientX - rect.left, event.clientY - rect.top,
+                Math.exp(-event.deltaY * unit * 0.0015));
+            if (drag) {
+                drag.x = event.clientX;
+                drag.y = event.clientY;
+                drag.ox = view.x;
+                drag.oy = view.y;
+            }
+        }, { passive: false });
+
+        stage.addEventListener('pointerdown', function (event) {
+            if (0 !== event.button) return;
+            drag = { id: event.pointerId, x: event.clientX, y: event.clientY, ox: view.x, oy: view.y };
+            stage.setPointerCapture(event.pointerId);
+            stage.classList.add('dragging');
+        });
+        stage.addEventListener('pointermove', function (event) {
+            lastPointer = event;
+            if (drag && drag.id === event.pointerId) {
+                view.x = drag.ox + event.clientX - drag.x;
+                view.y = drag.oy + event.clientY - drag.y;
+                apply();
+            } else {
+                pixelAt(event);
+            }
+        });
+        function releasePointer(event) {
+            if (!drag || drag.id !== event.pointerId) return;
+            drag = null;
+            stage.classList.remove('dragging');
+            if (stage.hasPointerCapture(event.pointerId)) stage.releasePointerCapture(event.pointerId);
+        }
+        stage.addEventListener('pointerup', releasePointer);
+        stage.addEventListener('pointercancel', releasePointer);
+        stage.addEventListener('pointerleave', function () {
+            lastPointer = null;
+            readout.textContent = '';
+        });
+        stage.addEventListener('dblclick', function (event) {
+            if (Math.abs(view.scale - view.fitScale) < 0.001) {
+                const rect = stage.getBoundingClientRect();
+                zoomAt(event.clientX - rect.left, event.clientY - rect.top, 1 / view.scale);
+            } else {
+                fit();
+            }
+        });
+
+        zoomApi = {
+            zoomIn: function () { centerZoom(1.25); },
+            zoomOut: function () { centerZoom(0.8); },
+            fit: fit,
+            actual: function () { centerZoom(1 / view.scale); }
+        };
+
+        if (img.complete && img.naturalWidth) fit();
+        else img.addEventListener('load', fit, { once: true });
+    }
+
+    function setViewerTools(visible) {
+        byId('viewerTools').hidden = !visible;
+        if (visible) return;
+        byId('pixelReadout').textContent = '';
+        byId('zoomLabel').textContent = '100%';
     }
 
     function hookImageDimensions(container, entry) {
@@ -726,7 +895,7 @@
             return;
         }
         if (!isSupported(entry.name)) {
-            download(entry);
+            UI.toast(I18N.t('toast.unsupported_open'));
             return;
         }
         UI.closeViewer();
@@ -741,6 +910,8 @@
             onClose: function () {
                 state.viewerKey = null;
                 state.viewerEntry = null;
+                zoomApi = null;
+                setViewerTools(false);
             }
         });
         renderViewer();
@@ -753,12 +924,19 @@
     function renderViewer() {
         if (!UI.isViewerOpen() || !state.viewerKey) return;
         const body = byId('viewerBody');
+        zoomApi = null;
+        setViewerTools(false);
         body.textContent = '';
+        body.classList.remove('image-mode');
         if (state.previewLoading || !state.preview || state.previewKey !== state.viewerKey) {
             body.appendChild(UI.el('div', 'spinner'));
             return;
         }
-        renderPreviewStage(body, state.viewerEntry, state.preview, VIEWER_TEXT_MAX);
+        renderPreviewStage(body, state.viewerEntry, state.preview, VIEWER_TEXT_MAX, true);
+        if (state.preview.kind === 'image') {
+            setViewerTools(true);
+            if (zoomApi) zoomApi.fit();
+        }
     }
 
     function showState(kind, error) {

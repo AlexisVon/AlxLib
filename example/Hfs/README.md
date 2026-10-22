@@ -67,17 +67,24 @@ running until Ctrl+C.
 
 - A single click selects; the right pane shows the item's type, size, modified time,
   location and a small preview (or a folder / type card).
-- Open with a double-click, Enter or the pane's Open button: a folder navigates, a
-  text or image file opens the large viewer, any other file downloads. The viewer
-  closes with Esc, the backdrop or the close button; the selection stays in the pane.
+- A second single click on the selected item opens it, as do Enter and the pane's
+  Open button: a folder navigates, a text or image file opens the large viewer, and
+  any other file only shows a hint to download it. The viewer closes with Esc, the
+  backdrop or the close button; the selection stays in the pane.
+- In the viewer an image zooms with the wheel around the cursor and pans by dragging;
+  the footer offers −/+/Fit/1:1 (double-click toggles fit and 1:1), and hovering
+  reports the pixel coordinate with its colour (`rgb(r, g, b)`, `gray(v)` for neutral
+  pixels, with ` a<alpha>` appended below 255).
+- Text files open with line numbers in the viewer; the pane shows the first 64 KB and
+  the viewer the first 1 MB, each with a truncation note.
 - The pane can be hidden with the toolbar toggle or its own close button; the choice is
   remembered. Nothing selected shows the current folder summary and its item count.
 - Delete and overwrite confirmations show the full path in a monospace block before the
   action. Delete removes files and empty folders only; its buttons disappear when the
   server reports delete as unavailable.
 - The status bar shows the item count and the current selection.
-- Keyboard: Up/Down select, Enter opens, Backspace goes up, Esc clears the selection or
-  closes the viewer.
+- Keyboard: with the list focused, Up/Down select and Enter opens; Esc or Backspace
+  goes up, and Esc closes the viewer or a modal first when one is open.
 
 ## Routes
 
@@ -114,9 +121,10 @@ so the asset copy runs.
 ## Behaviour notes
 
 - Folders are listed first; Name / Size / Modified are sortable.
-- Text preview reads the first 4 MB block; the pane renders 64 KB and the viewer 1 MB,
-  with a truncation note. Images up to 16 MB are shown from their blocks with their
-  pixel dimensions; larger images show a type card and a download button.
+- Text preview reads the first 4 MB block; the pane renders 64 KB and the viewer 1 MB
+  with line numbers, each with a truncation note. Images up to 16 MB are shown from
+  their blocks with their pixel dimensions; larger images show a type card and a
+  download button.
 - Upload sends the raw body with the filename in the query string. A name collision
   returns `exists`; the page asks, then retries with `overwrite=1`.
 - Symlinks are skipped in listings and refused by read, upload and delete (the last

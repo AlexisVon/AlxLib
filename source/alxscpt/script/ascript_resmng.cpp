@@ -113,7 +113,8 @@ namespace alx {
             if (!_path.empty() && _path[0] == '@')
                 return bytes::from_hex(_path.substr(1)).to<uint_64>(0);
 
-            std::unique_ptr<alx::verify> h(alx::verify::create(alx::verify::SHA_256));
+            alx::verify* h = alx::verify::create(alx::verify::SHA_256);
+            auto_delete<alx::verify> guard(h);
             h->update(_path);
             return h->bytedigest().to<uint_64>(0);
         }
@@ -169,16 +170,17 @@ namespace alx {
                                        script_exception& _err) {
             uint_64 key = res_make_key(_path);
             return pool_ref_impl(m_asts, m_lock, key, [&]() -> ast_resource* {
-                                     std::unique_ptr<ast_resource> r(new ast_resource());
+                                     ast_resource* r = new ast_resource();
+                                     auto_delete<ast_resource> guard(r);
                                      r->m_id = key;
                                      r->m_path = _path;
-                                     if (!load_module_ast(_path, _w, r.get())) {
+                                     if (!load_module_ast(_path, _w, r)) {
                                          _err = {error_type::ImportError,
                                                  std::string("Cannot load module: ") + _path};
                                          return nullptr;
                                      }
                                      r->m_ref.init_owned();
-                                     return r.release(); }, [](ast_resource* _r) { delete _r; }, [&](ast_resource*) { fire(&on_csys, "ast load: " + _path); });
+                                     return guard.take(); }, [](ast_resource* _r) { delete _r; }, [&](ast_resource*) { fire(&on_csys, "ast load: " + _path); });
         }
 
         link_resource* res_mng::ref_link(const std::string& _path, walker* _w,
@@ -219,7 +221,8 @@ namespace alx {
                                      script_unload unload_fn = (script_unload) GetProcAddress(h, LINK_UNLOAD);
 #endif
 
-                                     std::unique_ptr<link_resource> r(new link_resource());
+                                     link_resource* r = new link_resource();
+                                     auto_delete<link_resource> guard(r);
                                      r->m_id = key;
                                      r->m_path = _path;
                                      r->m_handle = h;
@@ -228,7 +231,7 @@ namespace alx {
                                      r->m_release_fn = release_fn;
                                      r->m_unload_fn = unload_fn;
                                      r->m_ref.init_owned();
-                                     return r.release(); }, [](link_resource* _r) {
+                                     return guard.take(); }, [](link_resource* _r) {
                                      if (_r->m_handle) {
 #if defined(__linux__)
                                          dlclose(_r->m_handle);

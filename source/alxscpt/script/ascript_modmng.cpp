@@ -13,7 +13,6 @@
 #include "script/ascript_fwrap.h"
 #include "script/ascript_walk.h"
 #include <algorithm>
-#include <memory>
 
 namespace alx {
     namespace script {
@@ -199,20 +198,20 @@ namespace alx {
             ast_resource* ast = m_res->ref_ast(resolved, _w, _err);
             if (!ast) return nullptr;
 
-            std::unique_ptr<fly_import> fly(new fly_import());
+            fly_import* fly = new fly_import();
+            auto_delete<fly_import> guard(fly);
             fly->m_id = key;
             fly->m_path = resolved;
             fly->m_ast = ast;
             // the template root's identity: pos_file and env() read m_fly, and m_mng stays null
             // so the fly's own root never holds a reference to the fly
-            fly->m_root.m_fly = fly.get();
+            fly->m_root.m_fly = fly;
             // the module's own directory leads its env search, so nested imports resolve next to it
             fly->m_root.m_env_paths.push_back(dirname_of(resolved));
             // unsharable until here, where every deref() reads as the last one: this is the one owner
             fly->m_ref.init_owned();
-            fly_import* ptr = fly.release();
-            m_imports[key] = ptr;
-            return ptr;
+            m_imports[key] = fly;
+            return guard.take();
         }
 
         fly_link* mod_mng::ref_fly_link(const std::string& _path, walker* _w,
@@ -246,14 +245,14 @@ namespace alx {
             link_resource* lr = m_res->ref_link(resolved, _w, _err);
             if (!lr) return nullptr;
 
-            std::unique_ptr<fly_link> fly(new fly_link());
+            fly_link* fly = new fly_link();
+            auto_delete<fly_link> guard(fly);
             fly->m_id = key;
             fly->m_path = resolved;
             fly->m_link = lr;
             fly->m_ref.init_owned();
-            fly_link* ptr = fly.release();
-            m_links[key] = ptr;
-            return ptr;
+            m_links[key] = fly;
+            return guard.take();
         }
 
         template <typename FlyT, typename DoInit>
@@ -417,7 +416,8 @@ namespace alx {
 
         impl_import* mod_mng::impl_fly_import(fly_import* fly, walker* _w,
                                               script_exception& _err) {
-            std::unique_ptr<impl_import> inst(new impl_import());
+            impl_import* inst = new impl_import();
+            auto_delete<impl_import> guard(inst);
             // the caller's ref is inherited, not counted again: this instance owes one release
             inst->m_fly = fly;
             inst->m_env_paths = fly->m_root.m_env_paths;
@@ -425,7 +425,7 @@ namespace alx {
             try {
                 // a deep copy of the prefab, children included: every clone is re-bound to this copy
                 copy_store(inst->m_store, fly->m_root.m_store);
-                rebind_children(inst->m_store, inst.get());
+                rebind_children(inst->m_store, inst);
             } catch (const script_exception& _e) {
                 _err = _e;
                 return nullptr;
@@ -446,13 +446,14 @@ namespace alx {
             }
             // set last: a throw above unwinds this instance without releasing the ref make_import owns
             inst->m_mng = this;
-            return inst.release();
+            return guard.take();
         }
 
         impl_link* mod_mng::impl_fly_link(fly_link* fly, walker* _w,
                                           script_exception& _err) {
             (void) _w;
-            std::unique_ptr<impl_link> inst(new impl_link());
+            impl_link* inst = new impl_link();
+            auto_delete<impl_link> guard(inst);
             inst->m_fly = fly;
 
             try {
@@ -486,7 +487,7 @@ namespace alx {
             }
             // set last for the same reason: make_link owns the ref until this returns
             inst->m_mng = this;
-            return inst.release();
+            return guard.take();
         }
 
         void mod_mng::release_fly(fly_import* _fw) {

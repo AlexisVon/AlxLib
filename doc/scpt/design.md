@@ -1876,6 +1876,16 @@ Version ALXLIB 1.2.3 → 1.3.0.
 
 Version ALXLIB 1.3.0 → 1.3.1.
 
+**Migration log (2026-10-22, version 1.3.2: the process tree, the scalar position and the send-queue depth)**:
+
+- **`process_ctrl::kill()` takes the whole tree**: the child runs in a tree of its own — POSIX a process group (`setpgid` on both sides of the fork), Windows a job object created for **every** start rather than only when `process_limits` asked for one — and `kill()` / destruction signal that group / terminate that job, so what the child started goes with it, including the descendants left behind by a child that had already exited. `terminate()` still signals the direct child only; a descendant that calls `setsid()` or breaks away from the job is beyond the platform's reach and is documented as such.
+- **`status()` stops reaping**: it peeks with `waitid(…, WNOHANG | WNOWAIT)` and leaves an exited POSIX child a zombie until `kill()`, which is now the only reaping point. That is what keeps the pid — and with it the process group id `kill()` signals — reserved to the object, so a late `kill(-pgid)` can never fire into a recycled group. Hosts that relied on `status()` reaping call `kill()` (the destructor already does); the outcome keeps coming back through `status()`, and the child table shows a `defunct` entry until then.
+- **`hook_info` gains scalar positions and a path reference**: `wkdt_row()` / `wkdt_col()` read `state.pos_slot()` without building the `varmap` that `wkdt_pos()` allocates (≈ 250 ns a statement — the GUI host measured a 2.5× debug mode around it), and `wken_path(_e)` returns the resolved **full** path by reference, empty for the root, where `wken_file()` returns a copy and the position's `file` field only the basename. Non-virtual, no vtable slot, no `hook_info` field, no opcode or `vtype` change.
+- **`comm_ex` gains the queue depth**: `comm_ex(transmit*, uint_64 _queue_limit = 0x80)` forwards `comm`'s existing bound to the constructor, so a host pushing large snapshots can widen it; the default and every send/receive semantic are unchanged.
+- **Migration note**: no opcode or AST change, so **vtype is untouched and .axp products need no recompilation**; no symbol changed its home, the SONAME **stays `.so.1.3`**, and the library version moves 1.3.1 → 1.3.2 — a patch.
+
+Version ALXLIB 1.3.1 → 1.3.2.
+
 ### 10.2 Syntax
 
 `$foo(args)` → `T_DOLLAR` + `T_NAME` (the value is the bare name `foo`) + the `O_EXCALL` opcode.

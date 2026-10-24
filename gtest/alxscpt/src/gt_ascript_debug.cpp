@@ -35,6 +35,31 @@ namespace {
         std::vector<std::vector<std::pair<int_64, int_64>>> chain_pos;
     };
 
+    struct pos_rec {
+        std::vector<std::pair<uint_32, uint_32>> scalar;
+        std::vector<std::pair<int_64, int_64>> mapped;
+        std::vector<std::string> frame_path;
+        std::string root_path;
+        bool saw_root = false;
+    };
+
+    bool pos_hook(hook_info& _info) {
+        auto* r = static_cast<pos_rec*>(_info.hkdt);
+        if (_info.type != hook_event::debug) return true;
+
+        r->scalar.emplace_back(_info.wkdt_row(), _info.wkdt_col());
+        varmap p = _info.wkdt_pos();
+        int_64 row = p.contain("row") && p.value("row").is<int_64>() ? p.value("row").to<int_64>() : -1;
+        int_64 col = p.contain("col") && p.value("col").is<int_64>() ? p.value("col").to<int_64>() : -1;
+        r->mapped.emplace_back(row, col);
+
+        r->root_path = _info.wken_path(_info.wken_root());
+        r->saw_root = true;
+        const uint_64 frames = _info.wkfm_size();
+        if (frames > 0) r->frame_path.push_back(_info.wken_path(_info.wkfm_eptr(frames - 1)));
+        return true;
+    }
+
     bool dbg_hook(hook_info& _info) {
         auto* r = static_cast<dbg_rec*>(_info.hkdt);
         if (_info.type == hook_event::exec) {
@@ -406,4 +431,59 @@ TEST(gt_ascript_debug, HookEventPerStatement) {
     ASSERT_EQ(rec.chain[0].size(), 1u) << "top level has no frame";
     for (auto& f : rec.files) EXPECT_EQ(f, "") << "root script has no file to blame";
     delete eng;
+}
+
+TEST(gt_ascript_debug, ScalarPosMatchesWkdtPos) {
+    auto* eng = engine::create();
+    eng->set_debug_enable(true);
+    pos_rec rec;
+    eng->set_hook(pos_hook, &rec, 0);
+    auto res = eng->exec(bytes_view(bytes("var a = 1;\nvar b = 2;\na = a + b;\n")), "");
+    eng->set_hook(nullptr, nullptr, 0);
+    ASSERT_EQ(res.error, error_type::NoError);
+
+    ASSERT_EQ(rec.scalar.size(), 3u) << "one debug event per statement";
+    ASSERT_EQ(rec.scalar.size(), rec.mapped.size());
+    for (size_t i = 0; i < rec.scalar.size(); ++i) {
+        EXPECT_EQ((int_64) rec.scalar[i].first, rec.mapped[i].first) << "row at event " << i;
+        EXPECT_EQ((int_64) rec.scalar[i].second, rec.mapped[i].second) << "col at event " << i;
+    }
+    EXPECT_EQ(rec.scalar[1], std::make_pair(2u, 1u));
+    delete eng;
+}
+
+TEST(gt_ascript_debug, EntityPathIsResolvedAndTheRootIsEmpty) {
+    std::string dir = "tmp-alxscpt-gtest";
+    std::filesystem::create_directories(dir);
+    std::string mod = dir + "/dbg_path_mod.axc";
+    {
+        std::ofstream ofs(mod);
+        ofs << "def f() {\n"
+            << "    var x = 1;\n"
+            << "    x = x + 1;\n"
+            << "    return x;\n"
+            << "}\n";
+    }
+    auto* eng = engine::create();
+    eng->set_debug_enable(true);
+    pos_rec rec;
+    eng->set_hook(pos_hook, &rec, 0);
+    auto res = eng->exec(bytes_view(bytes("import \"" + mod + "\" as m;\nm.f();\n")), "");
+    eng->set_hook(nullptr, nullptr, 0);
+    ASSERT_EQ(res.error, error_type::NoError);
+
+    EXPECT_TRUE(rec.saw_root);
+    EXPECT_EQ(rec.root_path, "") << "the root script has no file to name";
+    ASSERT_FALSE(rec.frame_path.empty());
+
+    bool saw_module = false;
+    for (const auto& path : rec.frame_path) {
+        if (path.empty()) continue;
+        saw_module = true;
+        EXPECT_EQ(path[0], '/') << "a resolved path is absolute: " << path;
+        EXPECT_NE(path.find("dbg_path_mod.axc"), std::string::npos) << path;
+    }
+    EXPECT_TRUE(saw_module) << "no debug event reported the module file";
+    delete eng;
+    std::remove(mod.c_str());
 }

@@ -1056,6 +1056,7 @@ const void* wken_root() const;                                // the root entity
 std::vector<std::string> wken_data_keys(const void* _e);      // entity level (m_store idx < the earliest frame's base; no frames = all), frame data excluded
 const variant* wken_data_cptr(const void* _e, const char* _key) const;
 std::string wken_file(const void* _e) const;                  // full path, empty → "::"
+const std::string& wken_path(const void* _e) const;           // the same path by reference, empty for the root
 std::string wken_name(const void* _e) const;                  // m_alias
 const void* wken_pptr(const void* _e) const;                  // parent entity, none → nullptr
 const void* wklk_of(const variant* _v) const;                 // value → handle; null/non-link → nullptr
@@ -1069,6 +1070,8 @@ bool wkis_func(const variant* _v) const;  // anyptr(call_able)
 bool wkis_area(const variant* _v) const;  // anyptr(link_area)
 // ── position (§4.9d; queryable at any time, not just on debug events) ──
 varmap wkdt_pos() const;                  // the current statement {row, col, ofst, file}; row = 0 = unknown
+uint_32 wkdt_row() const;                 // the same row / column without building the varmap
+uint_32 wkdt_col() const;
 std::list<varmap> wkdt_fpos() const;      // per level {row, col, ofst, file, func}: innermost first, top level last
 ```
 
@@ -1112,6 +1115,8 @@ std::list<varmap> wkdt_fpos() const; // per level {row, col, ofst, file, func}
 ```
 
 **One switch, live in two places**: during parse it decides whether `O_DEBUG` is inserted; during exec `op_debug` reads it too — switched off it writes no position and fires no event. That check on the execution side is for **performance**, not correctness: a debug event is one callback per statement, and switched off even a marked AST (the shared cache / an `.axp` someone else compiled) costs just one dispatch and no host callback. The semantics match `-g`: off is **suppression**, not an error; on with an unmarked AST ⇒ row = 0 = position unknown (normal). Off by default ⇒ no effect on existing hosts.
+
+**Scalar access, for a host that asks on every statement**: `wkdt_pos()` builds a varmap — four variants plus the file string, which holds only the **basename** — the GUI host measured ≈ 250 ns a call and a 2.5× slowdown of its debug mode. `wkdt_row()` / `wkdt_col()` read the same `state.pos_slot()` and allocate nothing; `wken_path(_e)` returns the **resolved** path by reference (where `wken_file()` returns a copy), empty for the root, so a host can key per-file state without a string copy. All three are non-virtual, add no vtable slot, no `hook_info` field and no opcode/`vtype` change, and the existing `wkdt_pos()` / `wken_file()` keep their behaviour.
 
 **The AST shape is unchanged** (a hard constraint of this feature): only sibling nodes are inserted into **existing statement lists**, and no existing node's slot structure changes.
 

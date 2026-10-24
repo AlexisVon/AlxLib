@@ -12,7 +12,9 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <gtest/gtest.h>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -294,6 +296,59 @@ TEST(gt_acomm_ex, large_varmap) {
 
     mock->inject_recv(mock->last_sent);
     EXPECT_EQ(received.value("big").to_string(), std::string(65536, 'D'));
+
+    mock->connect_num_result = 0;
+}
+
+TEST(gt_acomm_ex, queue_limit_bounds_the_send_queue) {
+    auto* mock = new MockTransmit();
+
+    // hold the worker inside the transport, so the queue behind it can fill up
+    std::mutex mtx;
+    std::condition_variable cv;
+    bool held = false;
+    bool release = false;
+    mock->on_send = [&](const bytes_view&, uint_64) {
+        std::unique_lock<std::mutex> lock(mtx);
+        held = true;
+        cv.notify_all();
+        cv.wait(lock, [&] { return release; });
+    };
+
+    comm_ex ce(mock, 1);
+    ASSERT_TRUE(ce.open());
+
+    varmap pack;
+    pack.insert("n", 1);
+
+    ASSERT_TRUE(ce.data_send(pack, false));
+
+    {
+        std::unique_lock<std::mutex> lock(mtx);
+        ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] { return held; }))
+            << "the worker never reached the transport";
+    }
+
+    // the worker is busy and the limit is one, so this fills the queue
+    ASSERT_TRUE(ce.data_send(pack, false));
+
+    std::atomic<bool> sent{false};
+    std::thread blocked([&] {
+        ce.data_send(pack, false);
+        sent = true;
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    EXPECT_FALSE(sent.load()) << "a send beyond queue_limit must block";
+
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        release = true;
+    }
+    cv.notify_all();
+
+    blocked.join();
+    EXPECT_TRUE(sent.load()) << "the blocked sender was not released";
 
     mock->connect_num_result = 0;
 }

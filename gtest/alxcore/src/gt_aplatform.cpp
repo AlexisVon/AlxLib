@@ -14,6 +14,7 @@
 #include <fstream>
 #include <gtest/gtest.h>
 #include <mutex>
+#include <sstream>
 #include <thread>
 
 using namespace alx;
@@ -34,6 +35,33 @@ namespace {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
         return proc_state(_pid);
+    }
+
+    // field 5 of /proc/<pid>/stat: the process group the pid belongs to
+    long proc_pgrp(uint_32 _pid) {
+        std::ifstream file("/proc/" + std::to_string(_pid) + "/stat");
+        std::string line;
+        if (!std::getline(file, line)) return -1;
+        size_t pos = line.rfind(')');
+        if (std::string::npos == pos) return -1;
+
+        std::istringstream iss(line.substr(pos + 2));
+        std::string state;
+        long ppid = -1, pgrp = -1;
+        if (!(iss >> state >> ppid >> pgrp)) return -1;
+        return pgrp;
+    }
+
+    // the pid a shell wrote to _file, 0 while it has not written anything yet
+    uint_32 read_pid_file(const std::string& _file) {
+        for (int i = 0; i < 400; ++i) {
+            std::ifstream file(_file);
+            uint_32 pid = 0;
+            file >> pid;
+            if (pid) return pid;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return 0;
     }
 }
 
@@ -299,8 +327,14 @@ TEST(gt_aplatform, nothing_reaps_until_asked) {
     uint_32 pid = ctrl.pid();
 
     EXPECT_EQ(wait_proc_state(pid, 'Z'), 'Z');
+    // status() samples the exit without reaping: the zombie is what keeps the pid -- and so the
+    // process group kill() signals -- reserved for this object
     EXPECT_TRUE(ctrl.status().exited);
     EXPECT_EQ(ctrl.status().exit_code, 5);
+    EXPECT_EQ(proc_state(pid), 'Z');
+
+    // kill() is what reaps it
+    EXPECT_FALSE(ctrl.kill());
     EXPECT_EQ(proc_state(pid), '\0');
 }
 
@@ -314,6 +348,50 @@ TEST(gt_aplatform, kill_reports_signal) {
     EXPECT_TRUE(ctrl.status().signaled);
     EXPECT_EQ(ctrl.status().term_sig, SIGKILL);
     EXPECT_FALSE(ctrl.kill());
+}
+
+TEST(gt_aplatform, child_leads_its_own_process_group) {
+    process_ctrl ctrl("/bin/sleep");
+    ASSERT_TRUE(ctrl.start({"30"}));
+
+    EXPECT_EQ(proc_pgrp(ctrl.pid()), (long) ctrl.pid());
+    EXPECT_TRUE(ctrl.kill());
+}
+
+TEST(gt_aplatform, kill_takes_the_descendants_down) {
+    const std::string pid_file = "/tmp/alx-gt-tree-" + std::to_string(::getpid());
+    std::remove(pid_file.c_str());
+
+    process_ctrl ctrl("/bin/sh");
+    ASSERT_TRUE(ctrl.start({"-c", "sleep 30 & echo $! > " + pid_file + "; wait"}));
+
+    const uint_32 grandchild = read_pid_file(pid_file);
+    ASSERT_NE(grandchild, 0u) << "the shell never reported its background child";
+    ASSERT_NE(proc_state(grandchild), '\0');
+
+    EXPECT_TRUE(ctrl.kill());
+    EXPECT_EQ(wait_proc_state(grandchild, '\0'), '\0') << "the grandchild outlived kill()";
+    std::remove(pid_file.c_str());
+}
+
+TEST(gt_aplatform, kill_reaches_descendants_of_a_child_that_exited) {
+    const std::string pid_file = "/tmp/alx-gt-tree-exited-" + std::to_string(::getpid());
+    std::remove(pid_file.c_str());
+
+    process_ctrl ctrl("/bin/sh");
+    // the shell exits at once, leaving the background child in the group it leads
+    ASSERT_TRUE(ctrl.start({"-c", "sleep 30 & echo $! > " + pid_file}));
+
+    const uint_32 grandchild = read_pid_file(pid_file);
+    ASSERT_NE(grandchild, 0u) << "the shell never reported its background child";
+    EXPECT_TRUE(ctrl.wait(2000));
+    EXPECT_TRUE(ctrl.status().exited);
+
+    // the leader is a zombie, so its pid -- the group id kill() signals -- is still ours
+    ASSERT_NE(proc_state(grandchild), '\0');
+    EXPECT_FALSE(ctrl.kill()) << "there was no live child left to kill";
+    EXPECT_EQ(wait_proc_state(grandchild, '\0'), '\0') << "the group kill skipped the orphaned child";
+    std::remove(pid_file.c_str());
 }
 
 TEST(gt_aplatform, terminate_reports_signal) {
@@ -357,6 +435,9 @@ TEST(gt_aplatform, input_to_dead_child_returns_false) {
 
     EXPECT_FALSE(ctrl.input(std::string(64 * 1024, 'x')));
     EXPECT_FALSE(ctrl.input("tail"));
+    // a zombie, not a reaped child: status() left the pid reserved for kill()
+    EXPECT_EQ(proc_state(pid), 'Z');
+    EXPECT_FALSE(ctrl.kill());
     EXPECT_EQ(proc_state(pid), '\0');
 }
 

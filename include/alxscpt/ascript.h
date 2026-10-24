@@ -290,6 +290,9 @@ namespace alx {
             const variant* wken_data_cptr(const void* _e, const char* _key) const;
             /// Path of the file the entity was loaded from; "::" for the root
             std::string wken_file(const void* _e) const;
+            /// Full resolved path of the file the entity was loaded from, whole and without a copy:
+            /// a reference into the entity, empty for the root (where wken_file() gives "::")
+            const std::string& wken_path(const void* _e) const;
             /// Alias the entity is bound to in its parent
             std::string wken_name(const void* _e) const;
             /// Entity that imported it; null for the root
@@ -317,6 +320,10 @@ namespace alx {
 
             /// Statement being executed: {row, col, ofst, file}; row 0 = the position is unknown
             varmap wkdt_pos() const;
+            /// Row of the statement being executed; 0 = the position is unknown, as in wkdt_pos()
+            uint_32 wkdt_row() const;
+            /// Column of the statement being executed; 0 = the position is unknown, as in wkdt_pos()
+            uint_32 wkdt_col() const;
             /// Statement chain, innermost first: {row, col, ofst, file, func}, the top level last
             std::list<varmap> wkdt_fpos() const;
         };

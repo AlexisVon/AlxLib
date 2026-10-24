@@ -124,10 +124,13 @@ public:
     }
 };
 
+comm_ex(transmit* t, uint_64 _queue_limit = 0x80);        // send-queue depth; a sender blocks while it is full
 bool data_send(const varmap& _data, uint_64 _loc, bool _compress);
 bool data_send(const varmap& _data, bool _compress);      // no _loc given (_loc = 0, i.e. every peer)
 signal<const varmap&, uint64> data_recv;
 ```
+
+The queue limit is `comm`'s own (128 packs by default): a burst larger than that blocks the sending thread until the worker drains room, so a host that pushes big snapshots can widen it at construction without touching the send/receive semantics.
 
 A pack is **self-delimited** (8-byte head magic + sizes + control block + data + 8-byte tail magic), so TCP coalescing and splitting are handled inside the framework and `data_recv` always delivers one complete pack.
 

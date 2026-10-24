@@ -31,9 +31,10 @@ namespace alx {
          *
          * \param _trans Transport to own, deleted with the object; a null transport leaves the
          *               object invalid -- data_send() returns false
+         * \param _queue_limit Send queue depth, as comm's: a sender blocks while the queue is full
          */
-        comm_ex(transmit* _trans)
-            : comm(_trans) {}
+        comm_ex(transmit* _trans, const uint_64 _queue_limit = 0X80U)
+            : comm(_trans, _queue_limit) {}
 
     public:
         /**

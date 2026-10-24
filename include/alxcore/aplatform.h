@@ -449,7 +449,8 @@ private:
  *
  * start() runs the executable the object was constructed with, and a reader thread delivers the
  * child's stdout and stderr through sig_output / sig_errput until both pipes hit end of file.
- * The child never outlives this object: the destructor kills it and joins the reader thread.
+ * The child runs in a tree of its own -- a process group on POSIX, a job object on Windows -- so
+ * kill() and the destructor take everything it started down with it, not just the child itself.
  *
  * The control calls -- start(), input(), terminate(), kill() -- are serialized by convention.
  */
@@ -507,6 +508,9 @@ public:
      * A child that is still running is killed first, and the previous outcome is cleared. A limit
      * that cannot be imposed is never dropped: the call fails instead.
      *
+     * The child becomes the leader of its own process group (POSIX) or the sole process of a job
+     * object (Windows), which is what lets kill() reach the processes it starts later.
+     *
      * \param _args Arguments after the executable; Linux passes them through untouched, Windows
      *              quotes each one into the command line
      * \return true only when the child is running with every requested limit in place; false when
@@ -537,23 +541,30 @@ public:
     bool terminate();
 
     /**
-     * \brief Kill the child hard, reap it and release this handle
+     * \brief Kill the child and its descendants hard, reap the child and release this handle
      *
-     * Blocks until the child is gone and its reader thread has been joined. Called again, or
-     * after the child exited on its own, it only does that cleanup. The outcome stays readable
-     * through status(), with pid() back at 0.
+     * The whole tree goes: POSIX signals the child's process group, Windows terminates its job
+     * object. That includes the case where the child had already exited on its own but left
+     * descendants behind -- they are in the group / job until this call ends it. Blocks until the
+     * child is reaped and its reader thread has been joined; the outcome stays readable through
+     * status(), with pid() back at 0.
+     *
+     * A descendant that moves itself out of the group (setsid()) or out of the job (breakaway)
+     * is beyond reach: that is the platform boundary, not a guarantee broken here.
      *
      * \return true when a live child was killed, false when there was none to kill
      */
     bool kill();
 
     /**
-     * \brief Outcome of the child, reaping it when it has already exited
+     * \brief Outcome of the child, sampled without reaping it
      *
-     * Non-blocking: it samples the child and returns what is known by then.
+     * Non-blocking: it samples the child and returns what is known by then. A POSIX child that
+     * has exited stays a zombie until kill() reaps it: that is what keeps its process group
+     * anchored to a pid nobody else can take, so kill() can still reach the whole tree.
      *
      * \return The outcome; exited = false means either that no child was started or that the
-     *         running one has not been reaped yet, and exit_code is -1 either way
+     *         running one has not finished yet, and exit_code is -1 either way
      */
     wait_status status();
 

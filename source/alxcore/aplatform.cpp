@@ -714,20 +714,19 @@ bool alx::process_ctrl::start(const std::vector<std::string>& _args, const proce
         }
     };
 
-    if (0 != _limits.mem_bytes || _limits.kill_on_parent_exit) {
-        h_job = CreateJobObjectA(nullptr, nullptr);
-        if (nullptr == h_job) return false;
+    // always a job, limits or not: it is what kill() terminates to take the child's whole tree
+    h_job = CreateJobObjectA(nullptr, nullptr);
+    if (nullptr == h_job) return false;
 
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION job_info = {};
-        if (0 != _limits.mem_bytes) {
-            job_info.ProcessMemoryLimit = (SIZE_T) _limits.mem_bytes;
-            job_info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY;
-        }
-        if (_limits.kill_on_parent_exit) job_info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        if (!SetInformationJobObject(h_job, JobObjectExtendedLimitInformation, &job_info, sizeof(job_info))) {
-            close_handle(h_job);
-            return false;
-        }
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION job_info = {};
+    if (0 != _limits.mem_bytes) {
+        job_info.ProcessMemoryLimit = (SIZE_T) _limits.mem_bytes;
+        job_info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY;
+    }
+    if (_limits.kill_on_parent_exit) job_info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!SetInformationJobObject(h_job, JobObjectExtendedLimitInformation, &job_info, sizeof(job_info))) {
+        close_handle(h_job);
+        return false;
     }
 
     SECURITY_ATTRIBUTES sa;
@@ -760,7 +759,7 @@ bool alx::process_ctrl::start(const std::vector<std::string>& _args, const proce
             nullptr,
             nullptr,
             TRUE,
-            (nullptr != h_job) ? CREATE_SUSPENDED : 0,
+            CREATE_SUSPENDED,
             nullptr,
             nullptr,
             &si,
@@ -769,13 +768,11 @@ bool alx::process_ctrl::start(const std::vector<std::string>& _args, const proce
     p_id = pi.dwProcessId;
     h_process = pi.hProcess;
     // the child is still suspended: it must never run outside the job
-    if (nullptr != h_job) {
-        if (!AssignProcessToJobObject(h_job, h_process)) {
-            TerminateProcess(h_process, 1);
-            goto ERR;
-        }
-        ResumeThread(pi.hThread);
+    if (!AssignProcessToJobObject(h_job, h_process)) {
+        TerminateProcess(h_process, 1);
+        goto ERR;
     }
+    ResumeThread(pi.hThread);
     close_handle(pi.hThread);
     pi.hProcess = nullptr;
 
@@ -833,6 +830,8 @@ bool alx::process_ctrl::start(const std::vector<std::string>& _args, const proce
             _exit(_excode);
         };
 
+        // its own process group, so kill() takes the whole tree down with the child
+        ::setpgid(0, 0);
         ::close(status_pipe[0]);
         ::dup2(p_stdin.pipefd[0], STDIN_FILENO);
         ::close(p_stdin.pipefd[0]);
@@ -865,6 +864,9 @@ bool alx::process_ctrl::start(const std::vector<std::string>& _args, const proce
     } else if (pid > 0) {
         p_id = pid;
         h_process = pid;
+        // both sides call it, as exec_async does: whoever runs first wins, and the group has to
+        // exist before kill() can be handed this child
+        ::setpgid(pid, pid);
         ::close(p_stdin.pipefd[0]);
         p_stdin.pipefd[0] = -1;
         ::close(p_stdout.pipefd[1]);
@@ -969,13 +971,16 @@ bool alx::process_ctrl::terminate() {
 bool alx::process_ctrl::kill() {
     if (0 == p_id) return false;
 
-    // status() has already settled a child that died, so the kill below runs only on a live one
+    // whether the child ended by itself before this call; it is still ours either way
     bool was_alive = !status().exited;
 #ifdef _WIN32
-    if (was_alive) {
+    if (nullptr != h_job) {
+        // the job, not just the child: every process the child started is in it
+        TerminateJobObject(h_job, 1);
+    } else if (was_alive) {
         TerminateProcess(h_process, 1);
-        WaitForSingleObject(h_process, INFINITE);
     }
+    if (was_alive) WaitForSingleObject(h_process, INFINITE);
     DWORD code{0};
     if (GetExitCodeProcess(h_process, &code)) {
         p_status.exited = true;
@@ -1009,14 +1014,16 @@ bool alx::process_ctrl::kill() {
         p_stderr.read = nullptr;
     }
 #else
-    if (was_alive) {
-        ::kill(p_id, SIGKILL);
-        int status_code{0};
-        pid_t reaped = -1;
-        while (-1 == (reaped = waitpid(p_id, &status_code, 0)) && EINTR == errno) {
-        }
-        if ((pid_t) p_id == reaped) p_status = decode_wait_status(status_code);
+    // the group first, while the child is alive or still an unreaped zombie: either way its pid,
+    // which is the group id, cannot have been recycled, so the signal still reaches the
+    // descendants it left behind. The direct kill covers a child that never got its own group
+    if (0 != ::kill(-(pid_t) p_id, SIGKILL)) ::kill((pid_t) p_id, SIGKILL);
+
+    int status_code{0};
+    pid_t reaped = -1;
+    while (-1 == (reaped = waitpid((pid_t) p_id, &status_code, 0)) && EINTR == errno) {
     }
+    if ((pid_t) p_id == reaped) p_status = decode_wait_status(status_code);
     p_id = 0;
     h_process = -1;
     if (nullptr != t_loop) {
@@ -1051,8 +1058,16 @@ alx::process_ctrl::wait_status alx::process_ctrl::status() {
         p_status.exit_code = (int_32) code;
     }
 #else
-    int status_code{0};
-    if ((pid_t) p_id == waitpid(p_id, &status_code, WNOHANG)) p_status = decode_wait_status(status_code);
+    // peeks at the exit without reaping: the zombie keeps the pid -- and with it the process
+    // group kill() signals -- reserved until kill() reaps it
+    siginfo_t si;
+    memset(&si, 0, sizeof(si));
+    if (0 == waitid(P_PID, (id_t) p_id, &si, WEXITED | WNOHANG | WNOWAIT) && (pid_t) p_id == si.si_pid) {
+        p_status.exited = true;
+        p_status.exit_code = (CLD_EXITED == si.si_code) ? si.si_status : -1;
+        p_status.signaled = (CLD_EXITED != si.si_code);
+        p_status.term_sig = p_status.signaled ? si.si_status : 0;
+    }
 #endif
     return p_status;
 }

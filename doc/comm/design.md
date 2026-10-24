@@ -68,6 +68,8 @@ TLS is not a transport of its own but "an SSL layer wrapped over a socket":
 
 Every "send" and "close one peer" is **handed to the queue** for the worker thread to run, so `bytes_send` calls from several threads never write to a socket concurrently.
 
+The queue is bounded (`block_push`, 128 packs by default, set through the constructor): a burst larger than that blocks the sending thread instead of growing without limit, which is what keeps a slow peer from turning into unbounded memory. `comm_ex` forwards the same knob, so a host that pushes big snapshots widens it at construction (`comm_ex(t, 4096)`) rather than reimplementing the send path.
+
 ### 2.2 `m_opened` rather than `m_thread`
 
 The worker's loop condition is "is the session open". The early implementation read `std::thread* m_thread` directly, which brought two problems: a data race (the main thread writes, the worker reads), and **starting the thread before assigning the pointer** when it is created, so the worker could read `nullptr` and exit at once (it looks like "suicide right after `open()`").

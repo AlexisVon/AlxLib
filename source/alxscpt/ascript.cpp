@@ -510,6 +510,11 @@ namespace alx {
             return ent->m_fly->m_path.empty() ? "::" : ent->m_fly->m_path;
         }
 
+        const std::string& hook_info::wken_path(const void* _e) const {
+            // the root's fly keeps its path cleared, so "no file" reads as empty here
+            return static_cast<const impl_import*>(_e)->m_fly->m_path;
+        }
+
         std::string hook_info::wken_name(const void* _e) const {
             return static_cast<const impl_import*>(_e)->m_alias;
         }
@@ -576,6 +581,16 @@ namespace alx {
         bool hook_info::wkis_area(const variant* _v) const {
             return _v && _v->is<anyptr>() &&
                    anyptr_ex<link_area>::as(_v->to<anyptr>()) != nullptr;
+        }
+
+        uint_32 hook_info::wkdt_row() const {
+            auto& w = *static_cast<const walker*>(wkdt);
+            return w.state.pos_slot().row;
+        }
+
+        uint_32 hook_info::wkdt_col() const {
+            auto& w = *static_cast<const walker*>(wkdt);
+            return w.state.pos_slot().col;
         }
 
         varmap hook_info::wkdt_pos() const {

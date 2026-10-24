@@ -280,6 +280,7 @@ const void* wken_root();
 std::vector<std::string> wken_data_keys(const void* e);
 const variant* wken_data_cptr(const void* e, const char* key);
 std::string wken_file(const void* e);  std::string wken_name(const void* e);
+const std::string& wken_path(const void* e);  // the resolved path itself by reference (no copy), empty for the root
 const void* wken_pptr(const void* e);
 
 const void* wklk_of(const variant* v);      // value -> link handle
@@ -291,6 +292,7 @@ bool wkis_ent(const variant* v);   bool wkis_link(const variant* v);
 bool wkis_func(const variant* v);  bool wkis_area(const variant* v);
 
 varmap wkdt_pos();                    // the statement being executed {row, col, ofst, file}; row = 0 = the position is unknown
+uint_32 wkdt_row();  uint_32 wkdt_col();  // the same row / column without allocating the varmap
 std::list<varmap> wkdt_fpos();        // the statement chain {row, col, ofst, file, func}, innermost first and the top level last
                                       // func: the function name / "eval" / "?" for a nameless layer (a block or loop layer with a position is listed too)
 

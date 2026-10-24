@@ -480,7 +480,7 @@ TEST(gt_ascript_debug, EntityPathIsResolvedAndTheRootIsEmpty) {
     for (const auto& path : rec.frame_path) {
         if (path.empty()) continue;
         saw_module = true;
-        EXPECT_EQ(path[0], '/') << "a resolved path is absolute: " << path;
+        EXPECT_TRUE(std::filesystem::path(path).is_absolute()) << "a resolved path is absolute: " << path;
         EXPECT_NE(path.find("dbg_path_mod.axc"), std::string::npos) << path;
     }
     EXPECT_TRUE(saw_module) << "no debug event reported the module file";

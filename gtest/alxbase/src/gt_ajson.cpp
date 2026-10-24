@@ -11,6 +11,7 @@
 #include "ajson.h"
 #include "astream.h"
 #include <gtest/gtest.h>
+#include <limits>
 #include <utility>
 
 TEST(gt_ajson_value, default_null) {
@@ -309,9 +310,11 @@ TEST(gt_ajson_doc, from_json_bare_number_at_end) {
 
 TEST(gt_ajson_doc, to_json_double_non_finite) {
 
-    EXPECT_EQ(json_of_double(1.0 / 0.0), "{\"v\":null}");
-    EXPECT_EQ(json_of_double(-1.0 / 0.0), "{\"v\":null}");
-    EXPECT_EQ(json_of_double(0.0 / 0.0), "{\"v\":null}");
+    // MSVC rejects a constant float division by zero (C2124)
+    const double inf = std::numeric_limits<double>::infinity();
+    EXPECT_EQ(json_of_double(inf), "{\"v\":null}");
+    EXPECT_EQ(json_of_double(-inf), "{\"v\":null}");
+    EXPECT_EQ(json_of_double(std::numeric_limits<double>::quiet_NaN()), "{\"v\":null}");
 }
 
 TEST(gt_ajson_doc, to_json_pretty) {

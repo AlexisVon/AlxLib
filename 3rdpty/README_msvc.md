@@ -53,29 +53,19 @@ records what the build expects to find, and which script produces it.
 |---|---|---|---|
 | `zlib/lib/zlib.lib` | `MSVCRT` ✓ | `/Z7` ✓ | `zlib/scripts/build_zlib_msvc.bat` |
 | `lz4/lib/liblz4_static.lib` | `MSVCRT` ✓ | `/Z7` ✓ | `lz4/scripts/build_lz4_msvc.bat` |
-| `zstd/lib/zstd_static.lib` | to be built | to be built | `zstd/scripts/build_zstd_msvc.bat` |
+| `zstd/lib/zstd_static.lib` | `MSVCRT` ✓ | `/Z7` ✓ | `zstd/scripts/build_zstd_msvc.bat` |
 | `sqlite3/lib/sqlite3.lib` | `MSVCRT` ✓ | `/Z7` ✓ | `sqlite3/scripts/build_sqlite3_msvc.bat` |
 | `libjpeg-turbo64/lib/jpeg-static.lib` | `MSVCRT` ✓ | `/Z7` ✓ | `libjpeg-turbo64/scripts/build_jpeg_msvc.bat` |
 | `libjpeg-turbo64/lib/turbojpeg-static.lib` | `MSVCRT` ✓ | `/Z7` ✓ | `libjpeg-turbo64/scripts/build_jpeg_msvc.bat` |
 | `openssl/lib/libssl.lib`, `libcrypto.lib` | none (deferred) | `/Z7` ✓ | `openssl/scripts/build_openssl_msvc.bat` |
-| `pcre2/lib/pcre2-8-static.lib` | **missing** | — | **no script** |
+| `pcre2/lib/pcre2-8-static.lib` | `MSVCRT` ✓ | `/Z7` ✓ | `pcre2/scripts/build_pcre2_msvc.bat` |
 
 Everything except OpenSSL was rebuilt with the scripts above.
 
-**Two archives are missing, so the MSVC build does not link as it stands.**
-`AlxCore.vcxproj` names both in `AdditionalDependencies` (search path
-`3rdpty\<name>\lib`), and neither file exists ⇒ `LNK1104: cannot open file`
-for each:
-
-- **zstd** — `zstd/scripts/build_zstd_msvc.bat` exists but has never been run
-  anywhere. Its compile list mirrors the Linux archive and it defines
-  `ZSTD_DISABLE_ASM` (the only assembly upstream ships is GNU-syntax `.S`,
-  which `cl` cannot take), so run it and check the result.
-- **pcre2** — nothing at all: no script, no archive. The Linux side gets the
-  same library from `pcre2/lib/libpcre2-8.a`, built 8-bit and static
-  (`PCRE2_CODE_UNIT_WIDTH 8` in `source/alxcore/aregex_pcre2.cpp:32`).
-
-The Linux build links `libzstd.a` / `libpcre2-8.a` and is unaffected by either.
+zstd's compile list mirrors the Linux archive and defines `ZSTD_DISABLE_ASM`
+(the only assembly upstream ships is GNU-syntax `.S`, which `cl` cannot take).
+pcre2 builds the 8-bit static library only (`PCRE2_CODE_UNIT_WIDTH 8` in
+`source/alxcore/aregex_pcre2.cpp:32`), matching `pcre2/lib/libpcre2-8.a`.
 
 ### Why OpenSSL has no `MSVCRT` record
 

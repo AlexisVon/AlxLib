@@ -15,6 +15,7 @@
     <ClCompile Include="..\..\gtest\alxscpt\src\gt_ascript.cpp" />
     <ClCompile Include="..\..\gtest\alxscpt\src\gt_ascript_debug.cpp" />
     <ClCompile Include="..\..\gtest\alxscpt\src\gt_ascript_pipe.cpp" />
+    <ClCompile Include="..\..\gtest\alxscpt\src\gt_ascript_yield.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>18.0</VCProjectVersion>

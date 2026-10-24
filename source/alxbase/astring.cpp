@@ -220,7 +220,8 @@ RET_TYPE code_conver_impl(const char* _str, const uint_64 _len, strutil::CODE_FO
 
     std::wstring wide_str;
     if (_src_format & strutil::PROPERTY_MULTI) {
-        int wide_char_count = MultiByteToWideChar(src_page, 0, _str + src_offset, (int)(_len - src_offset), NULL, 0);
+        // reject malformed input where iconv would, instead of substituting U+FFFD
+        int wide_char_count = MultiByteToWideChar(src_page, MB_ERR_INVALID_CHARS, _str + src_offset, (int)(_len - src_offset), NULL, 0);
         if (wide_char_count <= 0) return RET_TYPE();
         wide_str.resize(wide_char_count);
         MultiByteToWideChar(src_page, 0, _str + src_offset, (int)(_len - src_offset), &wide_str[0], wide_char_count);

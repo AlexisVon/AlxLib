@@ -12,6 +12,9 @@
 #include <cstring>
 #include <gtest/gtest.h>
 #include <string>
+#ifdef _WIN32
+#    include <windows.h>
+#endif
 
 using namespace alx;
 
@@ -231,6 +234,9 @@ TEST(gt_acsv, bom_only_input_is_an_empty_table) {
 
 TEST(gt_acsv, gbk_delimiter_is_not_swallowed) {
 
+#ifdef _WIN32
+    if (936 != GetACP()) GTEST_SKIP() << "GBK maps to the ANSI code page: 936 only";
+#endif
     bool ok = true;
     EXPECT_TRUE(csv::from_bytes(std::string("p\xB0|q|r\ns\xB0|t|u\n"), '|', true, &ok).empty());
     EXPECT_FALSE(ok);

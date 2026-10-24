@@ -126,11 +126,16 @@ TEST(gt_ammap, OwnerCloseKeepsNames) {
         m.close();
     }
     alx::mmap late("alx_gt_mmap_keep");
+#ifdef _WIN32
+    // documented: on Windows the segment lives exactly as long as its last handle
+    EXPECT_FALSE(late.open(0x1000, false));
+#else
     EXPECT_TRUE(late.open(0x1000, false));
     late.close();
 
     alx::mmap cleaner("alx_gt_mmap_keep");
     EXPECT_TRUE(cleaner.destroy());
+#endif
 }
 
 TEST(gt_ammap, ZeroLengthIsNoop) {

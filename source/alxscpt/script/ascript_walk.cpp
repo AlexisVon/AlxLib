@@ -3590,7 +3590,7 @@ namespace alx {
 
         static std::string file_base(const std::string& _p) {
             if (_p.empty()) return std::string();
-            auto pos = _p.rfind('/');
+            auto pos = _p.find_last_of("/\\");
             return (pos != std::string::npos && pos + 1 < _p.size()) ? _p.substr(pos + 1) : _p;
         }
 

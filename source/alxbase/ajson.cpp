@@ -16,7 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 
-#if __cplusplus >= 201703L && defined(__has_include)
+#if CPP_VERSION >= CPP_17_ID && defined(__has_include)
 #    if __has_include(<charconv>)
 #        include <charconv>
 #    endif

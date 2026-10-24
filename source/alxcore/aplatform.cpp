@@ -575,14 +575,14 @@ std::vector<process_info> alx::process_info::find_process(std::function<bool(con
 #ifdef _WIN32
     HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, NULL);
     if (hSnapshot == INVALID_HANDLE_VALUE) return result;
-    PROCESSENTRY32A pe;
-    pe.dwSize = sizeof(PROCESSENTRY32A);
+    PROCESSENTRY32W pe;
+    pe.dwSize = sizeof(PROCESSENTRY32W);
 
-    if (Process32FirstA(hSnapshot, &pe) == FALSE) goto RET;
+    if (Process32FirstW(hSnapshot, &pe) == FALSE) goto RET;
     do {
         process_info info(pe.th32ProcessID, pe.th32ParentProcessID, pe.cntThreads, pe.pcPriClassBase, process_path(pe.th32ProcessID));
         if (!_hit || _hit(info)) result.push_back(std::move(info));
-    } while (Process32NextA(hSnapshot, &pe));
+    } while (Process32NextW(hSnapshot, &pe));
 
 RET:
     CloseHandle(hSnapshot);
@@ -653,15 +653,15 @@ std::vector<process_info> alx::process_info::read_process(uint_32 _pid) {
 #ifdef _WIN32
     HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, NULL);
     if (hSnapshot == INVALID_HANDLE_VALUE) return result;
-    PROCESSENTRY32A pe;
-    pe.dwSize = sizeof(PROCESSENTRY32A);
+    PROCESSENTRY32W pe;
+    pe.dwSize = sizeof(PROCESSENTRY32W);
 
-    if (Process32FirstA(hSnapshot, &pe) == FALSE) goto RET;
+    if (Process32FirstW(hSnapshot, &pe) == FALSE) goto RET;
     do {
         if (pe.th32ProcessID != (DWORD) _pid) continue;
         result.push_back(process_info(pe.th32ProcessID, pe.th32ParentProcessID, pe.cntThreads, pe.pcPriClassBase, process_path(pe.th32ProcessID)));
         break;
-    } while (Process32NextA(hSnapshot, &pe));
+    } while (Process32NextW(hSnapshot, &pe));
 
 RET:
     CloseHandle(hSnapshot);

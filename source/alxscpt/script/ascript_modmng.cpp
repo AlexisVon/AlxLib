@@ -353,7 +353,6 @@ namespace alx {
             sub.state.m_engine = _w->state.m_engine;
             sub.state.m_search_paths = _w->state.m_search_paths;
             sub.state.m_cfg = _w->state.m_cfg;
-            sub.state.on_csys = _w->state.on_csys;
             sub.state.on_cerr = _w->state.on_cerr;
             sub.m_hook = _w->m_hook.load();
             sub.m_hook_ud = _w->m_hook_ud.load();

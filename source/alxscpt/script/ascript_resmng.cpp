@@ -20,6 +20,7 @@
 #if defined(__linux__)
 #    include <dlfcn.h>
 #elif defined(_WIN32)
+#    include <system_error>
 #    include <windows.h>
 #endif
 
@@ -183,6 +184,25 @@ namespace alx {
                                      return guard.take(); }, [](ast_resource* _r) { delete _r; }, [&](ast_resource*) { fire(&on_csys, "ast load: " + _path); });
         }
 
+#if defined(__linux__)
+        static std::string link_error_detail() {
+            const char* err = dlerror();
+            return err ? err : "unknown error";
+        }
+#elif defined(_WIN32)
+        static std::string link_error_detail(DWORD _code) {
+            std::string detail = std::to_string(_code) + " (" +
+                                 std::system_category().message(static_cast<int>(_code)) + ")";
+            if (_code == 126)
+                detail += " [a dependency could not be found]";
+            else if (_code == 193)
+                detail += " [not a valid image: corrupt file or architecture mismatch]";
+            else if (_code == 1114)
+                detail += " [DllMain failed]";
+            return detail;
+        }
+#endif
+
         link_resource* res_mng::ref_link(const std::string& _path, walker* _w,
                                          script_exception& _err) {
             (void) _w;
@@ -192,12 +212,11 @@ namespace alx {
 #if defined(__linux__)
                                      void* h = dlopen(_path.c_str(), RTLD_NOW);
                                      if (!h) {
-                                         const char* err = dlerror();
-                                         fire(&on_csys,
-                                              std::string("link error: dlopen failed: ") +
-                                                  (err ? err : "unknown error"));
+                                         std::string detail = link_error_detail();
+                                         fire(&on_csys, std::string("link error: dlopen failed: ") +
+                                                            _path + ": " + detail);
                                          _err = {error_type::ImportError,
-                                                 std::string("Cannot link: ") + _path};
+                                                 std::string("Cannot link: ") + _path + ": " + detail};
                                          return nullptr;
                                      }
                                      using bind_fn_t = void (*)(fwrap&);
@@ -208,10 +227,12 @@ namespace alx {
 #elif defined(_WIN32)
                                      HMODULE h = LoadLibraryA(_path.c_str());
                                      if (!h) {
+                                         std::string detail = link_error_detail(GetLastError());
                                          fire(&on_csys,
-                                              std::string("link error: LoadLibrary failed: ") + _path);
+                                              std::string("link error: LoadLibrary failed: ") +
+                                                  _path + ": " + detail);
                                          _err = {error_type::ImportError,
-                                                 std::string("Cannot link: ") + _path};
+                                                 std::string("Cannot link: ") + _path + ": " + detail};
                                          return nullptr;
                                      }
                                      using bind_fn_t = void (*)(fwrap&);

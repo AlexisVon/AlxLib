@@ -1750,6 +1750,250 @@ TEST(gt_ascript_walk, EnvSearchPath) {
     EXPECT_EQ(v.to<int_64>(), 123);
 }
 
+TEST(gt_ascript_walk, EnvQuery) {
+    std::string dir = "/tmp/alx_env_query";
+    file_info(dir).mkdir();
+    const std::string canon = file_info(dir).path();
+
+    std::string code = "env([\"" + dir + "\"]); var saved = env(); env([]); var empty = env(); "
+                                         "env(saved); var back = env(); "
+                                         "return [type(saved), saved[null], saved[0], empty[null], back[0]];";
+    auto v = exec_src(code.c_str());
+    std::remove(dir.c_str());
+
+    ASSERT_TRUE(v.is<varvec>());
+    auto& r = v.to<varvec>();
+    ASSERT_EQ(r.size(), size_t(5));
+    EXPECT_EQ(r[0].to<std::string>(), "vec");
+    EXPECT_EQ(r[1].to<int_64>(), 1);
+    EXPECT_EQ(r[2].to<std::string>(), canon);
+    EXPECT_EQ(r[3].to<int_64>(), 0);
+    EXPECT_EQ(r[4].to<std::string>(), canon);
+}
+
+TEST(gt_ascript_walk, EnvLstArg) {
+    std::string dir = "/tmp/alx_env_lst";
+    file_info(dir).mkdir();
+    const std::string canon = file_info(dir).path();
+
+    std::string code = "env(lst[\"" + dir + "\"]); var back = env(); return [type(back), back[0]];";
+    auto v = exec_src(code.c_str());
+    std::remove(dir.c_str());
+
+    ASSERT_TRUE(v.is<varvec>());
+    auto& r = v.to<varvec>();
+    EXPECT_EQ(r[0].to<std::string>(), "vec");
+    EXPECT_EQ(r[1].to<std::string>(), canon);
+}
+
+TEST(gt_ascript_walk, EnvArgErrors) {
+    EXPECT_EQ(exec_src_catch("env(5);").first, error_type::TypeError);
+    EXPECT_EQ(exec_src_catch("env(\"/tmp\");").first, error_type::TypeError);
+    EXPECT_EQ(exec_src_catch("env([\"/tmp\", 1]);").first, error_type::TypeError);
+    EXPECT_EQ(exec_src_catch("env(lst[1]);").first, error_type::TypeError);
+    EXPECT_EQ(exec_src_catch("env(map{});").first, error_type::TypeError);
+    EXPECT_EQ(exec_src_catch("env([\"/tmp\"], \"/x\");").first, error_type::ArgError);
+}
+
+TEST(gt_ascript_walk, EnvArgErrorKeepsList) {
+    std::string keep = "/tmp/alx_env_keep_a";
+    std::string other = "/tmp/alx_env_keep_b";
+    file_info(keep).mkdir();
+    file_info(other).mkdir();
+    const std::string canon = file_info(keep).path();
+
+    // the rejected call names a different directory first: a clear-then-push implementation would leave it there
+    std::string code = "env([\"" + keep + "\"]); var caught = 0; "
+                                          "try { env([\"" +
+                       other + "\", 1]); } catch(e) { caught = 1; } "
+                               "var back = env(); return [caught, back[null], back[0]];";
+    auto v = exec_src(code.c_str());
+    std::remove(keep.c_str());
+    std::remove(other.c_str());
+
+    ASSERT_TRUE(v.is<varvec>());
+    auto& r = v.to<varvec>();
+    EXPECT_EQ(r[0].to<int_64>(), 1) << "the bad element must throw";
+    EXPECT_EQ(r[1].to<int_64>(), 1) << "still exactly one entry";
+    EXPECT_EQ(r[2].to<std::string>(), canon) << "the kept entry is the one from before the failed call";
+}
+
+TEST(gt_ascript_walk, QualifiedCallIgnoresFrameShadow) {
+    // through the engine, so the script's top level has no frame (exec_src pushes one)
+    auto run = [](const char* _src) {
+        auto* eng = engine::create();
+        alx::bytes b(_src);
+        auto r = eng->exec(alx::bytes_view(b), "");
+        delete eng;
+        EXPECT_EQ(r.error, error_type::NoError);
+        return r.value;
+    };
+
+    // .name / ::name reach the named entity's own table: a def the frame declared does not hijack the call
+    auto v = run("def g(){ return 1; } def f(){ def g(){ return 9; } "
+                 "var a = .g(); var b = ::g(); var c = g(); return [a, b, c]; } f();");
+    ASSERT_TRUE(v.is<varvec>());
+    auto& r = v.to<varvec>();
+    ASSERT_EQ(r.size(), size_t(3));
+    EXPECT_EQ(r[0].to<int_64>(), 1) << ".g() is the current entity's def";
+    EXPECT_EQ(r[1].to<int_64>(), 1) << "::g() is the root module's def";
+    EXPECT_EQ(r[2].to<int_64>(), 9) << "an unqualified call still resolves in the frame";
+
+    // the same holds when the frame shadows with a plain value instead of a def
+    EXPECT_EQ(run("def h(){ return 1; } def f(){ var h = 5; return ::h(); } f();").to<int_64>(), 1);
+
+    // and through the reflective entry, @() of the same qualified path
+    EXPECT_EQ(run("def k(){ return 1; } def f(){ def k(){ return 9; } return @(\"::k\")(); } f();").to<int_64>(), 1);
+}
+
+TEST(gt_ascript_walk, QualifiedCallInSubModuleFrame) {
+    // the same shadow, one module down: the prefix must reach that module's own def, not its frame's
+    std::string dir = "/tmp/alx_qual_sub";
+    file_info(dir).mkdir();
+    std::string mod = dir + "/m.axc";
+    {
+        std::ofstream ofs(mod);
+        ofs << "def g(){ return 1; }\n"
+               "def f(){ def g(){ return 9; } return [.g(), g()]; }\n"
+               "var r = f();\n";
+    }
+
+    std::string code = "import \"" + mod + "\" as mm; mm.r;";
+    auto v = exec_src(code.c_str());
+    std::remove(mod.c_str());
+    std::remove(dir.c_str());
+
+    ASSERT_TRUE(v.is<varvec>());
+    auto& r = v.to<varvec>();
+    ASSERT_EQ(r.size(), size_t(2));
+    EXPECT_EQ(r[0].to<int_64>(), 1) << ".g() inside the module's own frame";
+    EXPECT_EQ(r[1].to<int_64>(), 9) << "an unqualified call keeps the frame's def";
+}
+
+TEST(gt_ascript_walk, EnvDefaultsToHomeDirectory) {
+    // the engine seeds the root module's list with home_dir, which exec_src never does
+    auto* eng = engine::create();
+    alx::bytes src("env();");
+    auto r = eng->exec(alx::bytes_view(src), "tmp-alxscpt-gtest");
+    delete eng;
+
+    ASSERT_EQ(r.error, error_type::NoError);
+    ASSERT_TRUE(r.value.is<varvec>());
+    auto& v = r.value.to<varvec>();
+    ASSERT_EQ(v.size(), size_t(1)) << "before any env() call the list holds the module's own directory";
+    EXPECT_EQ(v[0].to<std::string>(), file_info("tmp-alxscpt-gtest").path());
+}
+
+TEST(gt_ascript_walk, TypeArity) {
+    // one value, expression or literal; a second argument is refused rather than ignored
+    EXPECT_EQ(exec_src("type(7);").to<std::string>(), "int");
+    EXPECT_EQ(exec_src("def f(){ return 1; } type(f());").to<std::string>(), "int");
+    EXPECT_EQ(exec_src("type();").to<std::string>(), "null") << "no argument answers for null";
+    EXPECT_EQ(exec_src_catch("type(1, 2);").first, error_type::ArgError);
+    EXPECT_EQ(exec_src_catch("type(1, 2, 3);").first, error_type::ArgError);
+    EXPECT_EQ(exec_src_catch("[type(1, 2)];").first, error_type::ArgError);
+    EXPECT_EQ(exec_src_catch("def f(x){ return x; } f(type(1, 2));").first, error_type::ArgError);
+
+    // the guard — not some other failure — is what keeps the second argument from running
+    auto probe = exec_src("var side = 0; def g(){ side = 1; return 1; } var what = \"\"; "
+                          "try { type(1, g()); } catch(e) { what = e.what; } [what, side];");
+    ASSERT_TRUE(probe.is<varvec>());
+    auto& pv = probe.to<varvec>();
+    ASSERT_EQ(pv.size(), size_t(2));
+    EXPECT_EQ(pv[0].to<std::string>(), "ArgError");
+    EXPECT_EQ(pv[1].to<int_64>(), 0);
+}
+
+TEST(gt_ascript_walk, EnvEntryEdges) {
+    // an empty entry is refused; a missing path and the POSIX root are kept as written
+    EXPECT_EQ(exec_src_catch("env([\"\"]);").first, error_type::ConvError);
+    EXPECT_EQ(exec_src_catch("env([\"/tmp\", \"\"]);").first, error_type::ConvError);
+
+    auto v = exec_src("env([\"/\", \"/tmp/alx_env_missing\"]); var back = env(); return [back[null], back[0], back[1]];");
+    ASSERT_TRUE(v.is<varvec>());
+    auto& r = v.to<varvec>();
+    EXPECT_EQ(r[0].to<int_64>(), 2);
+    EXPECT_EQ(r[1].to<std::string>(), "/") << "the root canonicalizes to nothing, but is kept as written";
+    EXPECT_EQ(r[2].to<std::string>(), "/tmp/alx_env_missing") << "a missing path is not canonicalized";
+}
+
+TEST(gt_ascript_walk, QualifiedCallRejectsFrameLocalOnly) {
+    // a def that exists only in a frame is not a member of the entity: the prefix must not reach it
+    auto [etype, eval] = exec_src_catch("def f(){ def g(){ return 9; } return .g(); } f();");
+    EXPECT_EQ(etype, error_type::TypeError);
+
+    // and a call cannot walk past a callable either
+    auto [e2, v2] = exec_src_catch("def a(){ return 1; } a.b();");
+    EXPECT_EQ(e2, error_type::TypeError);
+}
+
+TEST(gt_ascript_walk, EnvIsPerModuleInstance) {
+    std::string dir = "/tmp/alx_env_scope";
+    std::string sub = dir + "/sub";
+    file_info(dir).mkdir();
+    file_info(sub).mkdir();
+    const std::string canon_dir = file_info(dir).path();
+    const std::string canon_sub = file_info(sub).path();
+    {
+        std::ofstream ofs(sub + "/m.axc");
+        ofs << "var mine = env();\n";
+    }
+
+    std::string code = "env([\"" + dir + "\"]); import \"sub/m.axc\" as mm; "
+                                         "var root = env(); return [root[null], root[0], mm.mine[null], mm.mine[0]];";
+    auto v = exec_src(code.c_str());
+    std::remove((sub + "/m.axc").c_str());
+    std::remove(sub.c_str());
+    std::remove(dir.c_str());
+
+    ASSERT_TRUE(v.is<varvec>());
+    auto& r = v.to<varvec>();
+    EXPECT_EQ(r[0].to<int_64>(), 1) << "the importing module keeps its own single entry";
+    EXPECT_EQ(r[1].to<std::string>(), canon_dir);
+    EXPECT_EQ(r[2].to<int_64>(), 1) << "the imported module leads with its own directory";
+    EXPECT_EQ(r[3].to<std::string>(), canon_sub) << "and does not inherit the importer's list";
+}
+
+TEST(gt_ascript_walk, QualifiedCallNameInCallersModule) {
+    // the name exists, but in the caller's module store, not in the entity the prefix names:
+    // that is a plain undefined function there, not the frame-local hint (and not a TypeError)
+    std::string dir = "/tmp/alx_qual_wrong";
+    file_info(dir).mkdir();
+    std::string mod = dir + "/m.axc";
+    {
+        std::ofstream ofs(mod);
+        ofs << "def other() { return 0; }" << std::endl;
+    }
+
+    auto* eng = engine::create();
+    std::string code = "def h(){ return 1; } import \"" + mod + "\" as mm; mm.h();";
+    alx::bytes src(code);
+    auto r = eng->exec(alx::bytes_view(src), "");
+    delete eng;
+    std::remove(mod.c_str());
+    std::remove(dir.c_str());
+
+    EXPECT_EQ(r.error, error_type::NameError);
+    ASSERT_TRUE(r.value.is<std::string>());
+    EXPECT_NE(r.value.to<std::string>().find("caller's module"), std::string::npos);
+}
+
+TEST(gt_ascript_walk, QualifiedCallIntoSubModule) {
+    std::string dir = "/tmp/alx_qual_call";
+    file_info(dir).mkdir();
+    std::string mod = dir + "/m.axc";
+    {
+        std::ofstream ofs(mod);
+        ofs << "def h() { return 7; }" << std::endl;
+    }
+
+    std::string code = "import \"" + mod + "\" as mm; def f(){ def h(){ return 8; } return mm.h(); } f();";
+    auto v = exec_src(code.c_str());
+    std::remove(mod.c_str());
+    std::remove(dir.c_str());
+    EXPECT_EQ(v.to<int_64>(), 7);
+}
+
 TEST(gt_ascript_walk, MaxStack) {
 
     auto* eng = engine::create();
@@ -4010,4 +4254,330 @@ TEST(gt_ascript_walk, Slice_AssignIndexBaseNoCreate) {
     auto [e1, v1] = exec_src_catch("var m = map{}; m[\"k\"][0] = 5;");
     EXPECT_EQ(e1, error_type::KeyError);
     EXPECT_EQ(exec_src("var m; m = map{}; try { m[\"k\"][0] = 5; } catch (e) {} m[null];").to<int_64>(), 0);
+}
+
+TEST(gt_ascript_walk, FrameBoundary_CalleeReadsCallerLocal) {
+    // the caller's activation is cut off at the callee's boundary: a bare name cannot reach it
+    auto [etype, eval] = exec_src_catch("def f() { return y; } def g() { var y = 5; return f(); } g();");
+    EXPECT_EQ(etype, error_type::NameError);
+    (void) eval;
+}
+
+TEST(gt_ascript_walk, FrameBoundary_CalleeWritesCallerLocal) {
+    auto [etype, eval] = exec_src_catch("def f() { y = 99; return 0; } def g() { var y = 5; f(); return y; } g();");
+    EXPECT_EQ(etype, error_type::NameError);
+    (void) eval;
+}
+
+TEST(gt_ascript_walk, FrameBoundary_AtWritesCallerLocal) {
+    auto [etype, eval] =
+        exec_src_catch("def f() { @(\"y\") = 99; return 0; } def g() { var y = 5; f(); return y; } g();");
+    EXPECT_EQ(etype, error_type::NameError);
+    (void) eval;
+}
+
+TEST(gt_ascript_walk, FrameBoundary_BlockShadowDeterministic) {
+    // a sibling block's same-named local never changes what the function resolves
+    EXPECT_EQ(exec_src("var t = 0; def f() { return t; } f();").to<int_64>(), 0);
+    EXPECT_EQ(exec_src("var t = 0; def f() { return t; } { var t = 9; f(); }").to<int_64>(), 0);
+    EXPECT_EQ(exec_src("var t = 0; def f() { return t; } { var t = 9; } f();").to<int_64>(), 0);
+}
+
+TEST(gt_ascript_walk, FrameBoundary_CalleeSeesNoBlockLocal) {
+    auto [etype, eval] = exec_src_catch("def f() { return b; } { var b = 7; f(); }");
+    EXPECT_EQ(etype, error_type::NameError);
+    (void) eval;
+}
+
+TEST(gt_ascript_walk, FrameBoundary_LexicalCapture) {
+    // the documented closure case: the nested def sees the activation it was declared in
+    EXPECT_EQ(exec_src("def outer() { var x = 7; def inner() { return x; } return inner(); } outer();").to<int_64>(), 7);
+}
+
+TEST(gt_ascript_walk, FrameBoundary_MultiLevelCapture) {
+    EXPECT_EQ(exec_src("def a() { var x = 1; def b() { def c() { return x; } return c(); } return b(); } a();").to<int_64>(), 1);
+}
+
+TEST(gt_ascript_walk, FrameBoundary_RecursiveInstanceCapture) {
+    // the declaration chain is per activation: each recursion layer's inner reads its own tag
+    EXPECT_EQ(exec_src("def outer(n) { var tag = n; def inner() { return tag; } if (n > 0) { var deeper = outer(n - 1); } "
+                       "return inner(); } outer(2);")
+                  .to<int_64>(),
+              2);
+}
+
+TEST(gt_ascript_walk, FrameBoundary_ShadowInCalleeNoLeak) {
+    EXPECT_EQ(exec_src("def f() { var y = 1; return y; } def g() { var y = 5; return f() * 100 + y; } g();").to<int_64>(), 105);
+}
+
+TEST(gt_ascript_walk, FrameBoundary_DeleteCapturedIsFalse) {
+    // ownership is not visibility: a captured name is readable, never removable from the callee
+    EXPECT_EQ(exec_src("def outer() { var x = 1; def inner() { var r = delete x; return r ? 100 : x; } return inner(); } outer();")
+                  .to<int_64>(),
+              1);
+}
+
+TEST(gt_ascript_walk, FrameBoundary_AtFollowsStaticChain) {
+    EXPECT_EQ(exec_src("def outer() { var x = 7; def inner() { return @(\"x\"); } return inner(); } outer();").to<int_64>(), 7);
+}
+
+TEST(gt_ascript_walk, FrameBoundary_EvalSeesCallSite) {
+    EXPECT_EQ(exec_src("def g() { var gv = 3; return eval(\"return gv;\"); } def f() { var fv = 2; return g(); } f();").to<int_64>(), 3);
+}
+
+TEST(gt_ascript_walk, FrameBoundary_EvalWriteThrough) {
+    EXPECT_EQ(exec_src("var x = 10; eval(\"x = 99;\"); x;").to<int_64>(), 99);
+}
+
+TEST(gt_ascript_walk, FrameBoundary_EvalNoCallersCaller) {
+    // eval's scope is the activation it was called in, not the caller's caller
+    auto [etype, eval] = exec_src_catch("def g() { var gv = 3; return f(); } def f() { return eval(\"return gv;\"); } g();");
+    EXPECT_EQ(etype, error_type::NameError);
+    (void) eval;
+}
+
+TEST(gt_ascript_walk, FrameBoundary_DotChainStatic) {
+    EXPECT_EQ(exec_src("def outer() { var m = map{\"a\": 1}; def inner() { return m.a; } return inner(); } outer();").to<int_64>(), 1);
+}
+
+TEST(gt_ascript_walk, FrameBoundary_DotDoesNotSeeCallerAlias) {
+    auto [etype, eval] = exec_src_catch("def f() { return x.a; } def g() { var x = map{\"a\": 1}; return f(); } g();");
+    EXPECT_EQ(etype, error_type::NameError);
+    (void) eval;
+}
+
+TEST(gt_ascript_walk, FrameBoundary_TcoKeepsBoundary) {
+    // the reused frame is still a boundary, and the nested def re-bound to it reads the rebound param
+    EXPECT_EQ(exec_src("def f(n) { def g() { return n; } if (n <= 0) { return g(); } return f(n - 1); } f(3);").to<int_64>(), 0);
+}
+
+TEST(gt_ascript_walk, FrameBoundary_TcoInBlock) {
+    EXPECT_EQ(exec_src("def f(n) { { if (n > 0) { return f(n - 1); } } return n; } f(2000);").to<int_64>(), 0);
+}
+
+TEST(gt_ascript_walk, FrameBoundary_ModuleStoreHome) {
+    // no base frame: a module-level def has home = -1 and its lookup ends in the entity store
+    EXPECT_EQ(exec_src_no_frame("var y = 5; def f() { return y; } f();").to<int_64>(), 5);
+}
+
+TEST(gt_ascript_walk, FrameBoundary_NoFrameCalleeReadsCallerLocal) {
+    auto [etype, eval] = exec_src_no_frame_catch("def f() { return y; } def g() { var y = 5; return f(); } g();");
+    EXPECT_EQ(etype, error_type::NameError);
+    (void) eval;
+}
+
+TEST(gt_ascript_walk, FrameBoundary_ImportIsolation) {
+    std::string tmp = "/tmp/alx_frame_boundary_import.axc";
+    {
+        std::ofstream ofs(tmp);
+        ofs << "var x = 7;" << std::endl;
+        ofs << "def f() { return x; }" << std::endl;
+    }
+    std::string code = "import \"" + tmp + "\" as mod; def g() { var x = 9; return mod.f(); } g();";
+    auto v = exec_src(code.c_str());
+    std::remove(tmp.c_str());
+    EXPECT_EQ(v.to<int_64>(), 7);
+}
+
+TEST(gt_ascript_walk, ActAnchor_BasicRead) {
+    // ^ skips the callee's own activation: the local shadow does not answer
+    EXPECT_EQ(exec_src("def o() { var x = 1; def i() { var x = 2; return ^x; } return i(); } o();").to<int_64>(), 1);
+}
+
+TEST(gt_ascript_walk, ActAnchor_BasicWrite) {
+    EXPECT_EQ(exec_src("def o() { var x = 1; def i() { var x = 2; ^x = 9; return x; } var r = i(); return x * 10 + r; } o();")
+                  .to<int_64>(),
+              92);
+}
+
+TEST(gt_ascript_walk, ActAnchor_CompoundWrite) {
+    // the callee has no local x, so its plain read follows the definition chain into the updated parent
+    EXPECT_EQ(exec_src("def o() { var x = 1; def i() { ^x += 4; return x; } var r = i(); return x * 10 + r; } o();").to<int_64>(), 55);
+}
+
+TEST(gt_ascript_walk, ActAnchor_Grandparent) {
+    EXPECT_EQ(exec_src("def a() { var x = 1; def b() { var x = 2; def c() { return ^^x; } return c(); } return b(); } a();").to<int_64>(), 1);
+}
+
+TEST(gt_ascript_walk, ActAnchor_NoParent) {
+    // a module-level def has no parent activation (no base frame in this harness)
+    auto [etype, eval] = exec_src_no_frame_catch("def f() { return ^x; } var x = 1; f();");
+    EXPECT_EQ(etype, error_type::NavError);
+    (void) eval;
+}
+
+TEST(gt_ascript_walk, ActAnchor_NoActivation) {
+    auto [etype, eval] = exec_src_no_frame_catch("var x = 1; ^x;");
+    EXPECT_EQ(etype, error_type::NavError);
+    (void) eval;
+}
+
+TEST(gt_ascript_walk, ActAnchor_FallsToModuleStore) {
+    EXPECT_EQ(exec_src("var g = 5; def o() { def i() { return ^g; } return i(); } o();").to<int_64>(), 5);
+}
+
+TEST(gt_ascript_walk, ActAnchor_MissingName) {
+    auto [etype, eval] = exec_src_catch("def o() { def i() { return ^nope; } return i(); } o();");
+    EXPECT_EQ(etype, error_type::NameError);
+    (void) eval;
+}
+
+TEST(gt_ascript_walk, ActAnchor_BlockDeclarationFrame) {
+    EXPECT_EQ(exec_src("def o() { { var x = 7; def i() { return ^x; } return i(); } } o();").to<int_64>(), 7);
+}
+
+TEST(gt_ascript_walk, ActAnchor_BlockAfterDeclaration) {
+    // a block created after the declaration is not on the defining chain
+    auto [etype, eval] = exec_src_catch("def o() { def i() { return ^x; } { var x = 9; return i(); } } o();");
+    EXPECT_EQ(etype, error_type::NameError);
+    (void) eval;
+}
+
+TEST(gt_ascript_walk, ActAnchor_AtReadWrite) {
+    EXPECT_EQ(exec_src("def o() { var x = 3; def i() { @(\"^x\") = 7; return ^x; } return i(); } o();").to<int_64>(), 7);
+}
+
+TEST(gt_ascript_walk, ActAnchor_ReflectionConcat) {
+    EXPECT_EQ(exec_src("def o() { var x = 1; def i() { var n = \"x\"; return @(\"^\" + n); } return i(); } o();").to<int_64>(), 1);
+}
+
+TEST(gt_ascript_walk, ActAnchor_Call) {
+    EXPECT_EQ(exec_src("def o() { def g() { return 5; } def i() { return ^g(); } return i(); } o();").to<int_64>(), 5);
+}
+
+TEST(gt_ascript_walk, ActAnchor_DeleteSlotAndElement) {
+    // a parent slot is not this frame's to delete; an element inside a parent container is content
+    EXPECT_EQ(exec_src("def o() { var x = 1; var m = map{\"a\": 1}; def i() { var r = delete ^x; var e = delete ^m.a; "
+                       "return (r ? 100 : x) + (e ? 1000 : 0); } return i(); } o();")
+                  .to<int_64>(),
+              1001);
+}
+
+TEST(gt_ascript_walk, ActAnchor_Eval) {
+    EXPECT_EQ(exec_src("def o() { var x = 1; def i() { var x = 2; return eval(\"return ^x;\"); } return i(); } o();").to<int_64>(), 1);
+}
+
+TEST(gt_ascript_walk, ActAnchor_Tco) {
+    EXPECT_EQ(exec_src("def f(n) { def g() { return ^n; } if (n <= 0) { return g(); } return f(n - 1); } f(3);").to<int_64>(), 0);
+}
+
+TEST(gt_ascript_walk, ActAnchor_WriteModuleStore) {
+    EXPECT_EQ(exec_src("var g = 5; def o() { def i() { ^g = 7; } i(); } o(); g;").to<int_64>(), 7);
+}
+
+TEST(gt_ascript_walk, ActAnchor_DotChain) {
+    EXPECT_EQ(exec_src("def o() { var m = map{\"a\": 1}; def i() { return ^m.a; } return i(); } o();").to<int_64>(), 1);
+}
+
+TEST(gt_ascript_walk, ActAnchor_DoesNotSeedCache) {
+    // an anchored hit must not overwrite the top frame's own binding
+    EXPECT_EQ(exec_src("def o() { var x = 1; def i() { var x = 2; var y = ^x; return x * 10 + y; } return i(); } o();").to<int_64>(), 21);
+    EXPECT_EQ(exec_src("def o() { var x = 1; def i() { var x = 2; ^x = 9; return x; } return i(); } o();").to<int_64>(), 2);
+}
+
+TEST(gt_ascript_walk, ActAnchor_ImportIsolation) {
+    std::string tmp = "/tmp/alx_act_anchor_import.axc";
+    {
+        std::ofstream ofs(tmp);
+        ofs << "var x = 1;" << std::endl;
+        ofs << "def f() { return ^x; }" << std::endl;
+    }
+    std::string code = "import \"" + tmp + "\" as mod; mod.f();";
+    auto [etype, eval] = exec_src_catch(code.c_str());
+    std::remove(tmp.c_str());
+    EXPECT_EQ(etype, error_type::NavError);
+    (void) eval;
+}
+
+TEST(gt_ascript_walk, ActAnchor_ImportNestedCapture) {
+    std::string tmp = "/tmp/alx_act_anchor_nested.axc";
+    {
+        std::ofstream ofs(tmp);
+        ofs << "def outer() { var x = 1; def inner() { return ^x; } return inner(); }" << std::endl;
+    }
+    std::string code = "import \"" + tmp + "\" as mod; mod.outer();";
+    auto v = exec_src(code.c_str());
+    std::remove(tmp.c_str());
+    EXPECT_EQ(v.to<int_64>(), 1);
+}
+
+TEST(gt_ascript_walk, ActAnchor_CompoundXor) {
+    EXPECT_EQ(exec_src("def o() { var x = 1; def i() { ^x ^= 3; return x; } var r = i(); return x * 10 + r; } o();").to<int_64>(), 22);
+}
+
+TEST(gt_ascript_walk, ActAnchor_PrePostInc) {
+    EXPECT_EQ(exec_src("def o() { var x = 10; def i() { ++^x; ^x++; return x; } var r = i(); return x * 10 + r; } o();").to<int_64>(), 132);
+}
+
+TEST(gt_ascript_walk, ActAnchor_IndexWrite) {
+    EXPECT_EQ(exec_src("def o() { var v = [1, 2]; def i() { ^v[0] = 42; return v[0]; } return i(); } o();").to<int_64>(), 42);
+}
+
+TEST(gt_ascript_walk, ActAnchor_IndirectCall) {
+    EXPECT_EQ(exec_src("def o() { def g() { return 5; } def i() { return @(\"^g\")(); } return i(); } o();").to<int_64>(), 5);
+}
+
+TEST(gt_ascript_walk, ActAnchor_XorWithAnchoredOperand) {
+    // the same token keeps its binary meaning between operands: 1 ^ (^x)
+    EXPECT_EQ(exec_src("def o() { var x = 2; def i() { return 1 ^ ^x; } return i(); } o();").to<int_64>(), 3);
+}
+
+TEST(gt_ascript_walk, DotCall_DataElementNotAFunction) {
+    // the element exists but is data: the failure says what it is, not "undefined"
+    auto [etype, eval] = exec_src_catch("def o() { var m = map{\"x\": 1}; def i() { return m.x(); } return i(); } o();");
+    EXPECT_EQ(etype, error_type::NameError);
+    ASSERT_TRUE(eval.is<std::string>());
+    EXPECT_NE(eval.to<std::string>().find("not a function: int"), std::string::npos);
+}
+
+TEST(gt_ascript_walk, DotCall_DataMemberNotAFunction) {
+    std::string tmp = "/tmp/alx_dot_call_data_member.axc";
+    {
+        std::ofstream ofs(tmp);
+        ofs << "var v = 5;" << std::endl;
+        ofs << "def f() { return v; }" << std::endl;
+    }
+    std::string code = "import \"" + tmp + "\" as mm; mm.v();";
+    auto [etype, eval] = exec_src_catch(code.c_str());
+    std::remove(tmp.c_str());
+    EXPECT_EQ(etype, error_type::NameError);
+    ASSERT_TRUE(eval.is<std::string>());
+    EXPECT_NE(eval.to<std::string>().find("not a function: int"), std::string::npos);
+}
+
+TEST(gt_ascript_walk, DotCall_MissingName) {
+    auto [etype, eval] = exec_src_catch("def o() { var m = map{\"x\": 1}; def i() { return m.nosuch(); } return i(); } o();");
+    EXPECT_EQ(etype, error_type::NameError);
+    ASSERT_TRUE(eval.is<std::string>());
+    EXPECT_NE(eval.to<std::string>().find("Undefined function: nosuch"), std::string::npos);
+}
+
+TEST(gt_ascript_walk, DotCall_FrameLocalAttribution) {
+    // the entity has no such name, the caller's frame does: the message names that
+    auto [etype, eval] = exec_src_catch("def f(){ def g(){ return 9; } return .g(); } f();");
+    EXPECT_EQ(etype, error_type::TypeError);
+    ASSERT_TRUE(eval.is<std::string>());
+    EXPECT_NE(eval.to<std::string>().find("is a frame local"), std::string::npos);
+}
+
+TEST(gt_ascript_walk, DotCall_LinkDataKeepsUndefinedFunction) {
+    // a link store entry that is not callable keeps the old wording (an action branch, not the shared table)
+    auto [etype, eval] = exec_src_with_mock_link_catch("testlink.data_var();");
+    EXPECT_EQ(etype, error_type::NameError);
+    ASSERT_TRUE(eval.is<std::string>());
+    EXPECT_NE(eval.to<std::string>().find("Undefined function"), std::string::npos);
+}
+
+TEST(gt_ascript_walk, DotRead_AreaNativeMissIsUndefined) {
+    auto [etype, eval] = exec_src_with_mock_link_catch("testlink.area1.nosuch;");
+    EXPECT_EQ(etype, error_type::NameError);
+    ASSERT_TRUE(eval.is<std::string>());
+    EXPECT_NE(eval.to<std::string>().find("Undefined: nosuch"), std::string::npos);
+}
+
+TEST(gt_ascript_walk, DotWrite_AreaNativeMissIsUndefined) {
+    auto [etype, eval] = exec_src_with_mock_link_catch("testlink.area1.nosuch = 1;");
+    EXPECT_EQ(etype, error_type::NameError);
+    ASSERT_TRUE(eval.is<std::string>());
+    EXPECT_NE(eval.to<std::string>().find("Undefined: nosuch"), std::string::npos);
 }

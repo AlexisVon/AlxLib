@@ -399,6 +399,7 @@ namespace alx {
             s_ops[O_DEFAULT] = op_nop;
             s_ops[O_PARENT] = op_nop;
             s_ops[O_ROOT] = op_nop;
+            s_ops[O_ACT] = op_nop;
             s_ops[O_ECONST] = op_econst;
             s_ops[O_UNPACK] = op_nop;
             s_ops[O_HERE] = op_here;
@@ -480,7 +481,7 @@ namespace alx {
         variant walker::entry_call(void* _ud) {
             auto& c = *static_cast<call_ctx*>(_ud);
             auto args = scan_call_args(c.tree, 2, *this);
-            return invoke_def(state.current, *c.ca->m_def, c.name, c.tree, *this, args);
+            return invoke_def(state.current, c.ca, c.name, c.tree, *this, args);
         }
 
         variant walker::entry_init(void* _ud) {
@@ -492,7 +493,7 @@ namespace alx {
                                          entry_fn _fn, void* _ud) {
             // the entry point is the safety net under RAII: a torn leave must not poison this run,
             // and the frame side is three narrow fields -- state.clear() would drop the root bindings
-            state.frames->clear();
+            state.unwind_frames();
             state.current = &m_root;
             state.ret_flag = false;
             state.break_flag = false;
@@ -746,7 +747,7 @@ namespace alx {
                     cw.tree = make_call_tree(name, std::move(args));
                     res = _w.run_entry(std::chrono::steady_clock::now(), &walker::entry_call, &cw);
                     // an error path leaves the serviced call's frames behind; drop them inner-first
-                    while (!_w.state.frames->empty()) _w.state.frames->pop_back();
+                    _w.state.unwind_frames();
                 }
                 // the flag is the interrupt's truth: a native that raises an InterruptedError
                 // without one is just an ordinary failed call
@@ -914,9 +915,9 @@ namespace alx {
             if (func_name.empty())
                 throw script_exception{error_type::NameError, std::string("Undefined function: " + func_name)};
 
-            const varvec* def_tree = walker::find_def(_w, func_name);
-            if (def_tree)
-                return walker::invoke_def(_w.state.current, *def_tree, func_name, _tree, _w, args);
+            const call_able* ca = walker::find_def(_w, func_name);
+            if (ca)
+                return walker::invoke_def(_w.state.current, ca, func_name, _tree, _w, args);
 
             throw script_exception{error_type::NameError, std::string("Undefined function: " + func_name)};
         }
@@ -990,9 +991,9 @@ namespace alx {
 
             if (head == O_LOAD) {
                 std::string func_name = expr[1].to<std::string>();
-                const varvec* def_tree = walker::find_def(_w, func_name);
-                if (def_tree)
-                    return walker::invoke_def(_w.state.current, *def_tree, func_name, _tree, _w, args);
+                const call_able* ca = walker::find_def(_w, func_name);
+                if (ca)
+                    return walker::invoke_def(_w.state.current, ca, func_name, _tree, _w, args);
                 throw script_exception{error_type::NameError,
                                        std::string("Indirect call: undefined function '" + func_name + "'")};
             }
@@ -1006,7 +1007,7 @@ namespace alx {
         variant walker::op_tcall(const varvec& _tree, walker& _w) {
             auto args = walker::scan_call_args(_tree, 2, _w);
 
-            const varvec* def = nullptr;
+            const call_able* def = nullptr;
             scope_frame* def_frame = nullptr;
             for (auto it = _w.state.frames->rbegin(); it != _w.state.frames->rend(); ++it) {
                 if (it->def) {
@@ -1022,16 +1023,16 @@ namespace alx {
             // The rewrite was by name: a local of that name makes the tail position an ordinary call
             if (_tree.size() > 1 && _tree[1].is<std::string>()) {
                 const std::string& func_name = _tree[1].to<std::string>();
-                const varvec* other = walker::find_def(_w, func_name);
+                const call_able* other = walker::find_def(_w, func_name);
                 if (other != def) {
                     if (other)
-                        return walker::invoke_def(_w.state.current, *other, func_name, _tree, _w, args);
+                        return walker::invoke_def(_w.state.current, other, func_name, _tree, _w, args);
                     throw script_exception{error_type::NameError,
                                            std::string("Undefined function: " + func_name)};
                 }
             }
 
-            walker::eval_and_bind_args(_w.state.current, *def, "", _tree, _w, true, def_frame, args);
+            walker::eval_and_bind_args(_w.state.current, def, "", _tree, _w, true, def_frame, args);
 
             _w.state.tail_flag = true;
             return variant();
@@ -1040,8 +1041,9 @@ namespace alx {
         variant walker::op_def(const varvec& _tree, walker& _w) {
             std::string name = _tree[1].to<std::string>();
             walker::check_name_conflict(_w, name);
-            walker::store_raw(_w, variant(name),
-                              variant(anyptr_ex<call_able>::make(new call_able(&_tree))));
+            call_able* ca = new call_able(&_tree);
+            ca->home = _w.state.frames->empty() ? -1 : static_cast<int_32>(_w.state.frames->size()) - 1;
+            walker::store_raw(_w, variant(name), variant(anyptr_ex<call_able>::make(ca)));
             return variant();
         }
 
@@ -1635,40 +1637,70 @@ namespace alx {
         }
 
         variant walker::op_type(const varvec& _tree, walker& _w) {
+            if (_tree.size() > 2)
+                throw script_exception{error_type::ArgError, std::string("type: at most 1 argument")};
+
             variant v = _tree.size() > 1 ? walker::eval_arg(_tree[1], _w) : variant();
             return std::string(type_name_script(v, _w.m_cfg.type_ex_ptr, _w.m_cfg.type_ex_ud));
         }
 
         variant walker::op_env(const varvec& _tree, walker& _w) {
-            if (_tree.size() < 2 || !_tree[1].is_vec()) return variant();
-            variant val = _w.walk_tree(_tree[1].to<varvec>());
-            if (!val.is<varvec>()) return variant();
-            auto& lst = val.to<varvec>();
-            _w.state.current->m_env_paths.clear();
+            if (_tree.size() > 2)
+                throw script_exception{error_type::ArgError, std::string("env: at most 1 argument")};
+
+            // The query form mirrors the setter's argument: env() hands the module's own list back as a vec
+            if (_tree.size() < 2) {
+                varvec out;
+                out.reserve(_w.state.current->m_env_paths.size());
+                for (const auto& p : _w.state.current->m_env_paths) out.push_back(variant(p));
+                return variant(std::move(out));
+            }
+
+            variant val = walker::eval_arg(_tree[1], _w);
+            varvec list;
+            if (val.is<varvec>()) {
+                list = std::move(val.to<varvec>());
+            } else if (val.is<varlst>()) {
+                auto& src = val.to<varlst>();
+                list.reserve(src.size());
+                for (auto& e : src) list.push_back(std::move(e));
+            } else {
+                throw script_exception{error_type::TypeError,
+                                       std::string("env: expected a vec or lst of strings")};
+            }
 
             // Relative entries resolve against the script's own directory; no script path (CLI/cache) means cwd
             std::string base = (_w.state.current->m_fly && !_w.state.current->m_fly->m_path.empty())
                                    ? dirname_of(_w.state.current->m_fly->m_path)
                                    : std::string();
-            for (auto& v : lst) {
-                if (v.is<std::string>()) {
-                    std::string s = v.to<std::string>();
-                    std::string abs;
-                    if (file_info::is_absolute(s))
-                        abs = file_info(s).path();
-                    else if (!base.empty())
-                        abs = file_info(base + "/" + s).path();
-                    else
-                        abs = file_info(s).path();
-                    if (!abs.empty()) {
-                        _w.state.current->m_env_paths.push_back(abs);
-                        if (_w.state.on_csys && _w.state.current->m_fly)
-                            _w.state.on_csys->exec(
-                                alx::this_tid(),
-                                "env: " + _w.state.current->m_fly->m_path + " add " + abs);
-                    }
-                }
+
+            // Built aside and committed whole: a bad element leaves the module's list as it was
+            std::vector<std::string> resolved;
+            resolved.reserve(list.size());
+            for (size_t i = 0; i < list.size(); i++) {
+                auto& v = list[i];
+                if (!v.is<std::string>())
+                    throw script_exception{error_type::TypeError,
+                                           std::string("env: element ") + std::to_string(i) +
+                                               " is not a string"};
+                std::string s = v.to<std::string>();
+                if (s.empty())
+                    throw script_exception{error_type::ConvError,
+                                           std::string("env: entry ") + std::to_string(i) + " is empty"};
+                std::string abs;
+                if (file_info::is_absolute(s))
+                    abs = file_info(s).path();
+                else if (!base.empty())
+                    abs = file_info(base + "/" + s).path();
+                else
+                    abs = file_info(s).path();
+
+                // the POSIX root canonicalizes to nothing; it is still a directory worth keeping as written
+                if (abs.empty()) abs = s;
+                resolved.push_back(std::move(abs));
             }
+
+            _w.state.current->m_env_paths = std::move(resolved);
             return variant();
         }
 
@@ -2004,10 +2036,13 @@ namespace alx {
         variant walker::op_dot(const varvec& _tree, walker& _w) {
             auto r = resolve_dot(_tree, _w.state);
 
-            // data reached through a link is invisible at any depth, not only at the link's own slot
-            if (r.link_owner && r.kind == TerminalKind::T_Variant)
-                throw script_exception{error_type::TypeError,
-                                       std::string("link namespace cannot be read as variable")};
+            // the shield first: data reached through a link is invisible at any depth, before any element handling
+            if (r.link_owner && r.kind == TerminalKind::T_Variant) {
+                error_type et;
+                std::string msg;
+                dot_failure(DotOp::Read, r, classify_dot(r, r.parent), DotMiss::None, et, msg);
+                throw script_exception{et, msg};
+            }
 
             if (r.key.null() && r.kind == TerminalKind::T_Variant && r.parent) {
                 if (r.parent->is<varvec>()) {
@@ -2053,32 +2088,28 @@ namespace alx {
                                            std::string("bytes index out of range")};
                 return variant(static_cast<int_64>(b[static_cast<uint_64>(i)]));
             }
+            if (r.is_act_name()) {
+                std::string name = r.key.to<std::string>();
+                variant* v = _w.state.var_ptr(name, nullptr, r.act_base);
+                if (!v) throw script_exception{error_type::NameError, std::string("Undefined: " + name)};
+                return *v;
+            }
             variant* p = r.get(true);
             if (p) {
-
-                // reached through a link: the terminal hands back the link's own slot — its sub-data stays opaque
-                if (p == r.parent && p->is<anyptr>() && anyptr_ex<impl_link>::as(p->to<anyptr>()))
-                    throw script_exception{error_type::TypeError,
-                                           std::string("link namespace cannot be read as variable")};
+                // a link handle's own slot cannot be read as a variable (a callable keeps its own message)
+                if (p == r.parent && p->is<anyptr>() && anyptr_ex<impl_link>::as(p->to<anyptr>())) {
+                    error_type et;
+                    std::string msg;
+                    dot_failure(DotOp::Read, r, classify_dot(r, p), DotMiss::None, et, msg);
+                    throw script_exception{et, msg};
+                }
                 return *p;
             }
-            if (r.kind == TerminalKind::T_Slot || r.kind == TerminalKind::T_Callable) {
-                std::string name = r.key.is<std::string>() ? r.key.to<std::string>() : std::string();
-                throw script_exception{error_type::NameError, std::string("Undefined: " + name)};
-            }
-
-            if (r.kind == TerminalKind::T_Variant && r.parent) {
-
-                if (r.key.null())
-                    throw script_exception{error_type::TypeError,
-                                           std::string("type does not support [null] index")};
-                if (r.key.is<int_64>()) {
-                    if (r.parent->is<varvec>() || r.parent->is<varlst>())
-                        throw script_exception{error_type::IndexError, std::string("vec index out of range")};
-                    throw script_exception{error_type::TypeError, std::string("type does not support []")};
-                }
-                if (r.key.is<std::string>() && !r.parent->is<varmap>())
-                    throw script_exception{error_type::TypeError, std::string("not a map")};
+            {
+                auto t = classify_dot(r, nullptr);
+                error_type et;
+                std::string msg;
+                if (dot_failure(DotOp::Read, r, t, DotMiss::None, et, msg)) throw script_exception{et, msg};
             }
             return variant();
         }
@@ -2614,18 +2645,19 @@ namespace alx {
                 auto dr = resolve_dot(_lhs, _w.state);
                 r.owner = dr.slot_owner;
 
-                // the write-side guards, keyed on the mode: a host probe is exempt, a script write is not
-                if (writing && dr.kind == TerminalKind::T_Slot && dr.parent) {
-                    auto& sv = *dr.parent;
-                    if (sv.is<anyptr>()) {
-                        const anyptr& ap_w = sv.to<anyptr>();
-                        if (anyptr_ex<impl_link>::as(ap_w))
-                            throw script_exception{error_type::TypeError, std::string("cannot write to link module variable")};
+                // the write-side shields: a link handle / link data is never a writable slot
+                if (writing) {
+                    bool link_guard =
+                        (dr.kind == TerminalKind::T_Slot && dr.parent && dr.parent->is<anyptr>() &&
+                         anyptr_ex<impl_link>::as(dr.parent->to<anyptr>())) ||
+                        (dr.link_owner && dr.kind == TerminalKind::T_Variant);
+                    if (link_guard) {
+                        error_type et;
+                        std::string msg;
+                        dot_failure(DotOp::Write, dr, classify_dot(dr, nullptr), DotMiss::None, et, msg);
+                        throw script_exception{et, msg};
                     }
                 }
-                // a chain that entered a link's data resolves inside it at any depth: never a script target
-                if (writing && dr.link_owner && dr.kind == TerminalKind::T_Variant)
-                    throw script_exception{error_type::TypeError, std::string("cannot write to link module variable")};
                 // a byte position first: [null] on a byte container is an element, not an append slot
                 bool byte_pos = dr.kind == TerminalKind::T_Variant && dr.parent &&
                                 (dr.key.null() || dr.key.is<int_64>()) &&
@@ -2634,14 +2666,32 @@ namespace alx {
                 if (_rmw && !byte_pos && dr.kind == TerminalKind::T_Variant && dr.parent && dr.key.null())
                     throw script_exception{error_type::TypeError,
                                            std::string("append index [null] is not a valid target for read-modify-write")};
+                if (dr.is_act_name()) {
+                    std::string name = dr.key.to<std::string>();
+                    variant* p = _w.state.var_ptr(name, nullptr, dr.act_base);
+                    if (!p) {
+                        if (!writing) return r;
+                        error_type et;
+                        std::string msg;
+                        dot_failure(DotOp::Write, dr, classify_dot(dr, nullptr), DotMiss::None, et, msg);
+                        throw script_exception{et, msg};
+                    }
+                    r.type = target_resolved::kind::slot;
+                    r.slot = p;
+                    r.owner = _w.state.current;
+                    return r;
+                }
                 variant* p = dr.get(!_tail_create);
                 if (p) {
 
-                    // an existing area native names a registered function, not a writable slot
-                    if (writing && dr.parent_kind == ParentKind::Area)
-                        throw script_exception{error_type::NameError,
-                                               std::string("Cannot assign to function: " +
-                                                           (dr.key.is<std::string>() ? dr.key.to<std::string>() : std::string()))};
+                    // an existing area entry names a registration, not a writable slot
+                    if (writing && dr.parent_kind == ParentKind::Area) {
+                        error_type et;
+                        std::string msg;
+                        dot_failure(DotOp::Write, dr, DotTerminal{DotWhere::AreaTable, DotWhat::Callable, p},
+                                    DotMiss::None, et, msg);
+                        throw script_exception{et, msg};
+                    }
                     r.type = target_resolved::kind::slot;
                     r.slot = p;
                     return r;
@@ -2649,30 +2699,18 @@ namespace alx {
                 if (dr.kind == TerminalKind::T_Variant && dr.parent) {
 
                     // a byte element is not a variant slot: the write path takes it as a byte position
-                    // (a string key on a byte container stays the tail's "not a map", as the read side has it)
                     if (writing && byte_pos) {
                         r.type = target_resolved::kind::byte;
                         r.parent = dr.parent;
                         r.key = dr.key;
                         return r;
                     }
-                    if (dr.key.null()) {
-
-                        if (dr.parent->is<std::string>())
-                            return fail(error_type::TypeError, "string does not support index write");
-                        if (dr.parent->is<varmap>())
-                            return fail(error_type::TypeError, "map does not support [null] write");
-                        return fail(error_type::TypeError, "type does not support [null] write");
+                    if (writing) {
+                        error_type et;
+                        std::string msg;
+                        if (dot_failure(DotOp::Write, dr, classify_dot(dr, nullptr), DotMiss::None, et, msg))
+                            throw script_exception{et, msg};
                     }
-                    if (dr.key.is<int_64>()) {
-                        if (dr.parent->is<varvec>() || dr.parent->is<varlst>())
-                            return fail(error_type::IndexError, "vec index out of range");
-                        if (dr.parent->is<std::string>())
-                            return fail(error_type::TypeError, "string does not support index write");
-                        return fail(error_type::TypeError, "type does not support []");
-                    }
-                    if (dr.key.is<std::string>() && !dr.parent->is<varmap>())
-                        return fail(error_type::TypeError, "not a map");
                 }
                 if (dr.key.is<std::string>())
                     return fail(error_type::NameError, "Undefined: " + dr.key.to<std::string>());
@@ -2973,13 +3011,13 @@ namespace alx {
             bind_owner(*p, _w.state.current);
         }
 
-        const varvec* walker::find_def(walker& _w, const std::string& _name) {
+        const call_able* walker::find_def(walker& _w, const std::string& _name) {
             if (!_w.state.current) return nullptr;
             variant* v = _w.state.var_ptr(_name);
             if (v && v->is<anyptr>()) {
                 const anyptr& ap = v->to<anyptr>();
                 if (auto* ca = anyptr_ex<call_able>::as(ap)) {
-                    if (ca->is_def()) return ca->m_def;
+                    if (ca->is_def()) return ca;
                 }
             }
             return nullptr;
@@ -3106,11 +3144,12 @@ namespace alx {
             return ret_slot;
         }
 
-        void walker::eval_and_bind_args(impl_import* _ent, const varvec& _def,
+        void walker::eval_and_bind_args(impl_import* _ent, const call_able* _ca,
                                         const std::string& _func_name,
                                         const varvec& _tree, walker& _w,
                                         bool _tco, scope_frame* _tco_frame,
                                         std::vector<call_arg>& _args) {
+            const varvec& _def = *_ca->m_def;
             auto& params = _def[2].to<varvec>();
 
             std::vector<variant> pos_args;
@@ -3122,7 +3161,7 @@ namespace alx {
             varvec spread_vec;
             varmap spread_map;
 
-            // Runs before the frame push: after it the entity barrier hides caller locals and a TCO resize wipes slots
+            // Runs before the frame push: after it the callee's activation boundary hides caller locals and a TCO resize wipes slots
             for (auto& a : _args) {
                 if (a.kind == call_arg::V_UNPACK) {
                     switch (a.val.type()) {
@@ -3168,7 +3207,7 @@ namespace alx {
                 frame = &cf;
             } else {
                 auto& sf = _w.state.push_frame(_ent, FF_RET | FF_BREAK | FF_CONT | FF_TAIL);
-                sf.def = &_def;
+                sf.def = _ca;
                 _w.state.current = _ent;
                 frame = &sf;
             }
@@ -3224,14 +3263,14 @@ namespace alx {
                                        std::string("spread [] contributed no values for " + _func_name)};
         }
 
-        variant walker::invoke_def(impl_import* _ent, const varvec& _def,
+        variant walker::invoke_def(impl_import* _ent, const call_able* _ca,
                                    const std::string& _func_name,
                                    const varvec& _tree, walker& _w,
                                    std::vector<call_arg>& _args) {
-            walker::eval_and_bind_args(_ent, _def, _func_name, _tree, _w, false, nullptr, _args);
+            walker::eval_and_bind_args(_ent, _ca, _func_name, _tree, _w, false, nullptr, _args);
 
             // The def frame is already the body's scope, so the body block is walked without another frame
-            auto& body = _def[4].to<varvec>();
+            auto& body = (*_ca->m_def)[4].to<varvec>();
             variant result = walker::walk_body(body, _w);
 
             while (_w.state.tail_flag) {
@@ -3243,6 +3282,15 @@ namespace alx {
             _w.state.pop_frame();
             _w.state.current = _w.state.frames->empty() ? _w.state.root : _w.state.frames->back().ent;
             return result;
+        }
+
+        // The call port's one failure: the shared table decides the type and the text (plus the miss attribution).
+        [[noreturn]] static void dot_call_fail(const dot_resolved& _r, const variant* _found, DotMiss _miss) {
+            error_type et = error_type::NameError;
+            std::string msg = "Undefined function: " +
+                              (_r.key.is<std::string>() ? _r.key.to<std::string>() : std::string());
+            dot_failure(DotOp::Call, _r, classify_dot(_r, _found), _miss, et, msg);
+            throw script_exception{et, msg};
         }
 
         variant walker::invoke_dot(const dot_resolved& r, const varvec& _tree, walker& _w,
@@ -3258,7 +3306,7 @@ namespace alx {
                     if (auto* ca = anyptr_ex<call_able>::as(ap)) {
                         if (ca->is_def()) {
                             impl_import* ent = r.slot_owner ? r.slot_owner : _w.state.current;
-                            return walker::invoke_def(ent, *ca->m_def, func_name, _tree, _w, _args);
+                            return walker::invoke_def(ent, ca, func_name, _tree, _w, _args);
                         }
                         if (ca->is_native()) {
                             variant ret_slot;
@@ -3276,15 +3324,48 @@ namespace alx {
             if (r.kind == TerminalKind::T_Slot) {
                 if (!r.parent) {
 
-                    if (r.slot_owner && r.key.is<std::string>()) {
-                        impl_import* saved = _w.state.current;
-                        _w.state.current = r.slot_owner;
-                        const varvec* def = walker::find_def(_w, func_name);
-                        _w.state.current = saved;
-                        if (def) return walker::invoke_def(r.slot_owner, *def, func_name, _tree, _w, _args);
+                    if (r.is_act_name()) {
+                        variant* p = _w.state.var_ptr(func_name, nullptr, r.act_base);
+                        if (p && p->is<anyptr>()) {
+                            const anyptr& ap = p->to<anyptr>();
+                            if (auto* ca = anyptr_ex<call_able>::as(ap)) {
+                                if (ca->is_def())
+                                    return walker::invoke_def(_w.state.current, ca, func_name, _tree, _w, _args);
+                                if (ca->is_native()) {
+                                    variant ret_slot;
+                                    fwrap_impl fw(walker::native_arg_ptrs(_args, _w), &ret_slot,
+                                                  &_w.state.current->m_store, &_w);
+                                    ca->m_fn(fw);
+                                    return ret_slot;
+                                }
+                            }
+                        }
+                        dot_call_fail(r, p, DotMiss::None);
                     }
-                    throw script_exception{error_type::NameError,
-                                           std::string("Undefined function: " + func_name)};
+
+                    if (r.slot_owner) {
+
+                        // The prefix named the entity: its own table answers, never the caller's frames
+                        variant* p = r.slot_owner->m_store.find(func_name);
+                        if (p && p->is<anyptr>()) {
+                            if (auto* ca = anyptr_ex<call_able>::as(p->to<anyptr>())) {
+                                if (ca->is_def())
+                                    return walker::invoke_def(r.slot_owner, ca, func_name,
+                                                              _tree, _w, _args);
+                                if (ca->is_native()) {
+                                    variant ret_slot;
+                                    fwrap_impl fw(walker::native_arg_ptrs(_args, _w), &ret_slot,
+                                                  &r.slot_owner->m_store, &_w);
+                                    ca->m_fn(fw);
+                                    return ret_slot;
+                                }
+                            }
+                        }
+
+                        // the entity has no such name: say where the caller does have it, if anywhere
+                        dot_call_fail(r, p, p ? DotMiss::None : dot_miss(_w.state, func_name));
+                    }
+                    dot_call_fail(r, nullptr, DotMiss::None);
                 }
                 auto& v = *r.parent;
                 if (v.is<anyptr>()) {
@@ -3326,19 +3407,10 @@ namespace alx {
                                                std::string("Undefined function: " + func_name)};
                     }
                 }
-
-                {
-                    impl_import* saved = _w.state.current;
-                    if (r.slot_owner) _w.state.current = r.slot_owner;
-                    const varvec* def = walker::find_def(_w, func_name);
-                    _w.state.current = saved;
-                    if (def) return walker::invoke_def(r.slot_owner ? r.slot_owner : saved,
-                                                       *def, func_name, _tree, _w, _args);
-                }
             }
 
-            throw script_exception{error_type::NameError,
-                                   std::string("Undefined function: " + func_name)};
+            // the chain ended in a value (a container element or a link/area slot): a call needs a callable
+            dot_call_fail(r, r.get(true), DotMiss::None);
         }
 
         bool walker::del_name(const variant& _target, walker& _w) {
@@ -3380,39 +3452,33 @@ namespace alx {
             if (_tree.size() < 3) return false;
             dot_resolved r = resolve_dot(_tree, _w.state);
 
-            if (r.kind == TerminalKind::T_Callable) {
-                throw script_exception{error_type::TypeError,
-                                       std::string("cannot delete callable via dot")};
-            }
+            auto del_fail = [&](const DotTerminal& _t) {
+                error_type et;
+                std::string msg;
+                dot_failure(DotOp::Delete, r, _t, DotMiss::None, et, msg);
+                throw script_exception{et, msg};
+            };
 
-            if (r.key.null())
-                throw script_exception{error_type::ConvError,
-                                       std::string("Cannot delete with null index")};
+            if (r.kind == TerminalKind::T_Callable) del_fail(classify_dot(r, r.parent));
+            if (r.key.null()) del_fail(classify_dot(r, r.parent));
 
             std::string kstr = r.key.is<std::string>() ? r.key.to<std::string>() : std::string();
             bool ok = false;
 
             // any terminal reached through link data is data: undeletable whatever it holds or how deep it sits
-            if (r.link_owner && r.parent_kind != ParentKind::Area)
-                throw script_exception{error_type::TypeError,
-                                       std::string("cannot delete link data variable") +
-                                           (kstr.empty() ? std::string() : ": " + kstr)};
+            if (r.link_owner && r.parent_kind != ParentKind::Area) del_fail(classify_dot(r, r.parent));
 
             switch (r.parent_kind) {
             case ParentKind::Frame:
 
-                if (r.parent)
-                    throw script_exception{error_type::TypeError,
-                                           std::string("Type does not support delete ." + kstr)};
+                if (r.parent) del_fail(DotTerminal{DotWhere::Slot, DotWhat::Data, r.parent});
                 if (!_w.state.frames->empty())
                     ok = _w.state.frames->back().remove(kstr);
                 break;
 
             case ParentKind::Entity:
 
-                if (r.parent)
-                    throw script_exception{error_type::TypeError,
-                                           std::string("Type does not support delete ." + kstr)};
+                if (r.parent) del_fail(DotTerminal{DotWhere::Slot, DotWhat::Data, r.parent});
                 if (r.slot_owner != _w.state.current)
                     throw script_exception{error_type::NameError,
                                            std::string("cannot delete across module boundary")};
@@ -3435,18 +3501,14 @@ namespace alx {
                         if (lv->is<anyptr>()) {
                             const anyptr& lap = lv->to<anyptr>();
 
-                            if (anyptr_ex<call_able>::as(lap))
-                                throw script_exception{error_type::TypeError,
-                                                       std::string("cannot delete function: " + kstr)};
+                            if (anyptr_ex<call_able>::as(lap)) del_fail(DotTerminal{DotWhere::LinkTable, DotWhat::Callable, lv});
                             // only an area instance/namespace is the script's to destroy
                             if (!anyptr_ex<link_area>::as(lap))
-                                throw script_exception{error_type::TypeError,
-                                                       std::string("cannot delete link data variable: " + kstr)};
+                                del_fail(DotTerminal{DotWhere::LinkTable, DotWhat::Data, lv});
                             link->m_store.remove(kstr);
                             ok = true;
                         } else {
-                            throw script_exception{error_type::TypeError,
-                                                   std::string("cannot delete link data variable: " + kstr)};
+                            del_fail(DotTerminal{DotWhere::LinkTable, DotWhat::Data, lv});
                         }
                     }
                 }
@@ -3454,14 +3516,12 @@ namespace alx {
             }
             case ParentKind::Area: {
 
-                throw script_exception{error_type::TypeError,
-                                       std::string("cannot delete function: " + kstr)};
+                del_fail(DotTerminal{DotWhere::AreaTable, DotWhat::Callable, r.parent});
             }
 
             case ParentKind::Value:
 
-                throw script_exception{error_type::TypeError,
-                                       std::string("Type does not support delete [i]")};
+                del_fail(classify_dot(r, r.parent));
 
             case ParentKind::Map: {
 
@@ -3607,7 +3667,7 @@ namespace alx {
 
         std::string walker::pos_func(const scope_frame* _f) {
             if (!_f || !_f->ent) return std::string();
-            if (_f->def) return find_func_name(_f->ent, _f->def);
+            if (_f->def) return find_func_name(_f->ent, _f->def->m_def);
             return (_f->flags & FF_RET) ? std::string("eval") : std::string("?");
         }
 

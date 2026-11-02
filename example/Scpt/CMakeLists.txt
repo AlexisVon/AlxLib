@@ -39,8 +39,8 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ALXLIB_BIN_PATH}
 )
 
-# Link modules for the .axc corpus. These are dlopen'd by the engine, so they are
-# deliberately NOT linked against alxscpt — the host supplies those symbols at load time.
+# Link modules for the .axc corpus, built like production links: they link the engine and carry
+# a relative runpath back to this tree's bin/ (the root-tree build uses the install RPATH).
 # Linux only: the corpus spells `link "base.so"`, and the MSVC build does not run it.
 add_library(base MODULE
     link/base/base.cpp
@@ -61,10 +61,14 @@ set(_mod_incs
     ${CMAKE_CURRENT_SOURCE_DIR}/../../include/alxcore
     ${CMAKE_CURRENT_SOURCE_DIR}/../../include/alxscpt
 )
+file(RELATIVE_PATH _mod_rel "${CMAKE_CURRENT_SOURCE_DIR}/test/bin" "${ALXLIB_BIN_PATH}")
 foreach(_mod base test_store)
     target_include_directories(${_mod} PRIVATE ${_mod_incs})
+    target_link_libraries(${_mod} PRIVATE alxscpt)
     set_target_properties(${_mod} PROPERTIES
         PREFIX ""   # the corpus loads "base.so", not "libbase.so"
         LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/test/bin
+        BUILD_WITH_INSTALL_RPATH ON
+        INSTALL_RPATH "$ORIGIN/${_mod_rel}"
     )
 endforeach()

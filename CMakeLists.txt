@@ -45,6 +45,9 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${ALXLIB_BIN_PATH})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${ALXLIB_BIN_PATH})
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${ALXLIB_BIN_PATH})
 
+# the shipped libraries use $ORIGIN in the build tree too, or the package only runs on this machine
+set(CMAKE_INSTALL_RPATH "$ORIGIN")
+
 # ---------------------------------------------------------------------------
 # Version (bump it here)
 # ---------------------------------------------------------------------------
@@ -53,7 +56,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${ALXLIB_BIN_PATH})
 # an older one instead of failing somewhere at run time.
 set(ALXLIB_VERSION_MAJOR 1 CACHE STRING "Library major version")
 set(ALXLIB_VERSION_MINOR 3 CACHE STRING "Library minor version")
-set(ALXLIB_VERSION_PATCH 2 CACHE STRING "Library patch version")
+set(ALXLIB_VERSION_PATCH 3 CACHE STRING "Library patch version")
 
 set(ALXLIB_VERSION "${ALXLIB_VERSION_MAJOR}.${ALXLIB_VERSION_MINOR}.${ALXLIB_VERSION_PATCH}")
 set(ALXLIB_SOVERSION "${ALXLIB_VERSION_MAJOR}.${ALXLIB_VERSION_MINOR}")
@@ -79,7 +82,6 @@ option(ALXLIB_STATIC "Build alxlib.a (all-in-one)" OFF)
 option(BUILD_TESTS "Build tests" ON)
 option(BUILD_EXAMPLES "Build examples" ON)
 option(BUILD_EXAMPLE_SCPT "Build Scpt example" ON)
-option(BUILD_EXAMPLE_LZA "Build Lza example" ON)
 option(BUILD_EXAMPLE_HFS "Build Hfs example" ON)
 
 # ---------------------------------------------------------------------------
@@ -97,10 +99,6 @@ endif()
 if(BUILD_EXAMPLES)
     if(BUILD_EXAMPLE_SCPT)
         set(ALXSCPT_ENABLE ON)
-    endif()
-    if(BUILD_EXAMPLE_LZA)
-        set(ALXBASE_ENABLE ON)
-        set(ALXCORE_ENABLE ON)
     endif()
     if(BUILD_EXAMPLE_HFS)
         set(ALXCOMM_ENABLE ON)
@@ -127,6 +125,14 @@ include(cmake/alxbase.cmake)
 include(cmake/alxcore.cmake)
 include(cmake/alxscpt.cmake)
 include(cmake/alxcomm.cmake)
+
+# only the shipped libraries pin the build RPATH to $ORIGIN: executables keep CMake's build RPATH,
+# which may need to reach a shared GTest or another non-system prefix
+foreach(_lib alxbase alxcore alxcomm alxscpt)
+    if(TARGET ${_lib})
+        set_target_properties(${_lib} PROPERTIES BUILD_WITH_INSTALL_RPATH ON)
+    endif()
+endforeach()
 
 if(ALXLIB_STATIC)
     include(cmake/alxlib.cmake)
@@ -161,9 +167,6 @@ endif()
 if(BUILD_EXAMPLES)
     if(BUILD_EXAMPLE_SCPT)
         add_subdirectory(${CMAKE_SOURCE_DIR}/example/Scpt ${CMAKE_BINARY_DIR}/example/Scpt)
-    endif()
-    if(BUILD_EXAMPLE_LZA)
-        add_subdirectory(${CMAKE_SOURCE_DIR}/example/Lza ${CMAKE_BINARY_DIR}/example/Lza)
     endif()
     if(BUILD_EXAMPLE_HFS)
         add_subdirectory(${CMAKE_SOURCE_DIR}/example/Hfs ${CMAKE_BINARY_DIR}/example/Hfs)

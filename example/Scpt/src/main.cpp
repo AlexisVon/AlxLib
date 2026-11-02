@@ -214,7 +214,7 @@ static std::list<std::string> s_cli_paths;
 static script::engine* make_engine(bool overflow_check = false, int_64 max_stack = -1, int_64 max_vecfill = -1) {
     auto* eng = script::engine::create();
     eng->set_etype(s_cli_version);
-    eng->set_vtype(7);
+    eng->set_vtype(8);
 
     eng->set_hook(cli_hook, nullptr, 0);
     if (overflow_check) eng->set_overflow_check(true);

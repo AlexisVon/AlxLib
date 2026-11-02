@@ -1419,3 +1419,63 @@ TEST(gt_ascript_parse, MissingOperand_CallArgRecovery) {
     EXPECT_TRUE(head_is(call[2].to<varvec>(), O_LOAD));
     EXPECT_EQ(call[3].to<varvec>()[0].to<int_64>(), 1);
 }
+
+TEST(gt_ascript_parse, ActAnchor_Read) {
+    auto ast = parse_src("^x;");
+    auto& dot = ast[1].to<varvec>();
+    EXPECT_TRUE(head_is(dot, O_DOT));
+    EXPECT_EQ(static_cast<op_enum>(dot[1].to<OPTYPE>()), O_ACT);
+    EXPECT_EQ(dot[2].to<std::string>(), "x");
+}
+
+TEST(gt_ascript_parse, ActAnchor_Double) {
+    auto ast = parse_src("^^x;");
+    auto& dot = ast[1].to<varvec>();
+    EXPECT_TRUE(head_is(dot, O_DOT));
+    EXPECT_EQ(static_cast<op_enum>(dot[1].to<OPTYPE>()), O_ACT);
+    EXPECT_EQ(static_cast<op_enum>(dot[2].to<OPTYPE>()), O_ACT);
+    EXPECT_EQ(dot[3].to<std::string>(), "x");
+}
+
+TEST(gt_ascript_parse, ActAnchor_ChainStore) {
+    auto ast = parse_src("^a.b = 1;");
+    auto& store = ast[1].to<varvec>();
+    EXPECT_TRUE(head_is(store, O_STORE));
+    auto& dot = store[1].to<varvec>();
+    EXPECT_TRUE(head_is(dot, O_DOT));
+    EXPECT_EQ(static_cast<op_enum>(dot[1].to<OPTYPE>()), O_ACT);
+    EXPECT_EQ(dot[2].to<std::string>(), "a");
+    EXPECT_EQ(dot[3].to<std::string>(), "b");
+}
+
+TEST(gt_ascript_parse, ActAnchor_Call) {
+    auto ast = parse_src("^g(1);");
+    auto& ncall = ast[1].to<varvec>();
+    EXPECT_TRUE(head_is(ncall, O_NCALL));
+    auto& keys = ncall[1].to<varvec>();
+    EXPECT_EQ(keys.size(), 2u);
+    EXPECT_EQ(static_cast<op_enum>(keys[0].to<OPTYPE>()), O_ACT);
+    EXPECT_EQ(keys[1].to<std::string>(), "g");
+}
+
+TEST(gt_ascript_parse, ActAnchor_InfixXorUnchanged) {
+    auto ast = parse_src("a ^ b;");
+    EXPECT_TRUE(head_is(ast[1].to<varvec>(), O_BIT_XOR));
+
+    // in operand position the same token is the anchor: a ^ (^b)
+    auto ast2 = parse_src("a ^ ^b;");
+    auto& x = ast2[1].to<varvec>();
+    EXPECT_TRUE(head_is(x, O_BIT_XOR));
+    auto& right = x[2].to<varvec>();
+    EXPECT_TRUE(head_is(right, O_DOT));
+    EXPECT_EQ(static_cast<op_enum>(right[1].to<OPTYPE>()), O_ACT);
+    EXPECT_EQ(right[2].to<std::string>(), "b");
+}
+
+TEST(gt_ascript_parse, ActAnchor_RequiresName) {
+    EXPECT_TRUE(parse_has_error("^;"));
+    EXPECT_TRUE(parse_has_error("^..x;"));
+    EXPECT_TRUE(parse_has_error("^::x;"));
+    EXPECT_TRUE(parse_has_error("^.x;"));
+    EXPECT_TRUE(parse_has_error("^(1);"));
+}

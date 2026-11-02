@@ -8,6 +8,7 @@
  * SPDX-License-Identifier: MIT
  ******************************************************************************/
 #include "ascript_dot.h"
+#include "ascript_utils.h"
 
 namespace alx {
     namespace script {
@@ -26,6 +27,9 @@ namespace alx {
                 case O_ROOT:
                     _s.current = _s.root;
                     return;
+                case O_ACT:
+                    r.act_base = _s.act_parent(r.act_base);
+                    return;
                 default: return;
                 }
             }
@@ -37,20 +41,14 @@ namespace alx {
             std::string key = elem.to<std::string>();
 
             variant* v = nullptr;
+            bool in_frame = false;
             ParentKind pk = ParentKind::Entity;
-            // innermost frame first, and only frames of the current entity: a hit here is a block-local
-            for (auto it = _s.frames->rbegin(); it != _s.frames->rend(); ++it) {
-                if (it->ent != _s.current) break;
-                size_t idx;
-                v = it->find(key, &idx);
-                if (v) {
-                    pk = ParentKind::Frame;
-                    break;
-                }
-            }
-            if (!v && _s.current) {
+            // the frame chain is consulted only while the chain still stands in the running activation's entity
+            if (_s.current && !_s.frames->empty() && _s.frames->back().ent == _s.current) {
+                v = _s.var_ptr(key, &in_frame, r.act_base);
+                if (v) pk = in_frame ? ParentKind::Frame : ParentKind::Entity;
+            } else if (_s.current) {
                 v = _s.current->m_store.find(key);
-                pk = ParentKind::Entity;
             }
             if (!v)
                 throw script_exception{error_type::NameError,
@@ -70,6 +68,7 @@ namespace alx {
                     r.kind = TerminalKind::T_Slot;
                     // the terminal key belongs to the entity just entered, not to the frame the alias was found in
                     r.parent_kind = ParentKind::Entity;
+                    r.act_base = -1;
                     return;
                 }
                 if (anyptr_ex<impl_link>::as(ap)) {
@@ -238,6 +237,197 @@ namespace alx {
                                    std::string("unexpected element type in variant context")};
         }
 
+        DotTerminal classify_dot(const dot_resolved& _r, const variant* _found) {
+            DotTerminal t;
+            t.value = _found;
+            switch (_r.kind) {
+            case TerminalKind::T_Callable:
+                t.where = _r.parent_kind == ParentKind::Link   ? DotWhere::LinkTable
+                          : _r.parent_kind == ParentKind::Area ? DotWhere::AreaTable
+                                                               : DotWhere::Slot;
+                t.what = DotWhat::Callable;
+                break;
+            case TerminalKind::T_Variant:
+                if (_r.link_owner) {
+                    t.where = DotWhere::LinkTable;
+                    t.what = DotWhat::Opaque;
+                } else {
+                    t.where = _r.parent ? DotWhere::Element : DotWhere::None;
+                }
+                break;
+            case TerminalKind::T_Slot:
+            default:
+                t.where = _r.parent_kind == ParentKind::Link   ? DotWhere::LinkTable
+                          : _r.parent_kind == ParentKind::Area ? DotWhere::AreaTable
+                                                               : DotWhere::Slot;
+                if (t.value && t.value->is<anyptr>()) {
+                    const anyptr& ap = t.value->to<anyptr>();
+                    if (anyptr_ex<call_able>::as(ap)) t.what = DotWhat::Callable;
+                    else if (anyptr_ex<impl_import>::as(ap) || anyptr_ex<impl_link>::as(ap) ||
+                             anyptr_ex<link_area>::as(ap))
+                        t.what = DotWhat::Resource;
+                }
+                break;
+            }
+            return t;
+        }
+
+        DotMiss dot_miss(walk_state& _s, const std::string& _name) {
+            if (_s.var_in_frame(_name)) return DotMiss::FrameLocal;
+            if (_s.var_ptr(_name)) return DotMiss::CallersModule;
+            return DotMiss::None;
+        }
+
+        bool dot_failure(DotOp _op, const dot_resolved& _r, const DotTerminal& _t, DotMiss _miss,
+                         error_type& _type, std::string& _msg) {
+            const std::string k = _r.key.is<std::string>() ? _r.key.to<std::string>() : std::string();
+            const bool have = _t.value != nullptr;
+            const bool is_map = _r.parent && _r.parent->is<varmap>();
+            const bool is_seq = _r.parent && (_r.parent->is<varvec>() || _r.parent->is<varlst>());
+
+            switch (_op) {
+            case DotOp::Read:
+                if (_t.where == DotWhere::LinkTable) {
+                    _type = error_type::TypeError;
+                    _msg = "link namespace cannot be read as variable";
+                    return true;
+                }
+                if (_r.kind == TerminalKind::T_Slot || _r.kind == TerminalKind::T_Callable) {
+                    if (have) return false;
+                    _type = error_type::NameError;
+                    _msg = "Undefined: " + k;
+                    return true;
+                }
+                if (_r.kind != TerminalKind::T_Variant || !_r.parent) return false;
+                if (_r.key.null()) {
+                    _type = error_type::TypeError;
+                    _msg = "type does not support [null] index";
+                    return true;
+                }
+                if (_r.key.is<int_64>()) {
+                    if (is_seq) {
+                        _type = error_type::IndexError;
+                        _msg = "vec index out of range";
+                    } else {
+                        _type = error_type::TypeError;
+                        _msg = "type does not support []";
+                    }
+                    return true;
+                }
+                if (_r.key.is<std::string>() && !is_map) {
+                    _type = error_type::TypeError;
+                    _msg = "not a map";
+                    return true;
+                }
+                return false;
+
+            case DotOp::Write:
+                if (_t.where == DotWhere::LinkTable) {
+                    _type = error_type::TypeError;
+                    _msg = "cannot write to link module variable";
+                    return true;
+                }
+                if (_t.where == DotWhere::AreaTable) {
+                    _type = error_type::NameError;
+                    _msg = "Cannot assign to function: " + k;
+                    return true;
+                }
+                if (_r.kind != TerminalKind::T_Variant || !_r.parent) {
+                    if (!have) {
+                        _type = error_type::NameError;
+                        _msg = "Undefined: " + k;
+                        return true;
+                    }
+                    return false;
+                }
+                if (_r.key.null()) {
+                    _type = error_type::TypeError;
+                    if (_r.parent->is<std::string>()) _msg = "string does not support index write";
+                    else if (is_map) _msg = "map does not support [null] write";
+                    else _msg = "type does not support [null] write";
+                    return true;
+                }
+                if (_r.key.is<int_64>()) {
+                    if (is_seq) {
+                        _type = error_type::IndexError;
+                        _msg = "vec index out of range";
+                    } else if (_r.parent->is<std::string>()) {
+                        _type = error_type::TypeError;
+                        _msg = "string does not support index write";
+                    } else {
+                        _type = error_type::TypeError;
+                        _msg = "type does not support []";
+                    }
+                    return true;
+                }
+                if (_r.key.is<std::string>() && !is_map) {
+                    _type = error_type::TypeError;
+                    _msg = "not a map";
+                    return true;
+                }
+                return false;
+
+            case DotOp::Call:
+                if (have) {
+                    if (_t.what == DotWhat::Callable) return false;
+                    if (_t.what == DotWhat::Data) {
+                        _type = error_type::NameError;
+                        _msg = std::string("not a function: ") + type_name_script(*_t.value);
+                        return true;
+                    }
+                    _type = error_type::NameError;
+                    _msg = "Undefined function: " + k;
+                    return true;
+                }
+                if (_miss == DotMiss::FrameLocal) {
+                    _type = error_type::TypeError;
+                    _msg = "not a member of the entity: " + k + " is a frame local, call it unqualified";
+                    return true;
+                }
+                _type = error_type::NameError;
+                _msg = _miss == DotMiss::CallersModule
+                           ? "Undefined function: " + k + " (it belongs to the caller's module, not to that entity)"
+                           : "Undefined function: " + k;
+                return true;
+
+            case DotOp::Delete:
+                if (_t.what == DotWhat::Callable) {
+                    _type = error_type::TypeError;
+                    _msg = _t.where == DotWhere::LinkTable || _t.where == DotWhere::AreaTable
+                               ? "cannot delete function: " + k
+                               : "cannot delete callable via dot";
+                    return true;
+                }
+                if (_r.key.null()) {
+                    _type = error_type::ConvError;
+                    _msg = "Cannot delete with null index";
+                    return true;
+                }
+                if (_t.where == DotWhere::LinkTable) {
+                    _type = error_type::TypeError;
+                    _msg = "cannot delete link data variable" + (k.empty() ? std::string() : ": " + k);
+                    return true;
+                }
+                if (_t.where == DotWhere::AreaTable) {
+                    _type = error_type::TypeError;
+                    _msg = "cannot delete function: " + k;
+                    return true;
+                }
+                if (_t.where == DotWhere::Slot && have) {
+                    _type = error_type::TypeError;
+                    _msg = "Type does not support delete ." + k;
+                    return true;
+                }
+                if (_t.where == DotWhere::Element && _r.parent && !is_map && !is_seq) {
+                    _type = error_type::TypeError;
+                    _msg = "Type does not support delete [i]";
+                    return true;
+                }
+                return false;
+            }
+            return false;
+        }
+
         dot_resolved resolve_dot(const varvec& dot_ast, walk_state& _s) {
             dot_resolved r;
             r.kind = TerminalKind::T_Slot;
@@ -287,6 +477,11 @@ namespace alx {
                 step::ent(r, elem, _s);
                 nav_ent = _s.current;
             }
+
+            // a callable reached before the terminal key: the chain asked to walk past a function
+            if (r.kind == TerminalKind::T_Callable)
+                throw script_exception{error_type::TypeError,
+                                       std::string("cannot navigate beyond a callable")};
 
             // the last element is not walked: it becomes the terminal key, resolved against parent or slot_owner
             r.key = dot_ast.back();

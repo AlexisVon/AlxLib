@@ -54,6 +54,7 @@ namespace alx {
                 if (_o.m_is_def) c->m_def = _o.m_def;
                 else c->m_fn = _o.m_fn;
                 c->m_area = _o.m_area;
+                c->home = _o.home;
                 return c;
             }
 
@@ -66,6 +67,8 @@ namespace alx {
                 native_func m_fn;
             };
             link_area* m_area = nullptr;
+            // frame index this def was declared in; -1 = module top level
+            int_32 home = -1;
         };
 
         struct link_area {
@@ -401,7 +404,8 @@ namespace alx {
             // free slot offsets relative to base (data_store::m_free holds absolute indices)
             std::vector<size_t> free;
             slot_map<4> var_map;
-            const varvec* def = nullptr;
+            // the callable this activation runs; null on eval and non-activation frames
+            const call_able* def = nullptr;
             // names this layer may not delete: the for/foreach head snapshot
             const slot_map<4>* prot = nullptr;
             uint_8 flags = FF_NONE;
@@ -545,7 +549,6 @@ namespace alx {
             const std::list<std::string>* m_search_paths = nullptr;
 
             const alx::signal<const std::string&>* on_cerr = nullptr;
-            const alx::signal<uint_64, const std::string&>* on_csys = nullptr;
 
             const engine_config* m_cfg = nullptr;
 
@@ -556,11 +559,16 @@ namespace alx {
             walk_state& operator=(const walk_state&) = delete;
             ~walk_state() { clear(); }
             void clear() {
-                frames->clear();
+                unwind_frames();
                 current = nullptr;
                 root = nullptr;
                 root_entity = nullptr;
                 clear_pos();
+            }
+
+            // frames must die inner-to-outer: a frame's dtor truncates its entity's store, freeing handles a lower frame still points at
+            void unwind_frames() {
+                while (!frames->empty()) frames->pop_back();
             }
 
             src_pos& pos_slot() { return frames->empty() ? top_pos : frames->back().pos; }
@@ -589,17 +597,51 @@ namespace alx {
                 }
             }
 
-            // only frames of the current entity are searched (entity barrier); a hit in an outer frame is cached into the top frame
-            variant* var_ptr(const std::string& _name) {
+            // frames only: the same walk as var_ptr, without falling back to the entity store
+            bool var_in_frame(const std::string& _name) {
+                bool in = false;
+                var_ptr(_name, &in);
+                return in;
+            }
 
-                size_t depth = 0;
-                for (auto it = frames->rbegin(); it != frames->rend(); ++it, ++depth) {
-                    if (it->ent != current) break;
-                    size_t idx;
-                    variant* p = it->find(_name, &idx);
-                    if (p) {
-                        if (depth > 0) frames->back().var_map.set(_name, idx);
-                        return p;
+            // the declaration frame of the callable enclosing _from (-1 = the running activation)
+            int_32 act_parent(int_32 _from = -1) const {
+                int_32 i = _from < 0 ? static_cast<int_32>(frames->size()) - 1 : _from;
+                while (i >= 0 && !(*frames)[i].def) --i;
+                if (i < 0) throw script_exception{error_type::NavError, std::string("^ exceeds activation depth")};
+                int_32 home = (*frames)[i].def->home;
+                if (home < 0 || home >= i)
+                    throw script_exception{error_type::NavError, std::string("^ exceeds activation depth")};
+                return home;
+            }
+
+            // a callable's frame is the activation boundary: the walk continues where that callable was declared;
+            // any frame hit below the top is cached into the top frame
+            variant* var_ptr(const std::string& _name, bool* _in_frame = nullptr, int_32 _from = -1) {
+
+                if (_in_frame) *_in_frame = false;
+                if (!frames->empty()) {
+                    int_32 top = static_cast<int_32>(frames->size()) - 1;
+                    int_32 i = _from < 0 ? top : _from;
+                    while (i >= 0) {
+                        auto& f = (*frames)[i];
+                        size_t idx;
+                        if (variant* p = f.find(_name, &idx)) {
+                            // an anchored walk skips the frames above its start, so its hit must not seed the top cache
+                            if (_from < 0 && i != top) frames->back().var_map.set(_name, idx);
+                            if (_in_frame) *_in_frame = true;
+                            return p;
+                        }
+                        if (f.def) {
+                            int_32 home = f.def->home;
+                            // a declared frame is always strictly below the activation that runs it
+                            if (home >= i)
+                                throw script_exception{error_type::RuntimeError,
+                                                       "frame home out of order: " + _name};
+                            i = home;
+                        } else {
+                            --i;
+                        }
                     }
                 }
 

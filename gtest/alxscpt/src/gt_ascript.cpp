@@ -632,12 +632,31 @@ TEST(gt_ascript_engine, LinkError_InvalidSo) {
     }
 
     auto* eng = engine::create();
+    std::string event;
+    eng->get_csys().connect([&](uint_64, const std::string& _s) {
+        if (_s.find("link error:") != std::string::npos) event = _s;
+    });
 
     auto res = eng->exec(
         alx::bytes_view(alx::bytes("link \"" + so_path + "\" as fake; 1;")), "");
+    eng->get_csys().clear();
     std::remove(so_path.c_str());
     delete eng;
-    EXPECT_EQ(res.error, error_type::ImportError) << "link failure propagates, no crash";
+
+    ASSERT_EQ(res.error, error_type::ImportError) << "link failure propagates, no crash";
+
+    // both channels name the file and carry the loader's own text after it
+    const std::string tail = "alx_fake_link.so: ";
+    std::string msg = res.value.to<std::string>();
+    ASSERT_EQ(msg.rfind("Cannot link: ", 0), 0) << msg;
+    auto at = msg.find(tail);
+    ASSERT_NE(at, std::string::npos) << msg;
+    EXPECT_GT(msg.size(), at + tail.size()) << "the loader detail must follow the path: " << msg;
+
+    ASSERT_FALSE(event.empty()) << "the csys channel must carry the failure";
+    auto ev_at = event.find(tail);
+    ASSERT_NE(ev_at, std::string::npos) << event;
+    EXPECT_GT(event.size(), ev_at + tail.size()) << "the loader detail must follow the path: " << event;
 }
 
 #ifdef ALX_TEST_LINK_LOAD_SO
@@ -702,6 +721,36 @@ TEST(gt_ascript_engine, IndirectCallIntegration) {
     delete eng;
 }
 
+TEST(gt_ascript_engine, TypeArityInCompiledProduct) {
+    // the product stores the AST, so the guard fires the same way from a compiled script
+    auto* eng = engine::create();
+    alx::bytes src("var what = \"\"; try { type(1, 2); } catch(e) { what = e.what; } what;");
+    bytes bin = eng->compile(alx::bytes_view(src), "", false);
+    ASSERT_FALSE(bin.empty());
+    auto r = eng->exec(alx::bytes_view(bin), "");
+    delete eng;
+
+    ASSERT_EQ(r.error, error_type::NoError);
+    EXPECT_EQ(r.value.to<std::string>(), "ArgError");
+}
+
+TEST(gt_ascript_engine, EnvIsNotASystemEvent) {
+    // env changes the search list; that is script-side work, so nothing lands on the csys channel
+    auto* eng = engine::create();
+    std::vector<std::string> events;
+    eng->get_csys().connect([&](uint_64, const std::string& s) { events.push_back(s); });
+
+    alx::bytes src("env([\"/tmp\"]); var saved = env(); env(saved); env([]); 1;");
+    auto r = eng->exec(alx::bytes_view(src), "");
+    delete eng;
+
+    EXPECT_EQ(r.error, error_type::NoError);
+    int env_cnt = 0;
+    for (auto& e : events)
+        if (e.find("env:") != std::string::npos) env_cnt++;
+    EXPECT_EQ(env_cnt, 0) << "env must not emit an event";
+}
+
 TEST(gt_ascript_engine, FlyweightClosure) {
     std::string tmp = "tmp-alxscpt-gtest/alx_flyweight_test.axc";
     {
@@ -727,19 +776,13 @@ TEST(gt_ascript_engine, FlyweightClosure) {
         EXPECT_EQ(r2.error, error_type::NoError);
         EXPECT_EQ(r2.value.to<int_64>(), 11);
 
-        eng->exec(alx::bytes_view(alx::bytes(
-                      "env([\"/tmp\"]); 1;")),
-                  "");
-
-        int load_cnt = 0, unload_cnt = 0, env_cnt = 0;
+        int load_cnt = 0, unload_cnt = 0;
         for (auto& e : events) {
             if (e.find("ast load:") != std::string::npos) load_cnt++;
             else if (e.find("ast unload:") != std::string::npos) unload_cnt++;
-            else if (e.find("env:") != std::string::npos) env_cnt++;
         }
         EXPECT_EQ(load_cnt, 1) << "first import parses once (resource level)";
         EXPECT_EQ(unload_cnt, 0) << "no unload while the engine still holds the resource";
-        EXPECT_EQ(env_cnt, 1) << "env() should emit csys event";
 
         delete eng;
     }

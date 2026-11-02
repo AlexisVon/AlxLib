@@ -32,7 +32,7 @@ $print("T10.5 shadow:", r);
 if (r != 1) { $print("FAIL T10.5"); throw("assert"); }
 $print("OK");
 
-// 6. frame-chain closure: eval reads a local of the current frame
+// 6. definition-chain capture: eval reads a local of the activation it was called in
 var x = 10;
 r = eval("x + 1;");
 $print("T10.6 closure read:", r);

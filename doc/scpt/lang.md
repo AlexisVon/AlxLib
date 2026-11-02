@@ -82,6 +82,8 @@ The `$xxx` extension mechanism: the `$` prefix namespace is a lexical-level hard
 | 15 | `@` `delete` (prefix) | `delete` right (operand = suffix chain); `@` = primary + dot chain (`[]` / `++` / `--` apply after the read, §10.1; no bare `@@`) |
 | 16 | `++` `--` `.` `..` `[]` `()` (postfix) | left |
 
+`^` at level 7 is bitwise XOR **between two operands**. In operand position — at the head of a chain, where no left operand exists — the same token is the **activation anchor** (§13.3): `^x`, `^^x`. The position decides; there is no other `^` form.
+
 <div style="page-break-after: always;"></div>
 
 ---
@@ -359,6 +361,8 @@ A value can also be an opaque **handle**, which only the engine and the host pro
 |-------|----------|
 | an import / link entity handle (a value like any other — §11.3) | `"import"` / `"link"` |
 | an empty handle (one that holds no object) | `"null"` |
+
+At most one argument: `type(a, b)` is an `ArgError` (and `b` is not evaluated); `type()` with no argument answers `"null"`, like any argument-less call. Any expression that *is a value* is a fine argument — `type(f())`, `type(a[0].b)` (a callable is refused, just below).
 
 A callable is not a value — reading one is refused, `type()` included (`TypeError: function cannot be read as a value`) — so no call answers for one; reach it by calling (directly, through `@`, or by the name a table holds).
 
@@ -823,8 +827,8 @@ def init(x, y) { ... }  // always succeeds, the engine will not stop it for a na
 | `ShiftError` | shift count out of range, or a negative value left-shifted (both under `overflow_check`) |
 | `IndexError` | vec/lst/string/bytes index out of bounds |
 | `KeyError` | `m["key"]` with the key absent, or a middle segment of a dot chain absent (the chain's last key reads null, §13.2) |
-| `ArgError` | a parameter with no default is missing |
-| `ImportError` | module not found / circular import / a link library that will not dlopen, etc. |
+| `ArgError` | a parameter with no default is missing, or a builtin that checks its own arity was given more arguments than it takes (`env(a, b)`, `type(a, b)`); the one-value builtins that still ignore an extra argument are a known defect (issue ledger I-1), not the contract |
+| `ImportError` | module not found / circular import / a link library that will not load (`Cannot link: <path>`, with the loader's text appended when the failure came from the loader), etc. |
 | `LinkError` | a native call arrived outside any walk, i.e. from a load/unload entry point |
 | `StackError` | call frames exceeded `max_stack` |
 | `ResourceError` | a resource limit — today the only producer is the `max_vecfill` fill cap |
@@ -929,7 +933,7 @@ def outer() {
 - a parameter with no default that is not supplied → `ArgError`
 - **Argument evaluation semantics (the call order)**: the argument expressions are evaluated left to right (so the side-effect order is determined), the callee's path expressions run after them, and the callee's address is taken last — nothing runs script code between that and the invoke, so an argument that discards the callee's owner (`m.f(delete m)`) fails cleanly while the callee path resolves. The value of a variable argument is read **once every argument expression has been evaluated** — an assignment/rewrite of an earlier variable argument by a later argument expression is visible to the callee. In `f(x, x = 5)` the `x` is passed as `5`; in `f(count, next_count())` the `count` is passed as its post-call value. Script functions and link native functions behave identically
 - **a callable is not a value**: any copy of one is refused by the type itself (`TypeError: function cannot be read as a value`) — a binding, a container, an expression handed to a call, a script def's parameter, and `type()`'s argument alike; call it instead (directly, through `@`, or by the name it is held under). The one channel open is **by reference, not by copy**: a `$`/link native receives a bare-name argument as a slot pointer and takes a callable that way
-- a call target that is a **value expression** evaluating to a non-callable → `NameError: not a function: <type>` (`type()` spells the type); a bare-name or dot-chain call that finds no function → `NameError: Undefined function: <name>`
+- a call target that is a **value expression** evaluating to a non-callable → `NameError: not a function: <type>` (`type()` spells the type); a call that **finds no function** → `NameError: Undefined function: <name>`. A dot-chain call whose name exists as **data** says `not a function: <type>` instead; a bare-name call is function-only and keeps `Undefined function`
 - tail call optimisation (TCO): when `return f(args)` has `f` as the current function's name, the current frame is reused automatically — no new frame, no depth limit (does not apply when the name is locally shadowed, see §9.2.1)
 - indirect calls use the `@` prefix syntax, see §10
 - `delete funcName` removes a function definition (the current module, top layer only — from a frame it returns `false`)
@@ -1066,7 +1070,7 @@ In a declaration position (`var`/`def`/`import as`/`link as`) `@` is **forbidden
 
 - **`@var`**: `var` must be an already defined variable whose value is a `string`. Its value is then used as the target name.
 - **`@(expr)`**: the result of evaluating `expr` must be a `string`. Any run-time expression is accepted.
-- The string must be a **legal identifier** (simple name) or a **path string** (containing `.` / `[N]`, such as `"a.b[0]"`) — the string is an **object alias**: it denotes an existing object for read / write / delete / call. Anything that is not a name or chain — an expression, a call, a slice — denotes no object and is refused (`NameError`, `reflection is not a legal name or chain: <string>`); evaluating a source string is `eval`'s job, not `@`'s.
+- The string must be a **legal identifier** (simple name) or a **path string** (containing `.` / `[N]`, such as `"a.b[0]"`; an activation anchor may head the path — `"^x"`, `"^^x"`, `"^m.a"` — §13.3) — the string is an **object alias**: it denotes an existing object for read / write / delete / call. Anything that is not a name or chain — an expression, a call, a slice — denotes no object and is refused (`NameError`, `reflection is not a legal name or chain: <string>`); evaluating a source string is `eval`'s job, not `@`'s.
 - non-string → `TypeError` (`Indirect load: variable did not evaluate to a string` on read / write, `delete @: expression did not evaluate to a string` on delete), while the **call port reports `NameError`**: `Indirect call: expected function name string, got <type>` — an empty string included (`got string`; at the other three ports it goes through and fails later, at the path parse: `RuntimeError: Cannot parse path`); target does not exist → `NameError` (a non-name/chain string is refused by the same layer: `NameError: reflection is not a legal name or chain: <string>`; the call position words it `Indirect call: invalid path '<string>'`).
 
 ### 10.1 Value reflection `@`
@@ -1149,7 +1153,7 @@ var a = 100;
 eval("a;", map{"a": 1});                // 1 — the parameter shadows the outer same-named variable
 ```
 
-- **Scope**: the code can read variables of the current scope (closure semantics) and can write through to outer variables of the same name; `var`/`def` declarations are valid only inside this code block and disappear when it finishes
+- **Scope**: the code reads the activation it was called in and that callable's definition chain (the same rule as an ordinary name), and can write through to outer variables of the same name; it does not see the caller's caller. `var`/`def` declarations are valid only inside this code block and disappear when it finishes
 
 ```js
 var x = 10;
@@ -1240,11 +1244,11 @@ b.ex.size(v);
 
 ## 11.3 Scope rules
 
-- **Variable lookup**: the current frame's var_map → parent frames of the same module → the entity's persistent m_map. At a module boundary (the frame's ent changes) the frame search stops and only the current entity's m_map is used as a fallback
+- **Variable lookup**: the current activation's frames → the declaration frames of the enclosing callables (a function-call frame is a boundary: the walk continues at the frame that callable was declared in, never at the caller's frames) → the entity's persistent m_map. Block/loop/catch/eval frames are transparent; the fallback is the running callable's own module. The activation anchor `^` (§13.3) moves the start of this lookup to the declaring activation — the non-destructive route to a shadowed outer name (nothing is deleted, the local shadow stays)
 - **Module isolation**: different import/link aliases create independent modules whose variables do not connect
 - **Alias values**: an import/link `as` alias is an ordinary value — a bare read (`var x = alias`) copies the instance, an assignment over it (`alias = v`) discards the instance and the value takes its place, and every hand-off — a call argument, a return, a container literal or element, `@("alias")` — copies the same way. The copy belongs to wherever it lands: bound to a variable or a parameter, `..` from the copy resolves in the module that holds that binding; a copy that never lands (a temporary) has no parent. The copy is independent of the original — its own store and sub-module instances — so a later `delete` of the original does not touch it. link additionally shields dot writes (`alias.x = v` → `TypeError`); dot writes on an import are allowed (they go into the import entity's `m_store`) — a write that lands on a nested alias slot discards that handle and puts the value in its place
 - **Frames**: only block / function call / eval / try / for / while / for-each push a new frame implicitly, and popping them rolls back (scope_frame RAII). A module's top level has no frame — `var` writes straight into the entity's persistent m_map
-- **dot chains across modules**: a positional dot (`::` / `..`) consults the target entity only and cannot penetrate function frames (module value-semantics isolation)
+- **dot chains across modules**: a positional dot (`.` / `..` / `::`) makes the chain's **terminal key** resolve in the target entity only — intermediate segments still walk the running activation's definition chain first, which is what lets `.m.k` find the frame's `m` (module value-semantics isolation) — and that holds for a **call** too: `.g()` / `::g()` reach that entity's function even when the frame declares a same-named `def` or variable, which only an unqualified `g()` sees
 
 ## 11.4 env
 
@@ -1252,9 +1256,13 @@ b.ex.size(v);
 env([".", "/usr/lib/alexis"]);   // set the current module's search paths
 var paths = ["./mods"];
 env(paths);                       // a variable works too
+env(lst[".", "/usr/lib/alexis"]); // a lst of strings is accepted as well
+var saved = env();                // no argument: read the list back (a vec) — env(saved) restores it later
 ```
 
-Path resolution (run time): an absolute path is looked up directly → the current module's env list in order (**before any `env()` call the list holds the module's own directory as an absolute path** — the root module's is its home directory, and a module leads with its own directory so nested imports resolve next to it; calling `env()` replaces the list; `env([])` empties it and `env()` with no argument does nothing) → the list the host set through `engine::set_search_paths` → an unconditional fallback to the process CWD. The module's own directory is the only implicit base; there is no other fallback. Paths are canonicalized (realpath: symlinks resolved, `..`/`.` normalized) — different spellings of one file share a single module instance. A host that wants sandbox isolation should restrict the search paths.
+The argument is one `env(…)` call wide: at most one argument (`ArgError` otherwise), either a `vec` or a `lst` whose elements are all strings — anything else, a non-container or a non-string element, is a `TypeError` and the module's list is left as it was (the replacement is built aside and committed whole). An **empty string** entry is a `ConvError`. An entry that does not exist is kept as written (no canonicalization), and the POSIX root `/` stays as written too (it canonicalizes to an empty string). `env()` reads back only the module's **own** layer: the host's `set_search_paths` list and the CWD fallback are not in it, so a round trip restores exactly what the script set. **Which layer a write lands in**: a call at a module's top level writes the template, so every instance created afterwards starts with that list; a call inside a function/method writes only that instance's list.
+
+Path resolution (run time): an absolute path is looked up directly → the current module's env list in order (**before any `env()` call the list holds the module's own directory as an absolute path** — the root module's is its home directory, and a module leads with its own directory so nested imports resolve next to it; `env(vec)`/`env(lst)` replaces the list, `env([])` empties it, `env()` with no argument returns the list as a `vec` without touching it, so `var saved = env(); …; env(saved);` round-trips) → the list the host set through `engine::set_search_paths` → an unconditional fallback to the process CWD. The module's own directory is the only implicit base; there is no other fallback. Paths that exist are canonicalized (realpath: symlinks resolved, `..`/`.` normalized) — different spellings of one file share a single module instance; a path that does not exist yet is kept as written. A host that wants sandbox isolation should restrict the search paths.
 
 ## 11.5 embed
 
@@ -1394,6 +1402,8 @@ link "str" as str;
 str.upper("hi");  // "HI"
 ```
 
+Build the module as a shared library that links the engine (`alxscpt`). Its entry points are `extern "C"` and, on Windows, must be exported with `__declspec(dllexport)` (the samples below show the entry points as plain `extern "C"`; a Windows build adds the export macro to each). Where the module and its dependencies have to live is a deployment decision, not an engine one — see `notice.md`, "Link module deployment".
+
 ## 12.4 The fwrap interface
 
 | Method | Description |
@@ -1530,7 +1540,7 @@ Each **module** (the entity an import creates) owns an independent scope (variab
 
 `a.b.c` is flattened into a chain at the expression level. The lookup order for each key segment is:
 
-1. **Variable**: search up the scope chain, stopping at the current module's root frame
+1. **Variable**: the definition-chain lookup of §11.3 — the current activation's frames → the declaration frames of the enclosing callables → the current module's m_store
 2. **Sub-module**: a direct `import` / `link` child of the current module
 3. **through a link**: its sub-data cannot be read — `TypeError` (a link alias itself is an ordinary value; see §11.3)
 
@@ -1572,6 +1582,8 @@ math.add(1, 2);    // "math" is not a variable → enter sub-module math → cal
 ### Function calls
 
 `a.b(args)` looks for the function `a` in the current module → failing that, it checks the link module → `NameError`. `a.b.f(args)` first locates `a.b` (a module or a variable), then looks for the function `f` in the target module.
+
+- on a **dot-chain** call, a name that exists but is **not callable** reports `not a function: <type>` (an element of a container included); a name that **does not exist** reports `Undefined function: <name>` — on a qualified call it also says whether the name is a frame local of the caller or lives in the caller's module store. A **bare-name** call looks up functions only, so a data name there is `Undefined function`; a link/area store entry that is not callable keeps `Undefined function` too (its native lookup is an action branch, not the shared table)
 
 ### Mixed dot+index
 
@@ -1619,6 +1631,33 @@ a..b             → enter sub-module a → back to the parent level → find si
 a....b           → enter a → two levels up → find b
 ```
 
+### The activation anchor `^`
+
+`^` heads a chain and moves the start of the **name lookup** from the running activation to the activation the current callable was declared in. It is not entity navigation: the names after it resolve by the ordinary definition-chain rule from that point outward (the enclosing blocks of the declaration site → the parent activation → … → the module store).
+
+```js
+def outer() {
+    var x = 1;
+    def inner() {
+        var x = 2;
+        ^x;          // 1 — the declaring activation's x; the local shadow is skipped
+        ^x = 9;      // writes the parent slot; inner's own x stays 2
+        ^x += 1;     // compound write, same target rule
+        ^^x;         // the grandparent activation
+        ^m.a;        // the parent activation's m, then the value chain .a
+        ^g();        // call a function declared in the parent activation
+    }
+    return inner();
+}
+```
+
+- **The unit is the activation, not the frame**: block / loop / catch / eval frames do not count a level; `^^` is the parent's parent. Each `^` is one activation.
+- **Chain head only, followed by a name**: `^..x`, `^.x`, `^(...)` are compile errors, and `^` cannot appear inside a chain (between two operands it is XOR, §2.2).
+- **The parent activation must exist**: at the module top level, or inside a function declared at module top level, `^` raises `NavError: ^ exceeds activation depth` — it does not silently fall back to the module store. When the parent activation exists but the name is not on that chain, the ordinary lookup continues outward and ends in the module store.
+- **Ownership is unchanged**: `delete ^x` returns `false` (the slot belongs to the parent layer); `delete ^m.a` deletes the element — content, not a slot.
+- **`@` shares the grammar**: `@("^x")`, `@("^" + name)` — the path string is parsed by the same parser, so there is no second door.
+- **Not a nav prefix**: `^` does not open a `.(...)` bridge (that needs `.` / `..` / `::`) — `^x.(a)` is a compile error, not only a `^` immediately followed by `.(`.
+
 ### The `.(...)` bridge
 
 The part in front of the bridge is the nav segment (navigation tokens and names); the bridge re-enters resolution from what that segment located, so a value's own keys and elements become reachable (`.bm.(a)`, `.bv.([0])`) and the bridge target takes assignment and `delete` (`.bm.(a) = 99`, `delete .bd.(x)`).
@@ -1659,15 +1698,16 @@ It can be used in an expression context: `var r = delete x; r;` — `r` is `true
 
 ```js
 delete x;             // delete a variable of the current layer
-delete func_name;     // delete a function definition (module top layer)
+delete func_name;     // delete a function definition of the current layer (a def declared higher is not deletable from a frame)
 delete alias;         // delete an import / link alias (module top layer)
 ```
 
-- **execution layer**: only the module top layer — no frame pushed, i.e. the root script's top level and an imported module's top level — deletes from the entity's `m_store`; any frame (function / TCO / block / loop / eval / try) deletes its own variables only and returns `false` for anything outside it
+- **execution layer**: only the module top layer — no frame pushed, i.e. the root script's top level and an imported module's top level — deletes from the entity's `m_store`; any frame (function / TCO / block / loop / eval / try) deletes its own variables only and returns `false` for anything outside it — a slot belongs to the frame that declared it, so an outer value is changed by assignment (which writes the resolved slot in place), never removed from inside — a `def` the layer declared is one of its own and deletes normally, while a function declared higher is not deletable here: a function is an execution right owned by its declaring layer, not a value, so a frame covers an outer function by **declaring its own** of that name, never by delete
 - **loop head**: the for-init declarations and the foreach iteration variable cannot be deleted from the body (`delete i` → `false`, the loop goes on); a body variable is deletable as usual
 - silent failure: a name that does not exist → returns `false`, no exception; the `@()` name expression itself must evaluate (a missing `x` in `delete @x` is a `NameError`)
 - after a deletion the name can be declared again — once it is out of every namespace, `var`/`def`/`link` all create it normally
 - **cross-module delete**: another module's variable cannot be deleted → throws `NameError`
+- **activation-anchored delete**: `delete ^x` returns `false` — the slot belongs to the parent layer — while `delete ^m.a` deletes the element (content), exactly as `delete .m.a` does
 - **resource deletion is exempt from the frame and cross-module slot rules**: deleting a link's area instance or namespace destroys a host object rather than removing a slot, so it is allowed wherever the path reaches it from (a frame, another module) — the barriers above are about variables
 - defensive use: `delete .init;` is safe before a declaration
 
@@ -2046,7 +2086,7 @@ Design points:
 
 The version convention: extensions only added, never changed → a minor version step; deleting/modifying an extension, or a syntax or semantic change → an engine major version (`etype`) change, and old .axp files are no longer compatible.
 
-**Lifetime and thread safety**: an engine is single-threaded (several engines may run in parallel across threads); module execution state (template/instance) is isolated per engine, and the only things shared across engines are read-only resources (compiled AST / dlopen handles), so import/link are concurrency-safe. `get_csys()` returns the **resource layer's** event signal reference — its lifetime ≥ any engine (the resource layer is destroyed only after the last engine), so once connected there is nothing to clean up per engine; the callback signature is `(uint_64 tid, const string& msg)`, with tid the full-width thread id (`alx::this_tid()`), which distinguishes event sources in a multi-engine setting. Event kinds (the instance layer is silent): `ast load/unload` (parse / cache deletion), `link load/unload` (dlopen/dlclose), `link error` (dlopen failure), `env` (the env() builtin).
+**Lifetime and thread safety**: an engine is single-threaded (several engines may run in parallel across threads); module execution state (template/instance) is isolated per engine, and the only things shared across engines are read-only resources (compiled AST / dlopen handles), so import/link are concurrency-safe. `get_csys()` returns the **resource layer's** event signal reference — its lifetime ≥ any engine (the resource layer is destroyed only after the last engine), so once connected there is nothing to clean up per engine; the callback signature is `(uint_64 tid, const string& msg)`, with tid the full-width thread id (`alx::this_tid()`), which distinguishes event sources in a multi-engine setting. Event kinds (the instance layer is silent): `ast load/unload` (parse / cache deletion), `link load/unload` (dlopen/dlclose, `LoadLibrary`/`FreeLibrary` on Windows), `link error` (the load did not succeed — `link error: <op> failed: <path>: <detail>`).
 
 **reset()**: clears the engine state (module instances are released and the next import loads them again — the hot-reload path); the settings in config (max_stack and so on) persist.
 
@@ -2165,7 +2205,7 @@ eng->get_csys().connect([](uint_64 tid, const std::string& s) {
 |------|----------|------|
 | `on_cerr` | `void(const string& msg)` | run-time error messages (Uncaught / NativeError and so on) |
 | `on_cmpl` | `void(const compile_error& e)` | compile errors (`msg`, `loc.{path,row,col,index}`) |
-| `get_csys()` | `signal<uint_64, const string&>&` | the event signal reference (shared by the resource layer, callbacks carry the thread id tid): `ast load/unload`, `link load/unload`, `link error`, `env`, and from the yield service's background pass `heartbeat overrun: …` / `heartbeat error: …` (the only entries emitted from the pool's own thread). Its lifetime ≥ any engine |
+| `get_csys()` | `signal<uint_64, const string&>&` | the event signal reference (shared by the resource layer, callbacks carry the thread id tid): `ast load/unload`, `link load/unload`, `link error`, and from the yield service's background pass `heartbeat overrun: …` / `heartbeat error: …` (the only entries emitted from the pool's own thread). Its lifetime ≥ any engine |
 
 ### Static utilities
 

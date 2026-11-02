@@ -271,7 +271,7 @@ namespace alx {
             static void store_raw(walker& _w, const variant& _name, variant&& _init_val);
             static void assign_raw(walker& _w, const variant& _name, const variant& _val);
             static void assign_raw(walker& _w, const variant& _name, variant&& _val);
-            static const varvec* find_def(walker& _w, const std::string& _name);
+            static const call_able* find_def(walker& _w, const std::string& _name);
             static variant eval_arg(const variant& _node, walker& _w);
             // call()'s look-up, shared by the yield service: a root-scope name to its def; null
             // with _err filled when the name is absent or is not a def
@@ -299,11 +299,11 @@ namespace alx {
             static variant invoke_extend(walker& _w, const std::string& _name,
                                          std::vector<call_arg>& _args);
             // _tco reuses _tco_frame (or the top frame) instead of pushing: params are written in place
-            static void eval_and_bind_args(impl_import* _ent, const varvec& _def,
+            static void eval_and_bind_args(impl_import* _ent, const call_able* _ca,
                                            const std::string& _func_name,
                                            const varvec& _tree, walker& _w, bool _tco,
                                            scope_frame* _tco_frame, std::vector<call_arg>& _args);
-            static variant invoke_def(impl_import* _ent, const varvec& _def,
+            static variant invoke_def(impl_import* _ent, const call_able* _ca,
                                       const std::string& _func_name,
                                       const varvec& _tree, walker& _w,
                                       std::vector<call_arg>& _args);

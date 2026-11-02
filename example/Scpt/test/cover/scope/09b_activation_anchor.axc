@@ -1,0 +1,33 @@
+// Test 9b: ^ — the activation anchor reads and writes the declaring activation
+// (the parent activation is the one the current callable was declared in; frames are not the unit)
+def outer_r() { var x = 1; def inner_r() { var x = 2; return ^x; } return inner_r(); }
+if (outer_r() == 1) { $print("PASS: 9b ^ skips the local shadow\n"); } else { $print("FAIL: 9b ^ read %1\n", outer_r()); }
+
+def outer_w() { var x = 1; def inner_w() { var x = 2; ^x = 9; return x; } var r; r = inner_w(); return x * 10 + r; }
+if (outer_w() == 92) { $print("PASS: 9b ^ writes the parent slot\n"); } else { $print("FAIL: 9b ^ write gave %1\n", outer_w()); }
+
+def outer_c() { var x = 1; def inner_c() { ^x += 4; return x; } var r; r = inner_c(); return x * 10 + r; }
+if (outer_c() == 55) { $print("PASS: 9b ^ takes a compound write\n"); } else { $print("FAIL: 9b ^ compound gave %1\n", outer_c()); }
+
+def a() { var x = 1; def b() { var x = 2; def c() { return ^^x; } return c(); } return b(); }
+if (a() == 1) { $print("PASS: 9b ^^ reaches the grandparent activation\n"); } else { $print("FAIL: 9b ^^ gave %1\n", a()); }
+
+def outer_at() { var x = 3; def inner_at() { @("^x") = 7; return ^x; } return inner_at(); }
+if (outer_at() == 7) { $print("PASS: 9b @ follows the anchor\n"); } else { $print("FAIL: 9b @ anchor gave %1\n", outer_at()); }
+
+def outer_del() {
+    var x; x = 1;
+    var m; m = map{"a": 1};
+    def inner_del() { var r; r = delete ^x; var e; e = delete ^m.a; return (r ? 100 : x) + (e ? 1000 : 0); }
+    return inner_del();
+}
+if (outer_del() == 1001) { $print("PASS: 9b delete ^x is false, delete ^m.a is content\n"); } else { $print("FAIL: 9b delete gave %1\n", outer_del()); }
+
+def outer_cache() { var x = 1; def inner_cache() { var x = 2; var y; y = ^x; return x * 10 + y; } return inner_cache(); }
+if (outer_cache() == 21) { $print("PASS: 9b the anchor does not seed the cache\n"); } else { $print("FAIL: 9b cache gave %1\n", outer_cache()); }
+
+// a module-level def has no parent activation
+var caught; caught = false;
+def mod_level() { return ^x; }
+try { mod_level(); } catch (e) { caught = true; }
+if (caught) { $print("PASS: 9b ^ beyond the top activation is NavError\n"); } else { $print("FAIL: 9b ^ out of depth did not raise\n"); }

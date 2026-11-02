@@ -95,7 +95,6 @@ namespace alx {
                 m_w.state.m_engine = this;
                 m_w.state.m_search_paths = &m_cfg.search_paths;
                 m_w.state.on_cerr = &on_cerr;
-                m_w.state.on_csys = &m_mod.m_res->on_csys;
             }
 
             alx::signal<uint_64, const std::string&>& get_csys() override { return m_mod.m_res->on_csys; }
@@ -440,7 +439,7 @@ namespace alx {
         std::string hook_info::wkfm_func(uint_64 _i) const {
             const auto& f = (*static_cast<const walker*>(wkdt)->state.frames)[_i];
             if (!f.def) return std::string(f.flags & FF_RET ? "eval" : "?");
-            return walker::find_func_name(f.ent, f.def);
+            return walker::find_func_name(f.ent, f.def->m_def);
         }
 
         const void* hook_info::wkfm_eptr(uint_64 _i) const {

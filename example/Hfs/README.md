@@ -36,7 +36,7 @@ To build only this example:
 
 ```bash
 cmake -B build-hfs -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=ON \
-      -DBUILD_EXAMPLE_SCPT=OFF -DBUILD_EXAMPLE_LZA=OFF -DBUILD_EXAMPLE_HFS=ON
+      -DBUILD_EXAMPLE_SCPT=OFF -DBUILD_EXAMPLE_HFS=ON
 cmake --build build-hfs --target Hfs -j7
 ```
 

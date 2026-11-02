@@ -1,0 +1,65 @@
+// Test 9a: name lookup follows the definition chain, not the call stack
+// a callee sees its declaration frames + the module store, never the caller's activation
+var caught; caught = false;
+def callee_read() { return caller_local; }
+def caller_read() { var caller_local; caller_local = 5; return callee_read(); }
+try { caller_read(); } catch (e) { caught = true; }
+if (caught) { $print("PASS: 9a callee cannot read caller local\n"); } else { $print("FAIL: 9a callee read caller local\n"); }
+
+caught = false;
+def callee_write() { caller_local = 99; }
+def caller_write() { var caller_local; caller_local = 5; callee_write(); return caller_local; }
+try { caller_write(); } catch (e) { caught = true; }
+if (caught) { $print("PASS: 9a callee cannot write caller local\n"); } else { $print("FAIL: 9a callee wrote caller local\n"); }
+
+// a sibling block's same-named local never changes what a function resolves
+var t; t = 0;
+def read_t() { return t; }
+def block_probe() { var t; t = 9; return read_t(); }
+if (read_t() == 0) { $print("PASS: 9a plain read\n"); } else { $print("FAIL: 9a plain read\n"); }
+if (block_probe() == 0) { $print("PASS: 9a sibling block shadow ignored\n"); } else { $print("FAIL: 9a sibling block shadow leaked\n"); }
+
+// lexical capture (the declaration chain) still resolves
+def outer_capture() {
+    var x; x = 7;
+    def inner_capture() { return x; }
+    return inner_capture();
+}
+if (outer_capture() == 7) { $print("PASS: 9a lexical capture kept\n"); } else { $print("FAIL: 9a lexical capture lost\n"); }
+
+def chain_a() {
+    var x; x = 1;
+    def chain_b() {
+        def chain_c() { return x; }
+        return chain_c();
+    }
+    return chain_b();
+}
+if (chain_a() == 1) { $print("PASS: 9a multi-level capture kept\n"); } else { $print("FAIL: 9a multi-level capture lost\n"); }
+
+// @() uses the same lookup
+def at_outer() {
+    var y; y = 4;
+    def at_inner() { return @("y"); }
+    return at_inner();
+}
+if (at_outer() == 4) { $print("PASS: 9a @ follows the chain\n"); } else { $print("FAIL: 9a @ did not follow the chain\n"); }
+
+// ownership is not visibility: a captured name is readable, never removable from the callee
+def del_outer() {
+    var z; z = 1;
+    def del_inner() { var r; r = delete z; return r ? 100 : z; }
+    return del_inner();
+}
+if (del_outer() == 1) { $print("PASS: 9a delete acts on the own frame only\n"); } else { $print("FAIL: 9a delete removed a captured name\n"); }
+
+// eval reads the activation it was called in ...
+def eval_caller() { var gv; gv = 3; return eval("return gv;"); }
+if (eval_caller() == 3) { $print("PASS: 9a eval sees its call-site activation\n"); } else { $print("FAIL: 9a eval lost its call-site activation\n"); }
+
+// ... but not the caller's caller
+caught = false;
+def eval_innermost() { return eval("return gv;"); }
+def eval_outer() { var gv; gv = 3; return eval_innermost(); }
+try { eval_outer(); } catch (e) { caught = true; }
+if (caught) { $print("PASS: 9a eval cannot see the caller's caller\n"); } else { $print("FAIL: 9a eval saw the caller's caller\n"); }

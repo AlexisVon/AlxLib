@@ -65,10 +65,11 @@ namespace alx {
             // [O_ECONST, name] -- bare $f, checked against the host's definition table at parse time
             O_ECONST,
 
-            // O_CURRENT / O_PARENT / O_ROOT are steps inside a dot chain, never values on their own
+            // O_CURRENT / O_PARENT / O_ROOT / O_ACT are steps inside a dot chain, never values on their own
             O_CURRENT,
             O_PARENT,
             O_ROOT,
+            O_ACT,
             O_DOT,
             O_INDEX,
             O_SLICE,
@@ -181,6 +182,7 @@ namespace alx {
             "CURRENT",
             "PARENT",
             "ROOT",
+            "ACT",
             "DOT",
             "INDEX",
             "SLICE",

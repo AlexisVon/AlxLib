@@ -41,8 +41,6 @@ bindings/cross_test/cache/
 .DS_Store
 Thumbs.db
 
-# Lza
-msvc/Lza/x64/
 # Internal ledgers: local only, not version-controlled, not shipped with the repo
 doc/issue.md
 doc/feature.md

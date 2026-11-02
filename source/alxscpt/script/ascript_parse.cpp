@@ -1993,6 +1993,18 @@ namespace alx {
 
                 return dot;
             }
+            case T_BIT_XOR: {
+                // In operand position ^ is the activation anchor; as a binary operator it is consumed by parse_bit_xor
+                varvec dot;
+                dot.push_back(variant(OPTYPE(O_DOT)));
+                while (match(T_BIT_XOR))
+                    dot.push_back(variant(OPTYPE(O_ACT)));
+                if (!check(T_NAME)) {
+                    error("^ must be followed by a key");
+                    return varvec();
+                }
+                return dot;
+            }
             case T_LB:
                 return parse_seq_lit(O_VEC);
             case T_LP: {

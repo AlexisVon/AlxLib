@@ -239,7 +239,7 @@ void set_etype(const std::string& _type);   // engine major version (a string)
 void set_vtype(uint_64 _ver);               // version of the supported extension set (a number)
 ```
 
-- A compiled product carries the etype/vtype of its compile; the check on the way in is **always on** (it cannot be turned off). A plain engine that set neither skips it.
+- A compiled product carries the etype/vtype of its compile. The gate is **always on but closed by default**: only the default pair (empty `etype`, `vtype == 0`) skips the check, so a host that never compiles or loads `.axp` products needs no version knowledge at all. Once any version information is set, `.axp` products are **mandatorily versioned** — every product must match `etype` and must not exceed `vtype`; a product cannot opt out.
 - `etype` matches exactly: a product with no tag, or one that differs from the engine's, gives `VersionError`.
 - `vtype` is checked one way only: a product whose vtype is greater than the engine's is refused as too new. Removing or changing an extension is a breaking change and calls for bumping `etype`; only an added extension bumps `vtype`.
 
@@ -354,11 +354,19 @@ A link module is a dynamic library that gives a script three layers: **a namespa
 Constant names: `LINK_LOAD` / `LINK_UNLOAD` / `LINK_CREATE` / `LINK_RELEASE`; function type aliases `script_load` / `script_unload` / `script_create` / `script_release`.
 
 ```cpp
-extern "C" ALXSCPT_API void alexis_script_load(alx::script::fwrap& _fw) {
+#if defined(_WIN32)
+#    define LINK_EXPORT __declspec(dllexport)
+#else
+#    define LINK_EXPORT
+#endif
+
+extern "C" LINK_EXPORT void alexis_script_load(alx::script::fwrap& _fw) {
     _fw.bind("abs", fn_abs, "mt");          // a static area: the function is registered directly
     _fw.bind("mkdir", fn_mkdir, "fs");
 }
 ```
+
+The entry points are the module's **own** exports: `extern "C"` plus `__declspec(dllexport)` on Windows. `ALXSCPT_API` is the importer's marker: on a Windows shared build without the module's own export define it expands to `dllimport` (defining the entry point then fails to compile), and under `ALEXISLIB_STATIC` it is empty, so it must not decorate these definitions.
 
 ### 11.2 The two area kinds
 

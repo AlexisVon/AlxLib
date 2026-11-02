@@ -147,7 +147,7 @@ namespace alx {
                                  ? (*ca->m_def)[1].to<std::string>()
                                  : std::string();
             auto args = walker::scan_call_args(tree, 2, *m_ws);
-            variant result = walker::invoke_def(m_ws->state.current, *ca->m_def, fn, tree, *m_ws, args);
+            variant result = walker::invoke_def(m_ws->state.current, ca, fn, tree, *m_ws, args);
             delete rl;
             return result;
         }

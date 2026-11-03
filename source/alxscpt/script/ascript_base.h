@@ -244,12 +244,22 @@ namespace alx {
             std::string m_err_value;
         };
 
+        // One type registration collected by a link's load entry; committed only when the entry returns
+        struct type_reg {
+            uint_64 m_rid;
+            const char* m_name;
+            std::string (*m_desc)(const anyptr&);
+            variant (*m_view)(const anyptr&);
+        };
+
         class fly_link {
         public:
             uint_64 m_id;
             std::string m_path;
             link_resource* m_link = nullptr;
             data_store m_store;
+            // type ids this module registered in this engine; dropped together with the fly
+            std::vector<uint_64> m_types;
 
             ref_count m_ref;
 

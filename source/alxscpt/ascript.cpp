@@ -97,44 +97,12 @@ namespace alx {
                 m_w.state.on_cerr = &on_cerr;
             }
 
-            alx::signal<uint_64, const std::string&>& get_csys() override { return m_mod.m_res->on_csys; }
-
-            bool set_extend(const std::string& _name, native_func _handler) override {
-                if (alx::script::is_reserved_name(_name)) return false;
-                if (m_define.find(_name) != m_define.end()) return false;
-                m_extend[_name] = _handler;
-                return true;
+            bool is_running() const override { return m_running.load(std::memory_order_relaxed); }
+            void set_interrupt() override {
+                m_w.m_interrupted.store(true, std::memory_order_relaxed);
+                // the store above precedes the wake, so a residency wait cannot check and then sleep through it
+                m_w.m_yq.wake();
             }
-            void del_extend(const std::string& _name) override {
-                m_extend.erase(_name);
-            }
-            native_func get_extend(const std::string& _name) const override {
-                auto it = m_extend.find(_name);
-                return it != m_extend.end() ? it->second : nullptr;
-            }
-            bool fid_extend(const std::string& _name) const override {
-                return m_extend.find(_name) != m_extend.end();
-            }
-
-            bool set_define(const std::string& _name, const variant& _value) override {
-                if (alx::script::is_reserved_name(_name)) return false;
-                if (m_extend.find(_name) != m_extend.end()) return false;
-                m_define[_name] = _value;
-                return true;
-            }
-            void del_define(const std::string& _name) override {
-                m_define.erase(_name);
-            }
-            variant get_define(const std::string& _name) const override {
-                auto it = m_define.find(_name);
-                return it != m_define.end() ? it->second : variant();
-            }
-            bool fid_define(const std::string& _name) const override {
-                return m_define.find(_name) != m_define.end();
-            }
-
-            void set_etype(const std::string& _type) override { m_cfg.etype = _type; }
-            void set_vtype(uint_64 _ver) override { m_cfg.vtype = _ver; }
 
             variant* load(const std::string& _name,
                           bool _auto_create = false) override {
@@ -177,7 +145,7 @@ namespace alx {
 
             std::future<result> yield(const std::string& _name, varvec&& _args,
                                       uint_32 _priority, uint_32 _expiry_ms) override {
-                if (!running()) {
+                if (!is_running()) {
                     std::promise<result> pro;
                     std::future<result> fut = pro.get_future();
                     pro.set_value(result{variant(std::string("no main fiber")), 0,
@@ -251,7 +219,7 @@ namespace alx {
                     if (const variant* bad = find_anyptr(res.value)) {
                         std::string msg = "exec result: " +
                                           std::string(type_name_script(*bad, m_cfg.type_ex_ptr,
-                                                                       m_cfg.type_ex_ud)) +
+                                                                       m_cfg.type_ex_ud, &m_mod)) +
                                           " cannot be returned";
                         // release while the module world is alive: the value's refs unwind in place
                         res.value = variant();
@@ -276,11 +244,63 @@ namespace alx {
                                            _hint);
             }
 
+            std::string type(const variant& _v) const override {
+                return type_name_script(_v, m_cfg.type_ex_ptr, m_cfg.type_ex_ud, &m_mod);
+            }
+            bool desc(const anyptr& _h, std::string& _out) const override {
+                const mod_mng::type_entry* e = m_mod.type_info(_h.rid());
+                if (!e || !e->m_desc) return false;
+                _out = e->m_desc(_h);
+                return !_out.empty();
+            }
+            bool view(const anyptr& _h, variant& _out) const override {
+                const mod_mng::type_entry* e = m_mod.type_info(_h.rid());
+                if (!e || !e->m_view) return false;
+                _out = e->m_view(_h);
+                return _out.type() != -1;
+            }
+
+            bool set_extend(const std::string& _name, native_func _handler) override {
+                if (alx::script::is_reserved_name(_name)) return false;
+                if (m_define.find(_name) != m_define.end()) return false;
+                m_extend[_name] = _handler;
+                return true;
+            }
+            void del_extend(const std::string& _name) override {
+                m_extend.erase(_name);
+            }
+            native_func get_extend(const std::string& _name) const override {
+                auto it = m_extend.find(_name);
+                return it != m_extend.end() ? it->second : nullptr;
+            }
+            bool fid_extend(const std::string& _name) const override {
+                return m_extend.find(_name) != m_extend.end();
+            }
+
+            bool set_define(const std::string& _name, const variant& _value) override {
+                if (alx::script::is_reserved_name(_name)) return false;
+                if (m_extend.find(_name) != m_extend.end()) return false;
+                m_define[_name] = _value;
+                return true;
+            }
+            void del_define(const std::string& _name) override {
+                m_define.erase(_name);
+            }
+            variant get_define(const std::string& _name) const override {
+                auto it = m_define.find(_name);
+                return it != m_define.end() ? it->second : variant();
+            }
+            bool fid_define(const std::string& _name) const override {
+                return m_define.find(_name) != m_define.end();
+            }
+
             const engine_config& config() const override { return m_cfg; }
+            void set_etype(const std::string& _type) override { m_cfg.etype = _type; }
+            void set_vtype(uint_64 _ver) override { m_cfg.vtype = _ver; }
+            void set_debug_enable(bool _on) override { m_cfg.debug_enable = _on; }
             void set_max_stack(size_t _n) override { m_cfg.max_stack = _n; }
             void set_parse_depth(size_t _n) override { m_cfg.parse_depth = _n; }
             void set_overflow_check(bool _on) override { m_cfg.overflow_check = _on; }
-            void set_debug_enable(bool _on) override { m_cfg.debug_enable = _on; }
             void set_max_vecfill(size_t _n) override { m_cfg.max_vecfill = _n; }
             void set_max_yield(size_t _n) override {
                 m_cfg.max_yield = _n;
@@ -290,6 +310,11 @@ namespace alx {
             }
             void set_search_paths(const std::list<std::string>& _paths) override {
                 m_cfg.search_paths = _paths;
+            }
+
+            void set_type_extend(type_ex _fn, void* _ud) override {
+                m_cfg.type_ex_ptr = _fn;
+                m_cfg.type_ex_ud = _ud;
             }
 
             void set_hook(hook_fn _fn, void* _ud, uint_64 _interval) override {
@@ -309,17 +334,7 @@ namespace alx {
                 m_cfg.pipe_out_ud = _out_ud;
             }
 
-            void set_type_ex(type_ex _fn, void* _ud) override {
-                m_cfg.type_ex_ptr = _fn;
-                m_cfg.type_ex_ud = _ud;
-            }
-
-            bool running() const override { return m_running.load(std::memory_order_relaxed); }
-            void set_interrupt() override {
-                m_w.m_interrupted.store(true, std::memory_order_relaxed);
-                // the store above precedes the wake, so a residency wait cannot check and then sleep through it
-                m_w.m_yq.wake();
-            }
+            alx::signal<uint_64, const std::string&>& get_csys() override { return m_mod.m_res->on_csys; }
 
             // the heartbeat's per-engine duty: liquidate expired deliveries; try_lock only
             void time_event() override { m_w.m_yq.expire(std::chrono::steady_clock::now()); }
@@ -393,14 +408,14 @@ namespace alx {
             return ::alx::script::prtast(_data, nullptr);
         }
 
-        std::string engine::prtinf(const bytes_view& _data) {
-
-            return ::alx::script::prtinf(_data);
-        }
-
         bytes engine::prtfmt(const bytes_view& _data) {
 
             return ::alx::script::prtfmt(_data);
+        }
+
+        std::string engine::prtinf(const bytes_view& _data) {
+
+            return ::alx::script::prtinf(_data);
         }
 
         engine::result engine::exec(const std::string& _file_path) {
@@ -510,7 +525,7 @@ namespace alx {
         }
 
         const std::string& hook_info::wken_path(const void* _e) const {
-            // the root's fly keeps its path cleared, so "no file" reads as empty here
+            // the root's fly carries the home directory (empty when the exec had none)
             return static_cast<const impl_import*>(_e)->m_fly->m_path;
         }
 
@@ -560,6 +575,27 @@ namespace alx {
 
         const void* hook_info::wklk_pptr(const void* _l) const {
             return static_cast<const impl_link*>(_l)->m_parent;
+        }
+
+        std::string hook_info::wktype(const variant& _v) const {
+            const walker* w = static_cast<const walker*>(wkdt);
+            return type_name_script(_v, w->m_cfg.type_ex_ptr, w->m_cfg.type_ex_ud, w->mgr);
+        }
+        bool hook_info::wkdesc(const anyptr& _h, std::string& _out) const {
+            const walker* w = static_cast<const walker*>(wkdt);
+            if (!w->mgr) return false;
+            const mod_mng::type_entry* e = w->mgr->type_info(_h.rid());
+            if (!e || !e->m_desc) return false;
+            _out = e->m_desc(_h);
+            return !_out.empty();
+        }
+        bool hook_info::wkview(const anyptr& _h, variant& _out) const {
+            const walker* w = static_cast<const walker*>(wkdt);
+            if (!w->mgr) return false;
+            const mod_mng::type_entry* e = w->mgr->type_info(_h.rid());
+            if (!e || !e->m_view) return false;
+            _out = e->m_view(_h);
+            return _out.type() != -1;
         }
 
         bool hook_info::wkis_ent(const variant* _v) const {

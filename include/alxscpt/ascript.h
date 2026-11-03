@@ -14,8 +14,8 @@
 #include "autility.h"
 #include "avariant.h"
 #include <future>
-#include <initializer_list>
 #include <list>
+#include <map>
 
 namespace alx {
     namespace script {
@@ -67,9 +67,9 @@ namespace alx {
             NativeError = 4,
             /// A compiled product did not pass the etype/vtype gate
             VersionError = 5,
-            /// The module world failed: unresolved, unreadable or corrupt import
+            /// A script module failed to import: unresolved, unreadable, corrupt, or a self/circular import
             ImportError = 6,
-            /// A native call arrived outside any walk, i.e. from a load/unload entry point
+            /// A link (dynamic module) failed: unresolved, unreadable, corrupt, or a self/circular link
             LinkError = 7,
 
             /// A value could not be converted to the type asked for
@@ -88,6 +88,8 @@ namespace alx {
             ArgError = 14,
             /// Division or modulo by zero
             DivZeroError = 15,
+            /// A call the current context does not allow: the fwrap call face outside a walk, a registration the entry does not take
+            ContextError = 16,
 
             /// The generic runtime failure; what fwrap::raise() throws by default
             RuntimeError,
@@ -125,6 +127,7 @@ namespace alx {
             case error_type::KeyError: return "KeyError";
             case error_type::ArgError: return "ArgError";
             case error_type::DivZeroError: return "DivZeroError";
+            case error_type::ContextError: return "ContextError";
             case error_type::RuntimeError: return "RuntimeError";
             case error_type::DivOverflowError: return "DivOverflowError";
             case error_type::OverflowError: return "OverflowError";
@@ -234,7 +237,7 @@ namespace alx {
             /// Cookie passed back to pipe_out_ptr
             void* pipe_out_ud = nullptr;
 
-            /// Host type-naming callback; see engine::set_type_ex()
+            /// Host type-naming callback; see engine::set_type_extend()
             type_ex type_ex_ptr = nullptr;
             /// Cookie passed back to type_ex_ptr
             void* type_ex_ud = nullptr;
@@ -288,10 +291,11 @@ namespace alx {
             std::vector<std::string> wken_data_keys(const void* _e);
             /// Value of entity-level name _key; null when it is not one
             const variant* wken_data_cptr(const void* _e, const char* _key) const;
-            /// Path of the file the entity was loaded from; "::" for the root
+            /// Path of the file the entity was loaded from; the root answers its home directory
+            /// ("::" when the exec had none)
             std::string wken_file(const void* _e) const;
             /// Full resolved path of the file the entity was loaded from, whole and without a copy:
-            /// a reference into the entity, empty for the root (where wken_file() gives "::")
+            /// a reference into the entity; the root answers its home directory (empty when none)
             const std::string& wken_path(const void* _e) const;
             /// Alias the entity is bound to in its parent
             std::string wken_name(const void* _e) const;
@@ -308,6 +312,13 @@ namespace alx {
             std::vector<std::string> wklk_area_funs(const void* _l, const char* _area);
             /// Entity the link was declared in; null for a root-level link
             const void* wklk_pptr(const void* _l) const;
+
+            /// The name the script's type() gives _v, link names included
+            std::string wktype(const variant& _v) const;
+            /// Printable one-line summary of a handle from the link that claims it; false when none does or the summary is empty
+            bool wkdesc(const anyptr& _h, std::string& _out) const;
+            /// View payload of a handle from the link that claims it, opaque to the engine; false when none does or the answer is a null variant
+            bool wkview(const anyptr& _h, variant& _out) const;
 
             /// True when _v holds a module entity
             bool wkis_ent(const variant* _v) const;
@@ -390,8 +401,8 @@ namespace alx {
              *
              * \param _func Name or path resolved in the calling scope, or a callable from a value
              * \param _args Arguments, passed as plain values
-             * \throws script_exception NameError when nothing callable is there; LinkError from a
-             *         load/unload entry point, where there is no walk to call into
+             * \throws script_exception NameError when nothing callable is there; LinkError from an
+             *         entry point, where there is no walk to call into
              */
             virtual variant call(const variant& _func, const varvec& _args) = 0;
 
@@ -408,22 +419,45 @@ namespace alx {
              * \brief Register a native function under _name
              *
              * With an empty _area it goes into the call's data scope, which for a link entry point
-             * is the instance's own store; a non-empty _area creates the area object under that
-             * name or extends the one already there. An existing name is replaced either way (a link
-             * copy re-runs `create` over its cloned store, so re-registration must land).
+             * is the instance's own store; a non-empty _area names the area to bind into, created
+             * empty when it does not exist yet. A method name already bound there, or an _area name
+             * holding anything but an area, answers false and changes nothing.
              *
              * \param _func Handler, of the same type as an extension function
              * \param _area Area to bind into, or empty for the plain scope
              */
-            virtual void bind(const std::string& _name,
+            virtual bool bind(const std::string& _name,
                               void (*_func)(fwrap&),
                               const std::string& _area = std::string()) = 0;
+
+            /**
+             * \brief Create an area named _area carrying _obj and its methods in one step
+             *
+             * Create only: _area must be free, so a false answer leaves _obj with the caller -- the
+             * move happens only on success. The method map's names are unique by construction.
+             */
+            virtual bool bind(const std::string& _area, anyptr&& _obj,
+                              const std::map<std::string, void (*)(fwrap&)>& _methods) = 0;
+
+            /**
+             * \brief Register a type id under _name, with the optional summary and view hooks
+             *
+             * Taken only from the LINK_LOAD entry point. _name is stored, not copied, so it must stay
+             * valid for the module's lifetime (a string literal); the registration is committed only
+             * when the load entry returns normally.
+             *
+             * \return false when the id is already registered, or _name is null or empty
+             * \throws script_exception LinkError from any other entry point
+             */
+            virtual bool bind(uint_64 _rid, const char* _name,
+                              std::string (*_desc)(const anyptr&) = nullptr,
+                              variant (*_view)(const anyptr&) = nullptr) = 0;
 
             /**
              * \brief Object bound to the area the call went through
              *
              * Only an area-bound native has one: a plain extension function called as $name()
-             * carries no area, and the engine does not check before dereferencing.
+             * carries no area and throws LinkError; an entry point throws it as well.
              */
             virtual anyptr* object() = 0;
 
@@ -444,23 +478,18 @@ namespace alx {
             }
 
             /**
-             * \brief Bind _obj as a new area and register its methods in one step
+             * \brief bind(area, anyptr_ex<T>::make(_obj), methods)
              *
-             * The object goes into the scope under _area and its handle owns it from then on, so
-             * the caller must not delete it afterwards; each method is bound as a native of that
-             * area. Throws NameError when _area is already taken -- remove() it first to replace
-             * an instance.
-             *
-             * \param _obj Object to hand over
-             * \param _area Name the script reaches it under
-             * \param _methods Pair of method name and handler
+             * The write-side twin of unwrap(). The object is consumed either way: a false answer
+             * releases the handle and deletes _obj, so the caller never deletes it. For a shared
+             * handle call bind(area, anyptr_ex<T>::make_ref(_obj), methods) directly — a copied
+             * instance clones a make handle (or nulls it for a non-copyable type) and shares a
+             * make_ref one.
              */
             template <typename T>
-            void wrap(T* _obj, const std::string& _area,
-                      std::initializer_list<std::pair<const std::string, void (*)(fwrap&)>> _methods) {
-                store(_area, variant(anyptr_ex<T>::make(_obj)));
-                for (const auto& m : _methods)
-                    bind(m.first, m.second, _area);
+            bool wrap(T* _obj, const std::string& _area,
+                      const std::map<std::string, void (*)(fwrap&)>& _methods) {
+                return bind(_area, anyptr_ex<T>::make(_obj), _methods);
             }
 
             /// Configuration of the engine, with the pipe pointers in it
@@ -492,8 +521,8 @@ namespace alx {
              *
              * The handle is how a native hands a delivery channel to its worker threads. It
              * belongs to the caller, which deletes it before the engine dies. Not available
-             * from a load/unload entry point (there is no engine there), and the name is not
-             * checked — currying a not-yet-defined def is legal.
+             * from an entry point (there is no engine there), and the name is not checked —
+             * currying a not-yet-defined def is legal.
              */
             virtual callback* currying(const std::string& _name) = 0;
         };
@@ -523,21 +552,19 @@ namespace alx {
          * \brief The script engine: a compilation environment, an interpreter, and variables
          *
          * create() hands back an engine the caller owns and deletes. An engine is single-threaded
-         * and not reentrant: exec(), call(), compile(), load() and the other set_*() methods must
-         * never be entered from two threads at once, while running(), set_interrupt(), yield() and
-         * set_max_yield() are meant to be called from another thread — set_max_yield for admission
-         * only (reading the config's max_yield concurrently is outside the contract). A native registered here
-         * runs on whichever thread executes the script, so one handler registered in several
-         * engines must be thread-safe itself.
+         * and not reentrant: nothing may be entered from two threads at once unless it says so,
+         * and only is_running(), set_interrupt() and yield() are callable from another thread.
+         * A native registered here runs on whichever thread executes the script, so one handler
+         * registered in several engines must be thread-safe itself.
+         *
+         * Changing configuration, or a run's own context, while the run is in progress is allowed
+         * but not recommended; failures caused that way are outside the engine's responsibility.
          *
          * What a run leaves behind stays: root variables, defs and loaded modules survive into the
          * next exec(), which is what lets a REPL be an exec() in a loop. reset() takes that away.
          */
         class ALXSCPT_API engine {
         public:
-            /// Delete the engine, dropping the root store and every module still loaded
-            virtual ~engine() = default;
-
             /**
              * \brief Create an engine
              *
@@ -571,6 +598,10 @@ namespace alx {
              */
             static std::string prtinf(const bytes_view& _data);
 
+        public:
+            /// Delete the engine, dropping the root store and every module still loaded
+            virtual ~engine() = default;
+
             /**
              * \brief Drop everything the engine has accumulated
              *
@@ -580,101 +611,8 @@ namespace alx {
              */
             virtual void reset() = 0;
 
-            /**
-             * \brief Register an extension function $name
-             *
-             * The $ prefix keeps host names out of the script's own namespace. The parser checks
-             * the name while compiling and the walker looks the handler up again per call, so a
-             * compiled product that used $name needs it registered in the engine that runs it.
-             *
-             * \return false when _name is a language keyword, or a static definition already holds
-             *         it; true otherwise, the handler replacing whatever was there before
-             */
-            virtual bool set_extend(const std::string& _name, native_func _handler) = 0;
-            /// Unregister $name; no-op when it was never registered
-            virtual void del_extend(const std::string& _name) = 0;
-            /// Handler bound to $name, or null when there is none
-            virtual native_func get_extend(const std::string& _name) const = 0;
-            /// True when $name is a registered extension
-            virtual bool fid_extend(const std::string& _name) const = 0;
-
-            /**
-             * \brief Register a host constant $name
-             *
-             * Shares the $ namespace with the extension functions, so the two cannot collide. The
-             * value is folded into the AST while compiling, which makes a product independent of
-             * the definition it was built with -- and a misspelling a compile error rather than a
-             * silently empty read.
-             *
-             * \return false when _name is a language keyword, or an extension function already
-             *         holds it
-             */
-            virtual bool set_define(const std::string& _name, const variant& _value) = 0;
-            /// Unregister $name; no-op when it was never registered
-            virtual void del_define(const std::string& _name) = 0;
-            /// Value of $name, or an empty variant when there is none
-            virtual variant get_define(const std::string& _name) const = 0;
-            /// True when $name is a registered definition
-            virtual bool fid_define(const std::string& _name) const = 0;
-
-            /// The engine's live configuration, valid for as long as the engine is
-            virtual const engine_config& config() const = 0;
-            /// Compatibility tag stamped into every compiled product; a mismatch is refused at exec
-            virtual void set_etype(const std::string& _type) = 0;
-            /// Extension counter stamped into every compiled product; a higher one is refused at exec
-            virtual void set_vtype(uint_64 _ver) = 0;
-            /// Frames allowed before StackError; 0 = unlimited
-            virtual void set_max_stack(size_t _n) = 0;
-            /// Syntax nesting one parse may reach; 0 = unlimited
-            virtual void set_parse_depth(size_t _n) = 0;
-            /// Raise OverflowError on integer overflow, or wrap around silently (the default)
-            virtual void set_overflow_check(bool _on) = 0;
-            /// Elements a single vec/lst fill may produce; 0 = unlimited
-            virtual void set_max_vecfill(size_t _n) = 0;
-            /// Deliveries one yield queue may hold; 0 = unlimited. Cross-thread safe for admission; a concurrent config read of max_yield is not synchronized
-            virtual void set_max_yield(size_t _n) = 0;
-            /// Directories import and link targets are looked up in, replacing the previous list
-            virtual void set_search_paths(const std::list<std::string>& _paths) = 0;
-            /**
-             * \brief Install the hook that observes execution and gates module loading
-             *
-             * A null _fn removes it. import, link, trap and debug events arrive regardless of the
-             * interval; _interval only decides how many instructions pass between two
-             * hook_event::exec checkpoints, and 0 turns those off while set_interrupt() keeps
-             * working. A callback may re-arm the interval through hook_info::freq.
-             *
-             * \param _ud Cookie handed back as hook_info::hkdt on every event
-             * \param _interval Instructions between exec checkpoints; 0 = none
-             */
-            virtual void set_hook(hook_fn _fn, void* _ud, uint_64 _interval) = 0;
-            /**
-             * \brief Install the host's IO channels
-             *
-             * The engine only stores them and hands them out through fwrap::config(); nothing in
-             * the library calls them. Null, the default, is for the host to interpret.
-             *
-             * \param _in_ud Cookie passed back to _in; _out_ud the one passed to _out
-             */
-            virtual void set_pipe(pipe_in _in, pipe_out _out, void* _in_ud = nullptr, void* _out_ud = nullptr) = 0;
-            /**
-             * \brief Install the host's type-naming callback
-             *
-             * type() asks it about a value the script layer has no name of its own for -- an
-             * object a host handed over, or a variant type the script layer does not model --
-             * and uses the name it returns as-is; null or an empty answer means the host does
-             * not know it either, and "unknown" stands. The callback runs on whichever thread
-             * executes the script; the pointer it returns is read once, right after the call,
-             * never kept -- its storage must stay valid past the return. A C++ exception it
-             * throws is reported like a native's: a script try can catch it as NativeError,
-             * and without one the run comes back as NativeError.
-             *
-             * \param _fn Callback; null removes it
-             * \param _ud Cookie handed back to _fn
-             */
-            virtual void set_type_ex(type_ex _fn, void* _ud = nullptr) = 0;
-
-            /// True while a run (exec() or call()) is in progress; false everywhere else
-            virtual bool running() const = 0;
+            /// True while a run (exec() or call()) is in progress; false everywhere else. Safe to read from any thread
+            virtual bool is_running() const = 0;
             /**
              * \brief Ask a running exec() or call() to stop
              *
@@ -686,16 +624,6 @@ namespace alx {
              * reset() is the only thing that drops them.
              */
             virtual void set_interrupt() = 0;
-
-            /**
-             * \brief Track where a running script is, statement by statement
-             *
-             * Takes effect on the next parse and on every exec. With it on, the parser inserts a
-             * marker per statement and the walker records positions and fires hook_event::debug;
-             * with it off neither happens, so an already compiled product stays without positions
-             * and reports row 0.
-             */
-            virtual void set_debug_enable(bool _on) = 0;
 
         public:
             /// The run report, hoisted to the script namespace so fwrap can name it
@@ -718,7 +646,7 @@ namespace alx {
              * \brief Call a def left in the root scope
              *
              * The name is looked up in the root store alone, so the function has to come from an
-             * exec() that already ran. running() is true while it runs; it is interruptible like
+             * exec() that already ran. is_running() is true while it runs; it is interruptible like
              * exec() — a mid-run request comes back as InterruptedError, an idle-period one is
              * discarded at the entry.
              *
@@ -830,6 +758,97 @@ namespace alx {
              */
             bytes compile(const std::string& _path, bool _cmps = false, bool _embed = false,
                           const std::string& _hint = std::string()) const;
+
+        public:
+            /// The name the script's type() gives _v; a loaded link names its own handles ahead of the host's type_ex
+            virtual std::string type(const variant& _v) const = 0;
+            /// Printable one-line summary of a handle from the link that claims it; false when none does or the summary is empty
+            virtual bool desc(const anyptr& _h, std::string& _out) const = 0;
+            /// View payload of a handle, from the link that claims it; false when none does or the answer is a null variant
+            virtual bool view(const anyptr& _h, variant& _out) const = 0;
+
+        public:
+            /**
+             * \brief Register an extension function $name
+             *
+             * The $ prefix keeps host names out of the script's own namespace. The parser checks
+             * the name while compiling and the walker looks the handler up again per call, so a
+             * compiled product that used $name needs it registered in the engine that runs it.
+             *
+             * \return false when _name is a language keyword, or a static definition already holds
+             *         it; true otherwise, the handler replacing whatever was there before
+             */
+            virtual bool set_extend(const std::string& _name, native_func _handler) = 0;
+            /// Unregister $name; no-op when it was never registered
+            virtual void del_extend(const std::string& _name) = 0;
+            /// Handler bound to $name, or null when there is none
+            virtual native_func get_extend(const std::string& _name) const = 0;
+            /// True when $name is a registered extension
+            virtual bool fid_extend(const std::string& _name) const = 0;
+
+            /**
+             * \brief Register a host constant $name
+             *
+             * Shares the $ namespace with the extension functions, so the two cannot collide. The
+             * value is folded into the AST while compiling, which makes a product independent of
+             * the definition it was built with -- and a misspelling a compile error rather than a
+             * silently empty read.
+             *
+             * \return false when _name is a language keyword, or an extension function already
+             *         holds it
+             */
+            virtual bool set_define(const std::string& _name, const variant& _value) = 0;
+            /// Unregister $name; no-op when it was never registered
+            virtual void del_define(const std::string& _name) = 0;
+            /// Value of $name, or an empty variant when there is none
+            virtual variant get_define(const std::string& _name) const = 0;
+            /// True when $name is a registered definition
+            virtual bool fid_define(const std::string& _name) const = 0;
+
+        public:
+            /// The engine's live configuration, valid for as long as the engine is
+            virtual const engine_config& config() const = 0;
+            /// Compatibility tag stamped into every compiled product; a mismatch is refused at exec
+            virtual void set_etype(const std::string& _type) = 0;
+            /// Extension counter stamped into every compiled product; a higher one is refused at exec
+            virtual void set_vtype(uint_64 _ver) = 0;
+            /// Track where a running script is, statement by statement
+            virtual void set_debug_enable(bool _on) = 0;
+            /// Frames allowed before StackError; 0 = unlimited
+            virtual void set_max_stack(size_t _n) = 0;
+            /// Syntax nesting one parse may reach; 0 = unlimited
+            virtual void set_parse_depth(size_t _n) = 0;
+            /// Raise OverflowError on integer overflow, or wrap around silently (the default)
+            virtual void set_overflow_check(bool _on) = 0;
+            /// Elements a single vec/lst fill may produce; 0 = unlimited
+            virtual void set_max_vecfill(size_t _n) = 0;
+            /// Deliveries one yield queue may hold; 0 = unlimited
+            virtual void set_max_yield(size_t _n) = 0;
+            /// Directories import and link targets are looked up in, replacing the previous list
+            virtual void set_search_paths(const std::list<std::string>& _paths) = 0;
+            /// The host's type naming for extend types; null removes it
+            virtual void set_type_extend(type_ex _fn, void* _ud = nullptr) = 0;
+            /**
+             * \brief Install the hook that observes execution and gates module loading
+             *
+             * A null _fn removes it. import, link, trap and debug events arrive regardless of the
+             * interval; _interval only decides how many instructions pass between two
+             * hook_event::exec checkpoints, and 0 turns those off while set_interrupt() keeps
+             * working. A callback may re-arm the interval through hook_info::freq.
+             *
+             * \param _ud Cookie handed back as hook_info::hkdt on every event
+             * \param _interval Instructions between exec checkpoints; 0 = none
+             */
+            virtual void set_hook(hook_fn _fn, void* _ud, uint_64 _interval) = 0;
+            /**
+             * \brief Install the host's IO channels
+             *
+             * The engine only stores them and hands them out through fwrap::config(); nothing in
+             * the library calls them. Null, the default, is for the host to interpret.
+             *
+             * \param _in_ud Cookie passed back to _in; _out_ud the one passed to _out
+             */
+            virtual void set_pipe(pipe_in _in, pipe_out _out, void* _in_ud = nullptr, void* _out_ud = nullptr) = 0;
 
         public:
             /// Engine diagnostics pushed on the executing thread: errors with their traceback,

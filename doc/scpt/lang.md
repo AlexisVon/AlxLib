@@ -360,13 +360,14 @@ A value can also be an opaque **handle**, which only the engine and the host pro
 | Value | `type()` |
 |-------|----------|
 | an import / link entity handle (a value like any other — §11.3) | `"import"` / `"link"` |
+| a handle whose module registered a type name (`fwrap::bind`, see `api.md` §11.5) | that name, e.g. `"cv::Mat"` |
 | an empty handle (one that holds no object) | `"null"` |
 
 At most one argument: `type(a, b)` is an `ArgError` (and `b` is not evaluated); `type()` with no argument answers `"null"`, like any argument-less call. Any expression that *is a value* is a fine argument — `type(f())`, `type(a[0].b)` (a callable is refused, just below).
 
 A callable is not a value — reading one is refused, `type()` included (`TypeError: function cannot be read as a value`) — so no call answers for one; reach it by calling (directly, through `@`, or by the name a table holds).
 
-Everything the script layer has no name of its own for — an object a host handed over, or a value of a variant type it does not model (only a host can pass one in: a 32-bit float, an unsigned integer, a `std::vector<T>`) — asks the host's type-naming callback (`engine::set_type_ex`) first; an empty answer, or no callback installed, gives `"unknown"`. A `null` value and an empty handle both answer `"null"`, so **empty reads as null, not as "unknown"**; `type()` never answers a null value itself.
+Everything the script layer has no name of its own for — an object a host handed over, or a value of a variant type it does not model (only a host can pass one in: a 32-bit float, an unsigned integer, a `std::vector<T>`) — is named by its link first: a handle whose module registered a type name answers that name, and only the rest reaches the host's type-naming callback (`engine::set_type_extend`); an empty answer, or no callback installed, gives `"unknown"`. A `null` value and an empty handle both answer `"null"`, so **empty reads as null, not as "unknown"**; `type()` never answers a null value itself. A link names handles only: a plain unmodeled value never consults one.
 
 > `type`, `int`, `float`, `string`, `bool`, `bytes`, `vec`, `map`, `lst`, `env`, `here`, `eval`, `trap`, `yield` are all reserved words and cannot be used as a variable name, function name, parameter name or `as` alias. `$xxx` extension function names are registered by the host and are not reserved words.
 
@@ -828,8 +829,9 @@ def init(x, y) { ... }  // always succeeds, the engine will not stop it for a na
 | `IndexError` | vec/lst/string/bytes index out of bounds |
 | `KeyError` | `m["key"]` with the key absent, or a middle segment of a dot chain absent (the chain's last key reads null, §13.2) |
 | `ArgError` | a parameter with no default is missing, or a builtin that checks its own arity was given more arguments than it takes (`env(a, b)`, `type(a, b)`); the one-value builtins that still ignore an extra argument are a known defect (issue ledger I-1), not the contract |
-| `ImportError` | module not found / circular import / a link library that will not load (`Cannot link: <path>`, with the loader's text appended when the failure came from the loader), etc. |
-| `LinkError` | a native call arrived outside any walk, i.e. from a load/unload entry point |
+| `ImportError` | a script module failed to import: not found / circular or self import / unreadable or corrupt payload |
+| `LinkError` | a link (dynamic module) failed: not found / circular or self link / the loader refused it (`Cannot link: <path>`, with the loader's text appended when the failure came from the loader) |
+| `ContextError` | a call the current context does not allow: the fwrap call face outside a walk, or a registration the entry point does not take |
 | `StackError` | call frames exceeded `max_stack` |
 | `ResourceError` | a resource limit — today the only producer is the `max_vecfill` fill cap |
 | `MemoryError` | allocation failure (the `bad_alloc` / `length_error` thrown by `bytes`, translated by the engine into a script-catchable error) |
@@ -1416,15 +1418,16 @@ Build the module as a shared library that links the engine (`alxscpt`). Its entr
 | `args.remove("z")` | delete a link private variable |
 | `args.iload("key")` | unified dot-chain access → `variant*` (copy-free, readable and writable; a bare-name miss returns `nullptr` — the promise covers the resolved outcome, so a `.` path whose intermediate step does not resolve still reports that step's error) |
 | `args.call(func, args_vec)` | call: `string` → iload resolution → call_able → execute; `anyptr<call_able>` → execute directly |
-| `args.bind("name", func)` | register a native function (optional third argument `_area`) |
-| `args.bind("name", func, "area")` | register into a sub-scope |
+| `args.bind("name", func)` | register a native in the call's data scope; false when the name is already bound |
+| `args.bind("name", func, "area")` | register into the area, created empty when absent; false on a bound name or an area name holding anything but an area |
+| `args.bind("area", obj, methods)` | create the area carrying the object (`anyptr&&`) and its `std::map` of methods; create-only, false on a taken name; the object is consumed either way |
 | `args.raise(val[, type])` | throw a script exception |
 | `args.object()` | the `anyptr*` stored for the current area — area natives only |
 | `args.unwrap<T>()` | `anyptr_ex<T>::as(*object())` — type-safe access to the C++ object (area natives only, like `object()`) |
-| `args.wrap<T>(ptr, "area", {{"m1", fn1}, ...})` | store the obj + register methods into the area |
-| `args.currying("f")` | mint a cross-thread delivery handle (`fwrap::callback*`) naming a def — **the caller owns it and deletes it** before the engine dies; `cb->call(vec[, pri, expiry])` queues a delivery serviced at the script's `yield()` (`api.md` §3.2b), the name resolved late; a load/unload entry point has no engine to name (`LinkError`) |
+| `args.wrap<T>(ptr, "area", {{"m1", fn1}, ...})` | `bind("area", anyptr_ex<T>::make(ptr), methods)` — creates the area; false on a taken name; the handle consumes the object either way |
+| `args.currying("f")` | mint a cross-thread delivery handle (`fwrap::callback*`) naming a def — **the caller owns it and deletes it** before the engine dies; `cb->call(vec[, pri, expiry])` queues a delivery serviced at the script's `yield()` (`api.md` §3.2b), the name resolved late; an entry point has no engine to name (`ContextError`) |
 
-> **Pointer validity (one contract)**: everything this interface hands back — the `args[i]` view, an `iload`/`load` slot, the `m_area` behind `object()`/`unwrap<T>()` — dies the moment script code runs again: a `fw.call()` back into the script, a run that fails during execution (the walk tears mid-op), or an explicit `reset()` invalidates them all, after which they must not be touched. The delivery handle from `currying()` is the one deliberate exception: it belongs to the caller, so it stays valid across calls and runs until the caller deletes it — which must happen before the engine dies. `object()`/`unwrap<T>()` are for area natives only — outside an area dispatch (an extend handler, a load/unload callback, a `bind` with no `_area`) no area is set, and calling them there is outside the contract — nothing is set to hand back.
+> **Pointer validity (one contract)**: everything this interface hands back — the `args[i]` view, an `iload`/`load` slot, the `m_area` behind `object()`/`unwrap<T>()` — dies the moment script code runs again: a `fw.call()` back into the script, a run that fails during execution (the walk tears mid-op), or an explicit `reset()` invalidates them all, after which they must not be touched. The delivery handle from `currying()` is the one deliberate exception: it belongs to the caller, so it stays valid across calls and runs until the caller deletes it — which must happen before the engine dies. `object()`/`unwrap<T>()` are for area natives only — outside an area dispatch (an extend handler, a `bind` with no `_area`) there is nothing to hand back and the call throws `ContextError`, as it does from an entry point.
 
 > **The `iload` path**: a simple name → data_store (`O_ILOAD` → `resolve_dot`).
 
@@ -1986,6 +1989,14 @@ link "myadd" as m;
 m.add(1, 2);  // 3
 ```
 
+A link that hands out `anyptr` handles can name their types as well, so the script's `type()` answers the module's own name instead of `"unknown"` (the full contract is in `api.md` §11.5):
+
+```cpp
+extern "C" void alexis_script_load(fwrap& _fw) {
+    _fw.bind(anyptr_ex<cv::Mat>::rid, "cv::Mat", fn_desc, fn_view);
+}
+```
+
 ## engine interface semantics
 
 **The engine_config struct (the `create(cfg)` argument)**:
@@ -2018,7 +2029,7 @@ struct engine_config {
     pipe_out pipe_out_ptr = nullptr;
     void* pipe_out_ud = nullptr;
 
-    // host type-naming callback — set with set_type_ex(), read back with config()
+    // host type-naming callback — set with set_type_extend(), read back with config()
     type_ex type_ex_ptr = nullptr;
     void* type_ex_ud = nullptr;
 };
@@ -2158,9 +2169,9 @@ eng->get_csys().connect([](uint_64 tid, const std::string& s) {
 | `set_parse_depth(n)` | parser nesting depth (default 1024) |
 | `set_overflow_check(on)` | integer overflow / shift checking (default false) |
 | `set_max_vecfill(n)` | vec fill count cap (default 0=unlimited) |
-| `set_max_yield(n)` | yield queue capacity (default 256, 0=unlimited); cross-thread safe, and admissions see the new value immediately |
+| `set_max_yield(n)` | yield queue capacity (default 256, 0=unlimited) |
 | `set_search_paths(paths)` | global search paths (`std::list<string>`, persist across reset) |
-| `set_type_ex(fn, ud)` | host type-naming callback (`type_ex`): `type()` asks it for a value the script layer cannot name and uses the returned name as-is; null removes it |
+| `set_type_extend(fn, ud)` | host type-naming callback (`type_ex`): `type()` asks it for a value the script layer cannot name and uses the returned name as-is; null removes it |
 | `set_debug_enable(on)` | statement-by-statement position tracking: the parser inserts a marker per statement and the walker records positions and fires `hook_event::debug`; off by default (an already compiled product stays without positions and reports row 0) |
 
 ### Lifetime
@@ -2196,7 +2207,7 @@ eng->get_csys().connect([](uint_64 tid, const std::string& s) {
 |------|------|
 | `set_hook(fn, ud, interval)` | the unified resource control hook (a hard firewall): one exec event per interval checkpoints; an import/link event per load request. **Any event returning false is an interrupt** (InterruptedError, uncatchable). fn=null → off; no engine API may be called inside the hook |
 | `set_pipe(in, out, in_ud, out_ud)` | set the IO pipes (the engine never calls them, it only stores the handles for the user to keep and redirect with); null = host default (stdio) |
-| `running()` | cross-thread query: true while an entry is running — `exec()` or `call()` (an atomic load) |
+| `is_running()` | cross-thread query: true while an entry is running — `exec()` or `call()` (an atomic load) |
 | `set_interrupt()` | cross-thread interrupt: sets the interrupt flag, honoured at the next checkpoint (an atomic store) |
 
 ### Signals

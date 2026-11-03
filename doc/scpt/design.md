@@ -78,10 +78,10 @@ flowchart TB
 - **token_type de-classing**: `enum class token_type` → `enum tk_enum`; the former `T_BUILTIN_FUNC` is gone, split into separate tokens (`T_INT`/`T_FLOAT`/`T_STRING`/`T_BOOL`/`T_VEC`/`T_MAP`/`T_LST`/`T_TYPE`/`T_ENV`; `T_TOJS`/`T_FMJS`/`T_PRINT`/`T_INPUT` were removed along with their 2026-08-04 migration out to extension functions)
 - **Unified data_store storage**: all data (variables / defs / native functions / sub-entities / link modules / areas) is stored in `data_store` (`vector<variant> m_data` + `unordered_map m_map` + `vector m_free`), exposing `find`/`store`/`remove`/`contain`. Script objects are accessed through `anyptr` (`call_able` unifies def/native, `link_area` holds the area object + natives). `fly_link` holds `data_store m_store` directly (the template data), and `fly_import` holds its template in `m_root` — an `impl_import` the init walk runs on directly, so a child imported during that walk binds its `m_parent` to a live object; `impl_fly_import` deep-copies the template from `fly->m_root.m_store` and re-points every cloned child (recursively) at the new instance. An instance holds a fly ref (`m_ref.ref()`) so that sharing among multiple instances cannot release it early. `mod_mng::release_fly` manages the fly lifetime passively
 - **walker class encapsulation**: the `walker` class holds `walk_state state` + `mod_mng* mgr` + the static op dispatch table `s_ops`; every op function and helper is a walker static method, and `walk_tree()`/`walk_forest()` are walker member functions. The Engine holds a `mod_mng` + a `walker` and exposes functionality through the `engine` class and the `fwrap` interface
-- `fwrap::bind(name, func[, area])` — register a native function: no area → `m_store.store(name, anyptr<call_able>)`; with area → create a link_area → store the native into area->m_natives
+- `fwrap::bind(name, func[, area])` — register a native function: no area → `m_store.store(name, anyptr<call_able>)`; with area → create a link_area → store the native into area->m_natives; a name already bound answers false and the existing binding stays
 - `fwrap::object()` — the C++ object currently bound to the area (`&m_area->m_object`)
 - `fwrap::unwrap<T>()` — `anyptr_ex<T>::as(*object())`, null-guarded — type-safe unwrapping
-- `fwrap::wrap<T>(ptr, area, methods)` — store the anyptr + bulk-register the area methods (creates an instance dynamically)
+- `fwrap::wrap<T>(ptr, area, methods)` — store the anyptr + bulk-register the area methods (creates an instance dynamically); false when the area name is empty or taken — the refusal happens before anything is stored; the method list is a `std::map`, so its names are unique by construction
 - **Alias values**: an `import`/`link` `as` alias is an ordinary value — a bare read is a **copy** (an independent instance) and an assignment over it discards the instance for the value. Every hand-off — a call argument, a return, a container literal or element, `@("alias")` — copies the same way (value semantics). The copy's parent is its holder: every binding site stamps the slot it wrote (`bind_owner` from `store_raw` / `assign_raw` / `scope_frame::raw_store` / the slot branch of `op_store` and `store_slice`, whose `target_resolved::owner` names the slot's owner), so `..` from the copy resolves in the module that holds it; a copy that is never bound (a temporary, or one built into a container literal) has no parent. The copy is independent of the original — its own store, its own sub-module instances (the copy constructor re-binds its children to the copy), its own reference to the shared fly — so a later `delete` of the original does not touch it. link additionally shields dot writes (`alias.x = v` → `TypeError`) — a link's sub-data (everything reached *through* the link: areas, instances, data) is opaque however deep, the `op_dot` terminal read included; import allows dot writes (they write into the import entity's `m_store`). An area instance/namespace (a `link_area` handle) can be removed by the script with `delete` (the anyptr destructor destroys the host object); link/area functions (callable) and data variables (a handle stored into the data included) cannot be deleted → `TypeError`. The script can only reach link data operations indirectly, through functions the area registered
 - `scope_frame` binds `impl_import*` by RAII: the constructor records `base` (`ent->m_store.m_data.size()`), the destructor resizes `ent->m_store.m_data` back to base. Exposes `find`/`store`/`remove`/`contain`
 - `scope_frame::def` — `const varvec*` function definition pointer, used for call-stack tracing on an exception (the trace lazily builds an entity → def→name reverse mapping)
@@ -779,9 +779,10 @@ ref_fly_import(path, w, err)   // ① lookup/create + ref (mod_mng, single-threa
   - resolve (res_mng::resolve_runtime_path) fails → nullptr + err (ImportError;
     every import/link failure propagates up the walk — to the enclosing try when
     the import/link runs in an eval body, otherwise to the entry. A module-init
-    failure is wrapped as ImportError; an instance-construction or link load/create
-    failure keeps its own class (MemoryError / NativeError / LinkError); the
-    interrupt stays the one uncatchable outcome)
+    failure is wrapped as its module class (ImportError for an import, LinkError
+    for a link); an instance-construction or link load/create failure keeps its
+    own class (MemoryError / NativeError); the interrupt stays the one uncatchable
+    outcome)
   - the gate hook (an import event; a per-engine checkpoint -- dependency closures are
     isolated naturally, cf. the contrast in §4.9)
   - pool find + ref; on a miss → take the resource first (res_mng::ref_ast: parse/compile
@@ -879,7 +880,7 @@ bool init_fly_gate(FlyT* fly, mod_mng* mng, walker* _w, script_exception& _err, 
 | `invoke_dot` | starts a function call (native/def) from a dot_resolved | the dot branches of O_NCALL/O_ICALL |
 | `resolve_target` | resolves an LHS into a `target_resolved` (slot / byte / slice); the address is taken after every script expression in the target has run | `op_store`, `resolve_slot`, `resolve_iload` |
 | `resolve_slot` | the slot-only view the `++`/`--` prefixes and the 10 compound assignments use; a byte element or a slice is refused with its own TypeError | the compound assignment family |
-| `resolve_iload` | the fwrap host probe: nav mode, the slot or nullptr | `fwrap_impl::iload` / `call` |
+| `resolve_iload` | the fwrap host probe: nav mode, the slot or nullptr | `fwrap_native::iload` / `call` |
 | `store_slice` | slice assignment: same-type, count-matched scatter (in the read's order) + `bind_owner` | `op_store` |
 
 **Name conflict detection (`check_name_conflict`)** — the four declaration forms `var`/`def`/`link`/`import` all call it before creating a name, checking every namespace inside the current entity. Same name, same kind or same name, different kind both raise NameError. Once `delete` removes the name from the matching namespace it can be declared again.
@@ -895,7 +896,7 @@ bool init_fly_gate(FlyT* fly, mod_mng* mng, walker* _w, script_exception& _err, 
 | `int(v)` / `float(v)` / `string(v)` / `bool(v)` | type conversion through the `cov_*` matrix; a failure raises `ConvError` (`cov_bool` raises it for a value it has no answer for, such as a script object). null → the type's default value (0/0.0/""/false). `cov_int(string)` accepts the 0x/0o/0b prefixes; `cov_float(string)` accepts the JSON-like float format plus `inf` / `+inf` / `-inf` / `nan`, and an overflow (such as `1e999`) raises `ConvError` |
 | `bytes(v)` / `bytes(v, enc)` | byte-sequence conversion. One argument makes a raw copy (string), two arguments go through encoding conversion (hex/base64/GBK/UTF-8/UTF-16 and so on). null → empty bytes |
 | `vec(v)` / `map(v)` / `lst(v)` | container conversion + literal construction. null → an empty container |
-| `type(v)` | at most one argument (`ArgError` otherwise, raised before the argument runs); the value's type name: the 8 script types and null; a handle splits into import / link and null for an empty one; anything else — a host object handle, or a variant type the script layer does not model — asks the host's `set_type_ex` callback (§4.9e), `"unknown"` without an answer (never a null answer) |
+| `type(v)` | at most one argument (`ArgError` otherwise, raised before the argument runs); the value's type name: the 8 script types and null; a handle splits into import / link and null for an empty one; a handle whose module registered a name answers it (§4.9g); anything else — an unregistered host object handle, or a variant type the script layer does not model — asks the host's `set_type_extend` callback (§4.9e), `"unknown"` without an answer (never a null answer) |
 | `env(paths)` / `env()` | runtime search paths — no argument returns the module's own list as a `vec`; a `vec`/`lst` of strings sets it, another kind is a `TypeError`, an empty entry a `ConvError` |
 
 JSON encode/decode and I/O (`tojs`/`fmjs`/`print`/`input`) were migrated out to host-registered `$xxx` extension functions (2026-08-04) and are not engine built-ins.
@@ -968,8 +969,9 @@ The `compile_error` struct: `msg`, `row`/`col` (1-based, UTF-8 aware), `index` (
 | `IndexError` | index out of bounds |
 | `KeyError` | map key absent |
 | `ArgError` | a parameter with no default left unspecified, or a builtin that checks its own arity was given more arguments than it takes (`env(a, b)`, `type(a, b)`); the one-value builtins that still ignore an extra argument are a known defect (issue ledger I-1), not the contract |
-| `ImportError` | import/link failed — a `dlopen` that will not load among them (the four `dlsym` results are stored unvalidated and every use site skips a null one, so a missing symbol is not an error) |
-| `LinkError` | a native call arrived outside any walk (a load/unload entry point) |
+| `ImportError` | an import failed — a script module that will not parse/load, a circular or self import, a corrupt payload |
+| `LinkError` | a link (dynamic module) failed — unresolved, refused by the loader (`dlopen` / `LoadLibrary`; the four `dlsym` results are stored unvalidated and every use site skips a null one, so a missing symbol is not an error), or a circular/self link |
+| `ContextError` | an fwrap call the current context does not allow (entry point vs native call, a registration only the load entry takes) |
 | `StackError` | frames.size() >= max_stack |
 | `ResourceError` | resource limit |
 | `MemoryError` | allocation failed (`bad_alloc` / `length_error`) |
@@ -1223,21 +1225,22 @@ std::list<varmap> wkdt_fpos() const; // per level {row, col, ofst, file, func}
 
 **Recursive compression (`compress_trace`)**: entries are first interned into dense ids before scanning, so **a longer entry or a changed format never affects folding** — only whether the string contents are equal decides folding, and a hash collision is absorbed by the map's equality test and never enters the algorithm. Behaviour: for recursion with several call sites the period goes from 1 to "the number of call sites" — `(1024x) [::] f` → `(512x) [::] f:2:1 / [::] f:3:5`, which shows which two call sites it is spinning between; **with a base case the innermost few levels differ in shape from the loop levels and still fold** (a repeated segment need not touch the head or the tail).
 
-### 4.9e Host type naming — set_type_ex (2026-10-08)
+### 4.9e Host type naming — set_type_extend (2026-10-08)
 
 **Motivation**: `type()` had two dead-end answers — `"anyptr"` for an object a host handed over, `"unknown"` for a variant type the script layer does not model (a 32-bit float, an unsigned integer, a `std::vector<T>`). Only the host knows what those are, so the host gets to name them.
 
-**API** (config fields appended at the tail; the setter sits after `set_pipe` in the vtable):
+**API** (config fields appended at the tail; the setter sits after `set_search_paths` in the vtable):
 
 ```cpp
 using type_ex = const char* (*)(const variant& _v, void* _ud);
 
-virtual void set_type_ex(type_ex _fn, void* _ud = nullptr) = 0;
+virtual void set_type_extend(type_ex _fn, void* _ud = nullptr) = 0;
 ```
 
 **Semantics**:
 
 - both dead-end arms `break` out of the dispatch — the anyptr case when the handle is none of the engine's four kinds, the outer `default` for an unmodeled type — and the shared tail asks `_ex`; null or an empty answer leaves `"unknown"`
+- (*superseded in part, 2026-11-03*) a handle whose module registered a name is answered **before** the tail (§4.9g): the callback now only names what no link claims and what is not a handle at all
 - a modelled type, null and the four handle kinds return before the callback; an empty handle still answers `"null"` (the 1.0.2 rule stands) and never reaches the tail
 - `"anyptr"` stops being an answer: with no callback, or an empty one, a host object reads `"unknown"` — the same word an unmodeled value gives
 - the five diagnostic call sites (`to_int_strict` and friends, `op_icall`, `op_bytes`) keep the default `_ex = nullptr` and never ask; their "got X" wording says `"unknown"` for both arms
@@ -1332,6 +1335,32 @@ void hb_detach(hb_target* _t);
 
 **Impact**: `O_YIELD` appends after `O_DEBUG` — **no engine-side vtype change** (old products never carry it; a product that uses yield is the host's own stamping call, the gate at `check_version` (`ascript.cpp:343`) doing the refusing).
 
+### 4.9g Link type registration — `fwrap::bind(rid, name, desc, view)` (2026-11-03)
+
+**Motivation**: `anyptr` means nothing to the engine or the host — only the module that made the handle knows what it is. `type()` named the engine's own handle kinds and fell through to the host's `set_type_extend`; a link's types reached nobody, so a debugger could only show the hex handle.
+
+**The id**: `anyptr_reg::rid` was already a per-`T` hash; it is now a **compile-time constant** (`type_sig<T>()` = `__PRETTY_FUNCTION__` / `__FUNCSIG__`, hashed by the constexpr `fnv1a_64`), exposed as `anyptr::rid()` (0 for a handle with no record) and `anyptr_ex<T>::rid`. The same `T` hashes alike across translation units and modules of one build — matching never crosses builds.
+
+**Registration** (module-level, from `LINK_LOAD` only):
+
+```cpp
+bool bind(uint_64 _rid, const char* _name,
+          std::string (*_desc)(const anyptr&) = nullptr,
+          variant (*_view)(const anyptr&) = nullptr);
+```
+
+- `_name` is stored, not copied (a string literal is the intended form) and must outlive the module.
+- `false`: the id is already registered, or the name is null/empty. **A conflict is a runtime condition handed back to the link**, not an engine exception — the link decides whether to `raise`. Any other entry point (create, release, unload, a native call) throws `ContextError` instead: taking a registration is not what that context is for.
+- Transactional: registrations queue in the fwrap and are committed only when the load entry returns normally; a failed load leaves nothing behind.
+
+**Ownership and lifetime**: the table lives in the per-engine `mod_mng` (`rid → {name, desc, view}`); every committed id is also recorded on the fly (`fly_link::m_types`). The fly is the link's presence in this engine: when its last reference goes, `release_fly` erases its ids — **before** `release_link` can `dlclose` the module that owns the name pointers. `clear()` empties the table. A second module registering the same id is refused; no overwrite, no multi-owner stack.
+
+**Lookup and naming**: `type_name_script` gained a `mod_mng*` and one branch — a handle's `rid()` looks the table up (O(1)); the chain is **built-in names → link table → `set_type_extend` → `"unknown"`**. `op_type` (the script's `type()`) and `engine::type` share it, so script and host see one name. `engine::desc/view` and `hook_info::wkdesc/wkview` read the same entry; no entry, a null hook, an empty summary or a null variant answers `false`. **No runtime gate**: the queries are ordinary reads on the engine's thread; the host-facing entry is `hook_info` inside a callback purely to keep `hkdt` free.
+
+**The fwrap implementations split by context**: one public virtual interface, four concrete classes — native call (full), load (entry face + type bind), create (entry face), teardown (store face only). A call the context does not allow throws `ContextError`; the old shared impl's silent call-face null-walker paths are gone (`object()` now throws at an entry and from a plain native alike; `config()` still answers an empty config in an entry — no walk — and the api table states it). The registration face: `bind(name, fn[, area])` binds one native — into the plain scope, or into the area of that name, created empty when absent — and answers `false` on a bound name or an area name holding anything but an area; `bind(area, obj, methods)` creates an area carrying the object and its methods, create-only, the object moving in on success; `wrap<T>(obj, area, methods)` is exactly `bind(area, anyptr_ex<T>::make(obj), methods)`, so the handle consumes the object either way. No stored value is ever adopted into an area: the old wrap's store-then-convert dance is gone. A bound name keeps the existing binding (a link copy re-runs `create` over a cloned store whose bindings are already the same functions).
+
+**Impact**: three new pure virtuals on `engine`, one on `fwrap`; `anyptr` gains `rid()`; **minor**, SONAME `.so.1.3` → `.so.1.4`; every link module must be rebuilt. No opcode/AST change, so vtype is untouched.
+
 ---
 
 ## 5. API
@@ -1362,8 +1391,17 @@ public:
     virtual void raise(const variant& _info, error_type _what = error_type::RuntimeError) = 0;
 
     // ── Register native function (module init) ────────────────
-    virtual void bind(const string& name, void (*func)(fwrap&),
+    virtual bool bind(const string& name, void (*func)(fwrap&),
                       const string& _area = string()) = 0;
+
+    // ── Create an area carrying an object and its methods (load/create) ──
+    virtual bool bind(const string& area, anyptr&& obj,
+                      const map<string, void(*)(fwrap&)>& methods) = 0;
+
+    // ── Register a handle type (load entry only; rid = anyptr_ex<T>::rid) ──
+    virtual bool bind(uint_64 rid, const char* name,
+                      string (*desc)(const anyptr&) = nullptr,
+                      variant (*view)(const anyptr&) = nullptr) = 0;
 
     // ── Area object binding ──────────────────────────────────
     virtual anyptr* object() = 0;
@@ -1376,8 +1414,8 @@ public:
 
     // ── Templates (convenience) ──────────────────────────────
     template <typename T> T* unwrap();
-    template <typename T> void wrap(T* obj, const string& area,
-                                    initializer_list<pair<const string, void(*)(fwrap&)>> methods);
+    template <typename T> bool wrap(T* obj, const string& area,
+                                    const map<string, void(*)(fwrap&)>& methods);
 };
 
 class engine {
@@ -1415,10 +1453,10 @@ public:
     virtual void set_hook(hook_fn fn, void* ud, uint_64 interval) = 0;
     virtual void set_pipe(pipe_in in, pipe_out out,
                           void* in_ud = nullptr, void* out_ud = nullptr) = 0;
-    virtual void set_type_ex(type_ex fn, void* ud = nullptr) = 0;
+    virtual void set_type_extend(type_ex fn, void* ud = nullptr) = 0;
 
     // ── Cross-thread control ──────────────────────────────────
-    virtual bool running() const = 0;
+    virtual bool is_running() const = 0;
     virtual void set_interrupt() = 0;
 
     // ── Row-level position tracking ───────────────────────────
@@ -1439,6 +1477,11 @@ public:
                           const bytes_view& hint = bytes_view()) const = 0;
     bytes compile(const string& path, bool cmps = false, bool embed = false,
                   const string& hint = string()) const;
+
+    // ── Type queries ──────────────────────────────────────────
+    virtual string type(const variant& v) const = 0;                // the name type() gives
+    virtual bool desc(const anyptr& h, string& out) const = 0;      // printable one-line summary
+    virtual bool view(const anyptr& h, variant& out) const = 0;     // link payload; opaque to the engine
 
     // ── Signals ───────────────────────────────────────────────
     signal<const string&> on_cerr;
@@ -1477,7 +1520,7 @@ public:
 | 38 | **engine::result** | exec() returns `{value, elapsed_us, error}`, and the error_type enum carries `UnknownError` and `NoError` alongside the error types. On an exception the exit code = int(error_type). Also: `engine::set_hook(fn, ud, interval)` is the single resource-control hook — instruction checkpoints (interrupt) + import/link gates (reject) (§4.9) |
 | 49 | **Interrupt coverage at the exits** | the interrupt verdict must check the flag first at **every** exit (exec's normal return + 5 catch arms, run_init_walk's normal return + 3 catches) — an in-flight throw must not mask an interrupt; missing one exit mislabels the fly ImportError (§4.9) |
 | 50 | **Interrupt null safety** | an in-flight op running on with a null operand is expected behaviour: every op either checks with is<> and throws a script_exception (covered at the exit) or uses to\<T\>()'s type-safe default — no UB, no crash (§4.9) |
-| 51 | **Cross-thread control** | `engine::running()` + `engine::set_interrupt()`: `m_interrupted` was upgraded to an `atomic<bool>` and `m_running` is a new atomic. `exec` and `call` manage its lifetime with one RAII guard, so an outside thread can query or interrupt safely (§4.9) |
+| 51 | **Cross-thread control** | `engine::is_running()` + `engine::set_interrupt()`: `m_interrupted` was upgraded to an `atomic<bool>` and `m_running` is a new atomic. `exec` and `call` manage its lifetime with one RAII guard, so an outside thread can query or interrupt safely (§4.9) |
 | 52 | **engine::call** | the single C++ entry point for calling a script def. A root store lookup for the call_able → build a temporary `[O_CALL, name, [arg]...]` tree → `walker::invoke_def` through the shared ladder (`walker::run_entry`). defs only (a native function is called directly from C++, with no need to go through the engine). Its ladder is exec's, so a failure ends the run only — nothing is reset. Callable between two execs (`state.current` points at the root and frames is empty) |
 | — | **NavError** | raised when `..` goes beyond the depth of the entity tree (added with reverse navigation) |
 
@@ -1635,15 +1678,16 @@ T* unwrap() {
 }
 
 template <typename T>
-void wrap(T* _obj, const std::string& _area,
-          std::initializer_list<std::pair<const std::string, void (*)(fwrap&)>> _methods) {
+bool wrap(T* _obj, const std::string& _area,
+          const std::map<std::string, void (*)(fwrap&)>& _methods) {
+    if (_area.empty() || load(_area)) return false;
     store(_area, variant(anyptr_ex<T>::make(_obj)));
-    for (const auto& m : _methods)
-        bind(m.first, m.second, _area);
+    for (const auto& m : _methods) bind(m.first, m.second, _area);
+    return true;
 }
 ```
 
-`m_area` is an implementation detail internal to `fwrap_impl` and is not exposed in the public interface.
+`m_area` is an implementation detail internal to `fwrap_native` and is not exposed in the public interface.
 
 ### 8.5 anyptr automatic adaptation
 `anyptr_ex<T>::make()` picks automatically by SFINAE:
@@ -1960,6 +2004,27 @@ Version ALXLIB 1.3.1 → 1.3.2.
 - **Migration note**: no opcode or AST change, so **vtype is untouched and .axp products need no recompilation**; no symbol changed its home, the SONAME **stays `.so.1.3`**, and the library version moves 1.3.2 → 1.3.3 — a patch.
 
 Version ALXLIB 1.3.2 → 1.3.3.
+
+**Migration log (2026-11-03, version 1.4.0: the link type registration, the host query surface and the per-context fwrap)**:
+
+- **A link names its own handle types**: `fwrap::bind(uint_64 rid, const char* name, desc, view)` — from `LINK_LOAD` only — registers the handle's type id (`anyptr_ex<T>::rid`, a compile-time constant) under a printable name with optional summary and view callbacks (`std::string (*)(const anyptr&)` / `variant (*)(const anyptr&)`; an empty string or a null variant means none). The table is per engine, committed only when the load entry returns normally, and a module's entries are dropped when its last fly reference goes. A second registration of the same id answers false — the link decides whether to raise.
+- **The host can query**: `engine::type(const variant&)` answers the name the script's `type()` gives (built-ins → the link table → `set_type_extend` → `"unknown"`); `engine::desc` / `engine::view` answer the registered summary and payload (the payload is opaque to the engine), and `hook_info::wktype` / `wkdesc` / `wkview` mirror all three inside a hook callback, so `hkdt` stays the host's own cookie.
+- **`fwrap` has one interface and four implementations**: native call, load, create, teardown. A call the context does not allow throws `LinkError` — the previous shared impl's silent call-face null-walker paths are gone; `object()` from a plain (non-area) native throws `LinkError` too, where it used to be UB. `config()` still answers an empty config in an entry (no walk), which `api.md` now states.
+- **The registration face returns bool**: `bind(name, fn[, area])` binds one native — into the plain scope, or into the area of that name, created empty when absent — and answers false on a bound name or an area name holding anything but an area; `bind(area, obj, methods)` creates an area carrying the object and its methods (create-only, the object moving in on success; a null object is refused); `wrap<T>(obj, area, methods)` is exactly `bind(area, anyptr_ex<T>::make(obj), methods)`, so the handle consumes the object either way. The old wrap's store-then-adopt dance is gone.
+- **`anyptr` moves leave a clean null handle**: the register record is cleared with the object and the counter, so `rid()` answers 0 and copying a moved-from handle yields a null handle instead of dereferencing the old record.
+- **A link copy still re-binds**: its `create` runs over a cloned store whose bindings are already the same functions — the duplicate answers false and the cloned binding stays.
+- **Renames**: `engine::running()` → `is_running()`, `engine::set_type_ex()` → `set_type_extend()` (the `type_ex` typedef keeps its name — ex = extend).
+- **Migration notes**: three new pure virtuals on `engine` (`type`, `desc`, `view`) and two on `fwrap` (`bind(area, obj, methods)`, `bind(rid, ...)`); the two existing `bind` overloads and `wrap` changed their return type to bool. A **minor**: the SONAME goes `.so.1.3` → `.so.1.4` and **every link module must be rebuilt** (the fwrap vtable grew). No opcode or AST change, so **vtype is untouched and .axp products need no recompilation**.
+
+Version ALXLIB 1.3.3 → 1.4.0.
+
+**Migration log (2026-11-03, version 1.4.1: the error classes split — import, link and context)**:
+
+- **`LinkError` means a link failure now**: a link that cannot be resolved, loaded or initialized reports `LinkError` (was `ImportError`); `ImportError` stays import-side (a script module that will not parse/load, a circular or self import, a corrupt payload). The module-init gate carries the class through (`init_fly_gate` takes the `error_type`), so a self/circular link names `LinkError` while the import counterpart keeps `ImportError`.
+- **The fwrap misuse gets its own code**: `ContextError = 16` — the first explicit value of the free tail, so the auto-numbered ids shift by one (the 1.0.1 rule leaves the tail free). Every fwrap context refusal — the call face outside a walk, a registration an entry point does not take, `object()` without an area — throws it.
+- **Migration notes**: a patch on the surface — the SONAME **stays `.so.1.4`** and no vtable changed. Scripts and hosts that branch on `ImportError` for a link failure must switch to `LinkError`; those that branch on `LinkError` for fwrap misuse must switch to `ContextError` (id 16). No opcode or AST change, so **vtype is untouched**.
+
+Version ALXLIB 1.4.0 → 1.4.1.
 
 ### 10.2 Syntax
 

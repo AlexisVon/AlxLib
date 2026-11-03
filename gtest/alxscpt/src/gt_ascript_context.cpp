@@ -112,7 +112,7 @@ TEST(gt_ascript_context, Call_UserFunction) {
     h.w.walk_tree(def_tree);
 
     variant ret_slot;
-    fwrap_impl fw(std::vector<variant*>(), &ret_slot, &h.w.m_root.m_store, &h.w);
+    fwrap_native fw(std::vector<variant*>(), &ret_slot, &h.w.m_root.m_store, &h.w);
     variant result = fw.call("add2", varvec{variant(static_cast<int_64>(3)), variant(static_cast<int_64>(4))});
     EXPECT_EQ(result.to<int_64>(), 7);
 }
@@ -138,7 +138,7 @@ TEST(gt_ascript_context, Call_UserFunction_NoArgs) {
     h.w.walk_tree(def_tree);
 
     variant ret_slot;
-    fwrap_impl fw(std::vector<variant*>(), &ret_slot, &h.w.m_root.m_store, &h.w);
+    fwrap_native fw(std::vector<variant*>(), &ret_slot, &h.w.m_root.m_store, &h.w);
     variant result = fw.call("the_answer", varvec());
     EXPECT_EQ(result.to<int_64>(), 42);
 }
@@ -148,7 +148,7 @@ TEST(gt_ascript_context, Call_Undefined) {
     h.w.state.push_frame();
 
     variant ret_slot;
-    fwrap_impl fw(std::vector<variant*>(), &ret_slot, &h.w.m_root.m_store, &h.w);
+    fwrap_native fw(std::vector<variant*>(), &ret_slot, &h.w.m_root.m_store, &h.w);
     EXPECT_THROW(fw.call(variant(std::string("no_such_func")), varvec()), script_exception);
 }
 
@@ -175,7 +175,7 @@ TEST(gt_ascript_context, Call_ScriptDef) {
 TEST(gt_ascript_context, Raise_ThrowsScriptException) {
     test_harness h;
     variant ret_slot;
-    fwrap_impl fw(std::vector<variant*>(), &ret_slot, &h.w.m_root.m_store, &h.w);
+    fwrap_native fw(std::vector<variant*>(), &ret_slot, &h.w.m_root.m_store, &h.w);
     bool caught = false;
     try {
         fw.raise(variant(std::string("test error")));
@@ -190,7 +190,7 @@ TEST(gt_ascript_context, Raise_VariantValue) {
 
     test_harness h;
     variant ret_slot;
-    fwrap_impl fw(std::vector<variant*>(), &ret_slot, &h.w.m_root.m_store, &h.w);
+    fwrap_native fw(std::vector<variant*>(), &ret_slot, &h.w.m_root.m_store, &h.w);
     try {
         fw.raise(variant(static_cast<int_64>(404)));
     } catch (const script_exception& e) {
@@ -205,7 +205,7 @@ TEST(gt_ascript_context, Args_ReadWriteView) {
     variant a2(static_cast<int_64>(2));
     std::vector<variant*> ptrs = {&a1, &a2};
     variant ret_slot;
-    fwrap_impl fw(std::move(ptrs), &ret_slot, &h.w.m_root.m_store, &h.w);
+    fwrap_native fw(std::move(ptrs), &ret_slot, &h.w.m_root.m_store, &h.w);
 
     EXPECT_EQ(fw.size(), 2u);
     EXPECT_EQ(fw[0].to<int_64>(), 1);
@@ -223,7 +223,7 @@ TEST(gt_ascript_context, Args_IndexOutOfRange) {
     variant a1(static_cast<int_64>(1));
     std::vector<variant*> ptrs = {&a1};
     variant ret_slot;
-    fwrap_impl fw(std::move(ptrs), &ret_slot, &h.w.m_root.m_store, &h.w);
+    fwrap_native fw(std::move(ptrs), &ret_slot, &h.w.m_root.m_store, &h.w);
 
     EXPECT_THROW(fw[1], script_exception);
     EXPECT_THROW(fw[5], script_exception);
@@ -259,7 +259,7 @@ TEST(gt_ascript_context, Args_ReadBeforeCallback) {
     variant a1(static_cast<int_64>(7));
     std::vector<variant*> ptrs = {&a1};
     variant ret_slot;
-    fwrap_impl fw(std::move(ptrs), &ret_slot, &h.w.m_root.m_store, &h.w);
+    fwrap_native fw(std::move(ptrs), &ret_slot, &h.w.m_root.m_store, &h.w);
 
     EXPECT_EQ(fw[0].to<int_64>(), 7);
     variant result = fw.call("the_answer", varvec());
@@ -313,7 +313,7 @@ TEST(gt_ascript_context, Iload_WritePosture) {
     h.w.m_root.m_store.store("m", variant(varmap{}));
 
     variant ret_slot;
-    fwrap_impl fw(std::vector<variant*>(), &ret_slot, &h.w.m_root.m_store, &h.w);
+    fwrap_native fw(std::vector<variant*>(), &ret_slot, &h.w.m_root.m_store, &h.w);
     variant* p = fw.iload("m.k");
     ASSERT_NE(p, nullptr) << "the write posture creates the terminal key";
     *p = variant(static_cast<int_64>(5));
@@ -327,7 +327,7 @@ TEST(gt_ascript_context, Call_DoesNotCreateItsPath) {
     h.w.m_root.m_store.store("m", variant(varmap{}));
 
     variant ret_slot;
-    fwrap_impl fw(std::vector<variant*>(), &ret_slot, &h.w.m_root.m_store, &h.w);
+    fwrap_native fw(std::vector<variant*>(), &ret_slot, &h.w.m_root.m_store, &h.w);
     try {
         fw.call("m.missing_fn", varvec());
         FAIL() << "a path with no callable must be refused";

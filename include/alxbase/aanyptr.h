@@ -97,10 +97,9 @@ namespace alx {
             return *this;
         }
 
-        /// Move-construct: the handle is stolen and _other is left null, owning nothing
+        /// Move-construct: the handle is stolen and _other is left null, owning nothing and carrying no record
         anyptr(anyptr&& _other) noexcept : m_hdl(_other.m_hdl) {
-            _other.m_hdl.obj_ = nullptr;
-            _other.m_hdl.ref_ = nullptr;
+            _other.m_hdl = ptrpkg{};
         }
 
         /// Move-assign: release what is held, then steal _other's handle; self-move is a no-op
@@ -108,8 +107,7 @@ namespace alx {
             if (this == &_other) return *this;
             release();
             m_hdl = _other.m_hdl;
-            _other.m_hdl.obj_ = nullptr;
-            _other.m_hdl.ref_ = nullptr;
+            _other.m_hdl = ptrpkg{};
             return *this;
         }
 
@@ -129,6 +127,8 @@ namespace alx {
         bool is_ref() const { return nullptr != m_hdl.ref_; }
         /// True when more than one handle holds the pointee; a snapshot of the atomic count
         bool shared() const { return nullptr != m_hdl.ref_ && m_hdl.ref_->is_shared(); }
+        /// Type identity of the handle: its registration record's id, or 0 when it carries none
+        uint_64 rid() const { return m_hdl.reg_ ? m_hdl.reg_->rid : 0; }
 
     private:
         template <typename T> friend class anyptr_ex;
@@ -169,6 +169,16 @@ namespace alx {
         }
     };
 
+    /// Compiler spelling of the T instantiation; hashed into the type id at compile time
+    template <typename T>
+    constexpr const char* type_sig() {
+#ifdef _MSC_VER
+        return __FUNCSIG__;
+#else
+        return __PRETTY_FUNCTION__;
+#endif
+    }
+
     /**
      * \brief Registration holder: fills a record with the deleter, the clone and the type id
      *
@@ -178,17 +188,15 @@ namespace alx {
      */
     template <typename T, bool COPY_ALBE>
     struct anyptr_register_impl {
+        /// Type identity for anyptr_ex<T>::as(): the same T hashes alike across translation units
+        static constexpr uint_64 rid = fnv1a_64(type_sig<T>());
         /// The record the constructor fills in; a handle keeps its address, not a copy
         anyptr_reg reg_;
-        /// Fill the record in, hashing the compiler's signature for the instantiation into rid
+        /// Fill the record in; the type id is already a compile-time constant
         anyptr_register_impl() {
             reg_.del = del;
             reg_.cpy = cpy;
-#ifdef _MSC_VER
-            reg_.rid = fnv1a_64(__FUNCSIG__);
-#else
-            reg_.rid = fnv1a_64(__PRETTY_FUNCTION__);
-#endif
+            reg_.rid = rid;
         }
         /// Delete a pointee of this instantiation as a T
         static void del(void* p) { delete static_cast<T*>(p); }
@@ -205,17 +213,15 @@ namespace alx {
      */
     template <typename T>
     struct anyptr_register_impl<T, false> {
+        /// Type identity for anyptr_ex<T>::as(): the same T hashes alike across translation units
+        static constexpr uint_64 rid = fnv1a_64(type_sig<T>());
         /// The record the constructor fills in; a handle keeps its address
         anyptr_reg reg_;
-        /// Fill the record in, hashing the compiler's signature for the instantiation into rid
+        /// Fill the record in; the type id is already a compile-time constant
         anyptr_register_impl() {
             reg_.del = del;
             reg_.cpy = nullptr;
-#ifdef _MSC_VER
-            reg_.rid = fnv1a_64(__FUNCSIG__);
-#else
-            reg_.rid = fnv1a_64(__PRETTY_FUNCTION__);
-#endif
+            reg_.rid = rid;
         }
         /// Delete a pointee of this instantiation as a T
         static void del(void* p) { delete static_cast<T*>(p); }
@@ -236,6 +242,8 @@ namespace alx {
     public:
         /// Registration record of T, whose address every handle made here keeps
         static const anyptr_register<T> _register;
+        /// Type identity of T, a compile-time constant
+        static constexpr uint_64 rid = anyptr_register<T>::rid;
 
     public:
         /**

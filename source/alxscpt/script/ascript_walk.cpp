@@ -1641,7 +1641,8 @@ namespace alx {
                 throw script_exception{error_type::ArgError, std::string("type: at most 1 argument")};
 
             variant v = _tree.size() > 1 ? walker::eval_arg(_tree[1], _w) : variant();
-            return std::string(type_name_script(v, _w.m_cfg.type_ex_ptr, _w.m_cfg.type_ex_ud));
+            return std::string(type_name_script(v, _w.m_cfg.type_ex_ptr, _w.m_cfg.type_ex_ud,
+                                                _w.mgr));
         }
 
         variant walker::op_env(const varvec& _tree, walker& _w) {
@@ -3138,8 +3139,8 @@ namespace alx {
                 throw script_exception{error_type::NameError,
                                        std::string("extension function not found: $" + _name)};
             variant ret_slot;
-            fwrap_impl fw(walker::native_arg_ptrs(_args, _w),
-                          &ret_slot, &_w.state.current->m_store, &_w);
+            fwrap_native fw(walker::native_arg_ptrs(_args, _w),
+                            &ret_slot, &_w.state.current->m_store, &_w);
             handler(fw);
             return ret_slot;
         }
@@ -3310,8 +3311,8 @@ namespace alx {
                         }
                         if (ca->is_native()) {
                             variant ret_slot;
-                            fwrap_impl fw(walker::native_arg_ptrs(_args, _w),
-                                          &ret_slot, &_w.state.current->m_store, &_w);
+                            fwrap_native fw(walker::native_arg_ptrs(_args, _w),
+                                            &ret_slot, &_w.state.current->m_store, &_w);
                             ca->m_fn(fw);
                             return ret_slot;
                         }
@@ -3333,8 +3334,8 @@ namespace alx {
                                     return walker::invoke_def(_w.state.current, ca, func_name, _tree, _w, _args);
                                 if (ca->is_native()) {
                                     variant ret_slot;
-                                    fwrap_impl fw(walker::native_arg_ptrs(_args, _w), &ret_slot,
-                                                  &_w.state.current->m_store, &_w);
+                                    fwrap_native fw(walker::native_arg_ptrs(_args, _w), &ret_slot,
+                                                    &_w.state.current->m_store, &_w);
                                     ca->m_fn(fw);
                                     return ret_slot;
                                 }
@@ -3354,8 +3355,8 @@ namespace alx {
                                                               _tree, _w, _args);
                                 if (ca->is_native()) {
                                     variant ret_slot;
-                                    fwrap_impl fw(walker::native_arg_ptrs(_args, _w), &ret_slot,
-                                                  &r.slot_owner->m_store, &_w);
+                                    fwrap_native fw(walker::native_arg_ptrs(_args, _w), &ret_slot,
+                                                    &r.slot_owner->m_store, &_w);
                                     ca->m_fn(fw);
                                     return ret_slot;
                                 }
@@ -3378,8 +3379,8 @@ namespace alx {
                             if (auto* ca = anyptr_ex<call_able>::as(lap)) {
                                 if (ca->is_native()) {
                                     variant ret_slot;
-                                    fwrap_impl fw(walker::native_arg_ptrs(_args, _w),
-                                                  &ret_slot, &link->m_store, &_w);
+                                    fwrap_native fw(walker::native_arg_ptrs(_args, _w),
+                                                    &ret_slot, &link->m_store, &_w);
                                     ca->m_fn(fw);
                                     return ret_slot;
                                 }
@@ -3396,8 +3397,8 @@ namespace alx {
                             if (ca && ca->is_native()) {
                                 variant ret_slot;
                                 data_store* store = r.link_owner ? &r.link_owner->m_store : &_w.state.current->m_store;
-                                fwrap_impl fw(walker::native_arg_ptrs(_args, _w),
-                                              &ret_slot, store, &_w);
+                                fwrap_native fw(walker::native_arg_ptrs(_args, _w),
+                                                &ret_slot, store, &_w);
                                 fw.m_area = ca->m_area;
                                 ca->m_fn(fw);
                                 return ret_slot;

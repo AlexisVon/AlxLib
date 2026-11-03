@@ -59,7 +59,7 @@ eng->reset();                  // drop the intermediate state of a run: the root
 
 `reset()` is also the only reaper: a run that fails during execution leaves root variables, defs and loaded modules standing — and with them the parsed ASTs behind the defs — so a long-lived engine holds that memory until an explicit `reset()`.
 
-`engine` is **single-threaded and not reentrant**: one instance runs on one thread at a time. Only four interfaces are meant to cross threads: `running()` and `set_interrupt()` (§10), `yield()` (§3.2b), and `set_max_yield()` (its admission capacity is atomic and synced immediately).
+`engine` is **single-threaded and not reentrant**: one instance runs on one thread at a time. Nothing may be entered from two threads at once unless it says so; the only methods meant to cross threads are `is_running()` and `set_interrupt()` (§10) and `yield()` (§3.2b).
 
 ---
 
@@ -163,17 +163,34 @@ alx::variant* load(const std::string& _name, bool _auto_create = false);   // re
 - On the script side integers are all `long long` semantics and floating point is `double`; a host reads one back under `to<T>()`'s **lossless conversion** rule, and a type that does not fit gives the default value.
 - An object handed in from C++ travels in an `anyptr` (see `wrap<T>` in §11).
 
-### 4.1 Types the script layer has no name for `set_type_ex`
+### 4.1 Types the script layer has no name for `set_type_extend`
 
 ```cpp
 using type_ex = const char* (*)(const alx::variant& _v, void* _ud);
 
-void set_type_ex(type_ex _fn, void* _ud = nullptr);
+void set_type_extend(type_ex _fn, void* _ud = nullptr);
 ```
 
 `type()` has two dead-end answers: an object a host handed over, and a variant type the script layer does not model (a 32-bit float, an unsigned integer, a `std::vector<T>`). Both go to this callback when one is installed — null or an empty answer means the host does not know it either, and `"unknown"` stands, which is also the answer with no callback at all; passing null removes the callback.
 
 The callback runs on the thread that executes the script, and the engine is not reentrant. The pointer it returns is read once, right after the call, and never kept — its storage has to stay valid past the return. A C++ exception it throws is reported like a native's: a script `try` can catch it as `NativeError`, and without one the run comes back as `NativeError`. The diagnostic messages that name a value in a conversion (`"Expected int, got X"` and the like) never ask the callback and keep saying `"unknown"` — the `exec()` result gate does ask it, so its message carries the same name `type()` reports.
+
+A handle a link module handed out is named by that module before the host is asked (§4.2); `set_type_extend` only sees what is left.
+
+### 4.2 Link-registered types — `engine::type` / `desc` / `view`
+
+A link can name the handle types it hands out (see §11.5). The host asks through:
+
+```cpp
+std::string type(const alx::variant& _v) const;                    // always an answer
+bool desc(const alx::anyptr& _h, std::string& _out) const;         // false = nothing registered / no summary
+bool view(const alx::anyptr& _h, alx::variant& _out) const;        // false = nothing registered / no view
+```
+
+- `type()` is the name the script's own `type()` gives — both run one chain: the built-in names, then the owning link's registered name, then the host's `set_type_extend` callback, then `"unknown"`. A link sees only `anyptr` handles, so a plain unmodeled value (a `float32`, a `uint64`) stays the host callback's to name.
+- `desc` is the registered **printable one-line summary**; an empty answer counts as none.
+- `view` hands back the link's payload untouched — its shape is between the provider and the host, and the engine neither reads nor checks it; a null variant counts as none.
+- **No gate**: call them whenever the engine's thread has it (§2); `false` only says "nothing there". Inside a hook callback use `hook_info::wktype` / `wkdesc` / `wkview` (same answers, and `hkdt` stays the host's own cookie).
 
 ---
 
@@ -209,11 +226,12 @@ eng->set_extend("print", [](alx::script::fwrap& _fw) {
 | `raise(info, error_type)` | throw an exception the script can catch |
 | `call(func, args)` | call a script function from the native (`func` may be a function name, a `.` path, or a callable value); the path lookup is read-only — a path that does not resolve leaves nothing behind |
 | `iload(key)` | resolve a name or `.` path in the calling scope to a **slot address or nothing** — the script-level read semantics (a `[null]` size, an element's value) do not apply here, and a shape that is not an address (a slice, an out-of-range index, a byte element, a bare name that is not there) is simply `nullptr`; the promise covers the resolved outcome — a `.` path whose intermediate step does not resolve still reports that step's error (`Undefined: <name>`, a missing map key). **The host's one slot handle, in write posture**: it hands back a writable slot, so a missing terminal map key (and a `[null]` append position) is created — write into the returned slot to bind a value; the pointer follows the engine-side `load()` rule — invalidated by any addition to the store and by any reset |
-| `bind(name, func, area)` | register a native function into an area (what a link module uses); an empty `area` registers into the call's plain data scope, and an existing name is replaced either way |
+| `bind(name, func, area)` | register a native function into an area (what a link module uses); an empty `area` registers into the call's plain data scope, a non-empty one into the area of that name (created empty when absent); a name already bound, or an `area` name holding anything but an area, answers `false` and changes nothing |
+| `bind(area, obj, methods)` / `wrap<T>(obj, area, methods)` | create the area `area` carrying `obj` (`wrap` builds the handle with `anyptr_ex<T>::make`) and its methods; create-only — a taken name answers `false`; the object is consumed by the handle either way |
 | `load/store/remove(name)` | reach the call's data scope: the calling link instance's own store, or the current entity's store for an extension handler (where `load`/`store` are misuse — use `iload`, `lang.md` §12.4); a returned pointer follows the same rule (any addition to the store, any reset) |
-| `object()` / `unwrap<T>()` | the C++ object bound to the current area — **area natives only**: outside an area dispatch (an extend handler, a load/unload callback, a `bind` with no area) no area is set, and calling it there is outside the contract — nothing is set to hand back |
+| `object()` / `unwrap<T>()` | the C++ object bound to the current area — **area natives only**: outside an area dispatch (an extend handler, a `bind` with no area) there is nothing to hand back and the call throws `ContextError`, as it does from an entry point |
 | `config()` | read the engine configuration (the pipe pointers included) |
-| `currying(name)` | mint a **delivery handle** (`fwrap::callback*`) naming a def — each `cb->call(args, priority, expiry)` is `engine::yield` under that name (§3.2b), the native's channel to its worker threads. **The caller owns the handle and deletes it**, before the engine dies (using one afterwards is UB). A load/unload entry point has no engine to name, so calling it there throws `LinkError` |
+| `currying(name)` | mint a **delivery handle** (`fwrap::callback*`) naming a def — each `cb->call(args, priority, expiry)` is `engine::yield` under that name (§3.2b), the native's channel to its worker threads. **The caller owns the handle and deletes it**, before the engine dies (using one afterwards is UB). An entry point has no engine to name, so calling it there throws `ContextError` |
 
 ---
 
@@ -280,7 +298,7 @@ const void* wken_root();
 std::vector<std::string> wken_data_keys(const void* e);
 const variant* wken_data_cptr(const void* e, const char* key);
 std::string wken_file(const void* e);  std::string wken_name(const void* e);
-const std::string& wken_path(const void* e);  // the resolved path itself by reference (no copy), empty for the root
+const std::string& wken_path(const void* e);  // the resolved path itself by reference (no copy); the root answers its home directory (empty when none)
 const void* wken_pptr(const void* e);
 
 const void* wklk_of(const variant* v);      // value -> link handle
@@ -297,7 +315,13 @@ std::list<varmap> wkdt_fpos();        // the statement chain {row, col, ofst, fi
                                       // func: the function name / "eval" / "?" for a nameless layer (a block or loop layer with a position is listed too)
 
 const engine_config& wkconfig();
+
+std::string wktype(const variant& v);            // the name type() gives (link names included, see §4.2)
+bool wkdesc(const anyptr& h, std::string& out);  // printable one-line summary; false = none
+bool wkview(const anyptr& h, variant& out);      // the link's payload; false = none (opaque to the engine)
 ```
+
+The last three mirror `engine::type` / `desc` / `view` (§4.2), so a callback never needs the engine pointer through `hkdt`.
 
 ### 8.2 Row-level position `set_debug_enable`
 
@@ -330,7 +354,7 @@ The channels are per-engine; with none set (`nullptr`) the host's default is std
 ## 10. Interrupt
 
 ```cpp
-bool running() const;        // true while an entry runs: exec() or call()
+bool is_running() const;     // true while an entry runs: exec() or call()
 void set_interrupt();        // ask for an interrupt (callable from any thread)
 ```
 
@@ -352,6 +376,17 @@ A link module is a dynamic library that gives a script three layers: **a namespa
 | `alexis_script_release` | `void (*)(fwrap&)` | instance level: when an instance is destroyed |
 
 Constant names: `LINK_LOAD` / `LINK_UNLOAD` / `LINK_CREATE` / `LINK_RELEASE`; function type aliases `script_load` / `script_unload` / `script_create` / `script_release`.
+
+The calls an entry point may make differ by context; a call the context does not allow throws `ContextError` (a wrong-context call is a bug, not a runtime condition):
+
+| Entry | May call |
+|---|---|
+| load | `bind(name, fn[, area])`, `bind(area, obj, methods)` (and `wrap`), `bind(rid, name, desc, view)`, `store` / `load` / `remove`, `raise`, `config` (empty — no walk) |
+| create | `bind(name, fn[, area])`, `bind(area, obj, methods)` (and `wrap`), `store` / `load` / `remove`, `raise`, `config` (empty) |
+| release / unload | `store` / `load` / `remove`, `raise`, `config` (empty) |
+| a native call | everything the load entry allows except `bind(rid, ...)`, plus `size` / `operator[]` / `freturn` / `iload` / `call` / `object` / `currying`, with the engine's `config` |
+
+A name that is already bound makes `bind` answer `false`; the existing binding stays. `wrap` answers `false` (nothing stored, the object stays the caller's) on an empty or taken area name — the refusal comes before the first store; its method list is a `std::map`, so a name appears once by construction.
 
 ```cpp
 #if defined(_WIN32)
@@ -382,7 +417,7 @@ _fw.wrap<alx::file>(new alx::file(), "x", {
 });
 ```
 
-`wrap<T>` does two things: it stores `anyptr_ex<T>::make(_obj)` in the data slot keyed by the area name, and `bind`s each method into that area. When the script calls `b.x.read()`, the engine sets the area to `x` first, and `_fw.unwrap<alx::file>()` inside the native hands that C++ object back.
+`wrap<T>(obj, area, methods)` is `bind(area, anyptr_ex<T>::make(obj), methods)` — the write-side twin of `unwrap<T>()`: it creates the area carrying the object and its methods. Create-only — a taken (or empty) area name answers `false`; the object travels in the handle, so it is **consumed either way** (a false answer releases it) and the caller never deletes it. For a shared handle (`make_ref`) call `bind` directly — `wrap` always uses `make`. The choice shows up when the script copies the link instance: a `make` handle's object is cloned through the registered `cpy` (a non-copyable type leaves the copy's handle null), while a `make_ref` handle is shared across the copies. The method list is a `std::map`, so its names are unique by construction (a repeated key merges at the call site — the caller's input, not the engine's check). When the script calls `b.x.read()`, the engine sets the area to `x` first, and `_fw.unwrap<alx::file>()` inside the native hands that C++ object back.
 
 **`anyptr_ex<T>::make` splits on copyability**: a copyable type gets a copier; a `noncopyable` type (such as `alx::file`) takes the non-copyable version.
 
@@ -412,6 +447,27 @@ void fn_read(alx::script::fwrap& _fw) {
 | Shutdown | **the link instances are destroyed first, `dlclose` after** — the anyptr's destructor lives in the dynamic library and has to be called before the unload |
 
 A link instance's private data slot is invisible to the script (reading, writing and deleting all throw `TypeError`), so the script reaches it only indirectly, through the functions registered in the area.
+
+A handle a module made (`anyptr_ex<T>::make` / `make_ref`) must not outlive the module **in this engine**: dropping the link's last instance unloads it and the `dlclose` follows, and the engine does not track the handles it handed out — using one afterwards (a destructor included, which runs the module's deleter) is UB. Keep a link value alive for as long as its handles are.
+
+### 11.5 Type registration
+
+A link that hands out `anyptr` handles can name their types, so the host and the script see something better than a hex handle. Register inside `alexis_script_load`:
+
+```cpp
+// T is the wrapped type; anyptr_ex<T>::rid is a compile-time constant
+_fw.bind(anyptr_ex<cv::Mat>::rid, "cv::Mat", fn_desc, fn_view);
+
+static std::string fn_desc(const anyptr& _h);   // printable one-line summary; empty = none
+static alx::variant fn_view(const anyptr& _h);  // payload for the host; a null variant = none
+```
+
+- Available from `alexis_script_load` only; every other entry point throws `ContextError` (see the table in §11.1).
+- `_name` is **stored, not copied** — it must stay valid for the module's lifetime (a string literal).
+- A second registration of the same id answers `false`; the existing entry stays. The link decides whether that is an error (`_fw.raise(...)`).
+- Registration is transactional: it lands only if the load entry returns normally; a failed load leaves nothing behind.
+- The entries die with the module: dropping the link's last instance removes the table entries **before** the `dlclose` (the same shutdown order as §11.4).
+- `desc` is display-only; `view` is opaque to the engine — its shape is between the provider and the host.
 
 ---
 

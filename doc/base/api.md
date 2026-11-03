@@ -607,6 +607,15 @@ my_type* raw = alx::anyptr_ex<my_type>::as(p);      // nullptr when the type doe
 
 `anyptr_ex<T>` wraps a `T*` into an `anyptr` and keeps the type information with it; a `variant` can carry an arbitrary object this way, which is how host objects are passed to the script engine.
 
+Each registered type also has a **type id**, a compile-time constant derived from the compiler's spelling of `T` (`fnv1a_64(__PRETTY_FUNCTION__)` / `__FUNCSIG__`):
+
+```cpp
+uint_64 id = alx::anyptr_ex<my_type>::rid;   // compile-time constant; the same T hashes alike across a build
+uint_64 held = p.rid();                      // the handle's id, or 0 when it carries no record
+```
+
+The same `T` hashes alike across the translation units and the dynamic modules of one build, which is what `as<T>()` compares; matching never crosses builds (a different compiler or flags may spell `T` differently). The script engine keys its per-type name/summary/view table on this id.
+
 ### 10.3 The stream abstraction (`astream.h`)
 
 ```cpp

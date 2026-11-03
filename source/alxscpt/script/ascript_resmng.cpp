@@ -215,7 +215,7 @@ namespace alx {
                                          std::string detail = link_error_detail();
                                          fire(&on_csys, std::string("link error: dlopen failed: ") +
                                                             _path + ": " + detail);
-                                         _err = {error_type::ImportError,
+                                         _err = {error_type::LinkError,
                                                  std::string("Cannot link: ") + _path + ": " + detail};
                                          return nullptr;
                                      }
@@ -231,7 +231,7 @@ namespace alx {
                                          fire(&on_csys,
                                               std::string("link error: LoadLibrary failed: ") +
                                                   _path + ": " + detail);
-                                         _err = {error_type::ImportError,
+                                         _err = {error_type::LinkError,
                                                  std::string("Cannot link: ") + _path + ": " + detail};
                                          return nullptr;
                                      }

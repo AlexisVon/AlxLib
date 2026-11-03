@@ -643,7 +643,7 @@ TEST(gt_ascript_engine, LinkError_InvalidSo) {
     std::remove(so_path.c_str());
     delete eng;
 
-    ASSERT_EQ(res.error, error_type::ImportError) << "link failure propagates, no crash";
+    ASSERT_EQ(res.error, error_type::LinkError) << "link failure propagates, no crash";
 
     // both channels name the file and carry the loader's own text after it
     const std::string tail = "alx_fake_link.so: ";
@@ -956,7 +956,7 @@ TEST(gt_ascript_engine, Ext_TypeExNamesUnmodeled) {
     engine* eng = engine::create();
     eng->set_extend("odd_value", ext_unmodeled_type);
     int asked = 0;
-    eng->set_type_ex(type_ex_namer, &asked);
+    eng->set_type_extend(type_ex_namer, &asked);
     alx::bytes src("var v; v = $odd_value(); type(v);");
     auto res = eng->exec(alx::bytes_view(src), "");
     EXPECT_EQ(res.error, error_type::NoError);
@@ -969,7 +969,7 @@ TEST(gt_ascript_engine, Ext_TypeExNamesHostObject) {
     engine* eng = engine::create();
     eng->set_extend("host_handle", ext_host_handle);
     int asked = 0;
-    eng->set_type_ex(type_ex_namer, &asked);
+    eng->set_type_extend(type_ex_namer, &asked);
     alx::bytes src("var h; h = $host_handle(); type(h);");
     auto res = eng->exec(alx::bytes_view(src), "");
     EXPECT_EQ(res.error, error_type::NoError);
@@ -983,7 +983,7 @@ TEST(gt_ascript_engine, Ext_TypeExEmptyAnswerKeepsUnknown) {
     eng->set_extend("odd_value", ext_unmodeled_type);
     eng->set_extend("host_handle", ext_host_handle);
     int asked = 0;
-    eng->set_type_ex(type_ex_empty, &asked);
+    eng->set_type_extend(type_ex_empty, &asked);
     alx::bytes src("var v; v = $odd_value(); var h; h = $host_handle(); type(v) + type(h);");
     auto res = eng->exec(alx::bytes_view(src), "");
     EXPECT_EQ(res.error, error_type::NoError);
@@ -996,8 +996,8 @@ TEST(gt_ascript_engine, Ext_TypeExRemoved) {
     engine* eng = engine::create();
     eng->set_extend("odd_value", ext_unmodeled_type);
     int asked = 0;
-    eng->set_type_ex(type_ex_namer, &asked);
-    eng->set_type_ex(nullptr);
+    eng->set_type_extend(type_ex_namer, &asked);
+    eng->set_type_extend(nullptr);
     alx::bytes src("var v; v = $odd_value(); type(v);");
     auto res = eng->exec(alx::bytes_view(src), "");
     EXPECT_EQ(res.error, error_type::NoError);
@@ -1009,7 +1009,7 @@ TEST(gt_ascript_engine, Ext_TypeExRemoved) {
 TEST(gt_ascript_engine, Ext_TypeExNotAskedForModeled) {
     engine* eng = engine::create();
     int asked = 0;
-    eng->set_type_ex(type_ex_namer, &asked);
+    eng->set_type_extend(type_ex_namer, &asked);
     alx::bytes src("type(42) + type(null) + type(\"s\") + type([1]);");
     auto res = eng->exec(alx::bytes_view(src), "");
     EXPECT_EQ(res.error, error_type::NoError);
@@ -2386,7 +2386,7 @@ TEST(gt_ascript_engine, Load_NoVarDecl) {
 
 TEST(gt_ascript_engine, Running_IdleIsFalse) {
     auto* eng = engine::create();
-    EXPECT_FALSE(eng->running());
+    EXPECT_FALSE(eng->is_running());
     delete eng;
 }
 
@@ -2424,7 +2424,7 @@ TEST(gt_ascript_engine, SetInterrupt_BreaksExec) {
                        "");
     eng->set_hook(nullptr, nullptr, 0);
     EXPECT_EQ(r.error, error_type::InterruptedError);
-    EXPECT_FALSE(eng->running());
+    EXPECT_FALSE(eng->is_running());
     delete eng;
 }
 
@@ -2449,7 +2449,7 @@ TEST(gt_ascript_engine, SetInterrupt_CrossThread) {
     auto r = fut.get();
     eng->set_hook(nullptr, nullptr, 0);
     EXPECT_EQ(r.error, error_type::InterruptedError);
-    EXPECT_FALSE(eng->running());
+    EXPECT_FALSE(eng->is_running());
     delete eng;
 }
 
@@ -2457,7 +2457,7 @@ TEST(gt_ascript_engine, Running_AfterExecCompletes) {
     auto* eng = engine::create();
     auto r = eng->exec(alx::bytes_view(alx::bytes("42;")), "");
     EXPECT_EQ(r.error, error_type::NoError);
-    EXPECT_FALSE(eng->running());
+    EXPECT_FALSE(eng->is_running());
     delete eng;
 }
 
@@ -2551,7 +2551,7 @@ TEST(gt_ascript_engine, LinkAutoSuffix_NotFound) {
     auto r = eng->exec(alx::bytes_view(alx::bytes(
                            "link \"tmp-alxscpt-gtest/alx_auto_link_nope\" as f; 1;")),
                        "");
-    EXPECT_EQ(r.error, error_type::ImportError);
+    EXPECT_EQ(r.error, error_type::LinkError);
     delete eng;
 }
 
@@ -2561,7 +2561,7 @@ TEST(gt_ascript_engine, LinkAutoSuffix_ExactExtension) {
     auto r = eng->exec(alx::bytes_view(alx::bytes(
                            "link \"tmp-alxscpt-gtest/alx_auto_link_exact.so\" as f; 1;")),
                        "");
-    EXPECT_EQ(r.error, error_type::ImportError);
+    EXPECT_EQ(r.error, error_type::LinkError);
     delete eng;
 }
 
@@ -2707,7 +2707,7 @@ TEST(gt_ascript_engine, Call_Counter) {
 
 static engine* g_running_probe_eng = nullptr;
 
-static void probe_running(fwrap& fw) { fw.freturn(variant(g_running_probe_eng->running())); }
+static void probe_running(fwrap& fw) { fw.freturn(variant(g_running_probe_eng->is_running())); }
 
 TEST(gt_ascript_engine, RunningCoversBothEntries) {
     // the cross-thread query is true while either entry runs: a native inside the run observes it
@@ -2715,7 +2715,7 @@ TEST(gt_ascript_engine, RunningCoversBothEntries) {
     g_running_probe_eng = eng;
     eng->set_extend("probe_running", probe_running);
     eng->exec(alx::bytes_view(alx::bytes("def f() { return $probe_running(); }")), "");
-    EXPECT_FALSE(eng->running()) << "outside any entry the engine is idle";
+    EXPECT_FALSE(eng->is_running()) << "outside any entry the engine is idle";
 
     auto r = eng->call("f", {});
     EXPECT_EQ(r.error, error_type::NoError);
@@ -2724,7 +2724,7 @@ TEST(gt_ascript_engine, RunningCoversBothEntries) {
     auto r2 = eng->exec(alx::bytes_view(alx::bytes("$probe_running();")), "");
     EXPECT_TRUE(r2.value.to<bool>()) << "exec as before";
 
-    EXPECT_FALSE(eng->running());
+    EXPECT_FALSE(eng->is_running());
     g_running_probe_eng = nullptr;
     delete eng;
 }
@@ -2895,7 +2895,7 @@ TEST(gt_ascript_engine, Failure_EngineStaysUsableWithoutReset) {
         ofs << "not a shared object";
     }
     EXPECT_EQ(eng->exec(alx::bytes_view(alx::bytes("link \"" + fake + "\" as bad;")), "").error,
-              error_type::ImportError);
+              error_type::LinkError);
     std::remove(fake.c_str());
     call_ok();
 

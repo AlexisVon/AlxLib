@@ -952,7 +952,7 @@ TEST(gt_ascript_walk, InstanceCopyKeepsItsTree) {
 TEST(gt_ascript_walk, LinkNoCrash) {
 
     auto r = exec_src_catch("link \"no_such_file\" as dummy; 1;");
-    EXPECT_EQ(r.first, error_type::ImportError);
+    EXPECT_EQ(r.first, error_type::LinkError);
 }
 
 TEST(gt_ascript_walk, Import_ReadCopies) {

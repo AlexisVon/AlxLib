@@ -93,8 +93,7 @@ namespace alx {
             // a copy is a full new instance: the data is cloned first, then LINK_CREATE initialises it
             copy_store(m_store, _o.m_store);
             if (m_fly && m_fly->m_link && m_fly->m_link->m_create_fn) {
-                std::vector<variant*> empty_args;
-                fwrap_impl fw(std::move(empty_args), nullptr, &m_store, nullptr);
+                fwrap_create fw(&m_store);
                 m_fly->m_link->m_create_fn(fw);
             }
             if (m_mng && m_fly) m_fly->m_ref.ref();
@@ -112,8 +111,7 @@ namespace alx {
             m_alias = _o.m_alias;
             // the same copy discipline as the copy constructor: data first, then LINK_CREATE
             if (m_fly && m_fly->m_link && m_fly->m_link->m_create_fn) {
-                std::vector<variant*> empty_args;
-                fwrap_impl fw(std::move(empty_args), nullptr, &m_store, nullptr);
+                fwrap_create fw(&m_store);
                 m_fly->m_link->m_create_fn(fw);
             }
             return *this;
@@ -127,8 +125,7 @@ namespace alx {
         impl_link::~impl_link() {
             // per instance: the LINK_RELEASE hook runs with the instance store still populated
             if (m_fly && m_fly->m_link && m_fly->m_link->m_release_fn) {
-                std::vector<variant*> empty_args;
-                fwrap_impl fw(std::move(empty_args), nullptr, &m_store, nullptr);
+                fwrap_teardown fw(&m_store);
                 m_fly->m_link->m_release_fn(fw);
             }
             m_store.m_data.clear();
@@ -224,7 +221,7 @@ namespace alx {
                                                                    *_w->state.m_search_paths,
                                                                    _w->state.compiled_modules);
             if (resolved.empty()) {
-                _err = {error_type::ImportError,
+                _err = {error_type::LinkError,
                         std::string("Cannot link: ") + _path};
                 return nullptr;
             }
@@ -258,7 +255,7 @@ namespace alx {
         template <typename FlyT, typename DoInit>
         bool init_fly_gate(FlyT* fly, mod_mng* mng, walker* _w,
                            script_exception& _err, const char* _self_msg,
-                           const char* _circ_msg, DoInit&& _do_init) {
+                           const char* _circ_msg, error_type _err_type, DoInit&& _do_init) {
             if (fly->m_init_done) return true;
             // a failure is latched with its text: while the fly stays pooled, later imports replay it
             if (fly->m_bad) {
@@ -271,13 +268,18 @@ namespace alx {
             if (it != st.end()) {
                 // the newest stack entry is a self-import; a deeper hit is a cycle
                 bool self = (it + 1 == st.end());
-                _err = {error_type::ImportError,
-                        std::string(self ? _self_msg : _circ_msg) + fly->m_path};
+                _err = {_err_type, std::string(self ? _self_msg : _circ_msg) + fly->m_path};
                 return false;
             }
 
             st.push_back(fly->m_path);
-            bool ok = _do_init(fly, _w, _err);
+            bool ok = false;
+            try {
+                ok = _do_init(fly, _w, _err);
+            } catch (...) {
+                st.pop_back();
+                throw;
+            }
             st.pop_back();
 
             if (ok) {
@@ -293,6 +295,7 @@ namespace alx {
         bool mod_mng::init_fly_import(fly_import* fly, walker* _w,
                                       script_exception& _err) {
             return init_fly_gate(fly, this, _w, _err, "Self-import: ", "Circular import: ",
+                                 error_type::ImportError,
                                  [this](fly_import* f, walker* w, script_exception& e) {
                                      return run_init_walk(f, w, e);
                                  });
@@ -301,14 +304,14 @@ namespace alx {
         bool mod_mng::init_fly_link(fly_link* fly, walker* _w,
                                     script_exception& _err) {
             return init_fly_gate(fly, this, _w, _err, "Self-link: ", "Circular link: ",
-                                 [](fly_link* f, walker*, script_exception& e) {
+                                 error_type::LinkError,
+                                 [this](fly_link* f, walker*, script_exception& e) {
                                      bool ok = true;
                                      // once per fly: the LINK_LOAD hook builds the template instances copy
                                      if (f->m_link && f->m_link->m_load_fn) {
 
-                                         std::vector<variant*> empty_args;
-                                         fwrap_impl fw(std::move(empty_args), nullptr,
-                                                       &f->m_store, nullptr);
+                                         fwrap_load fw(&f->m_store);
+                                         fw.m_mgr = this;
                                          try {
                                              f->m_link->m_load_fn(fw);
                                          } catch (const script_exception& _e) {
@@ -323,6 +326,7 @@ namespace alx {
                                                   std::string("unknown native error")};
                                              ok = false;
                                          }
+                                         if (ok) commit_types(f, std::move(fw.m_pending));
                                      }
                                      return ok;
                                  });
@@ -459,9 +463,7 @@ namespace alx {
                 // per instance: LINK_CREATE builds a fresh area, else the template store is copied
                 if (fly->m_link && fly->m_link->m_create_fn) {
 
-                    std::vector<variant*> empty_args;
-                    fwrap_impl fw(std::move(empty_args), nullptr,
-                                  &inst->m_store, nullptr);
+                    fwrap_create fw(&inst->m_store);
                     fly->m_link->m_create_fn(fw);
                 } else {
                     copy_store(inst->m_store, fly->m_store);
@@ -505,17 +507,18 @@ namespace alx {
             link_resource* lr = _fw->m_link;
             // per fly, on the template store: the LINK_UNLOAD counterpart of the per-instance release
             if (lr && lr->m_unload_fn) {
-                std::vector<variant*> empty_args;
-                fwrap_impl fw(std::move(empty_args), nullptr,
-                              &_fw->m_store, nullptr);
+                fwrap_teardown fw(&_fw->m_store);
                 lr->m_unload_fn(fw);
             }
+            for (uint_64 id : _fw->m_types) m_types.erase(id);
             delete _fw;
             m_res->release_link(lr);
         }
 
         // teardown: every pooled fly goes regardless of its refcount, links running their unload hook
         void mod_mng::clear() {
+            // the names point into modules the loop below can dlclose: drop the table first
+            m_types.clear();
             while (!m_imports.empty()) {
                 auto it = m_imports.begin();
                 fly_import* fly = it->second;
@@ -530,13 +533,27 @@ namespace alx {
                 m_links.erase(it);
                 link_resource* lr = fly->m_link;
                 if (lr && lr->m_unload_fn) {
-                    std::vector<variant*> empty_args;
-                    fwrap_impl fw(std::move(empty_args), nullptr,
-                                  &fly->m_store, nullptr);
+                    fwrap_teardown fw(&fly->m_store);
                     lr->m_unload_fn(fw);
                 }
                 delete fly;
                 m_res->release_link(lr);
+            }
+        }
+
+        const mod_mng::type_entry* mod_mng::type_info(uint_64 _rid) const {
+            auto it = m_types.find(_rid);
+            return it != m_types.end() ? &it->second : nullptr;
+        }
+
+        bool mod_mng::type_taken(uint_64 _rid) const {
+            return m_types.find(_rid) != m_types.end();
+        }
+
+        void mod_mng::commit_types(fly_link* _fly, std::vector<type_reg>&& _regs) {
+            for (auto& r : _regs) {
+                m_types[r.m_rid] = type_entry{r.m_name, r.m_desc, r.m_view};
+                _fly->m_types.push_back(r.m_rid);
             }
         }
 

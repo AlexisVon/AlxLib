@@ -30,35 +30,10 @@ namespace alx {
         // Containing directory of _path (itself when it is a directory); the result is file_info's absolute form
         std::string dirname_of(const std::string& _path);
 
-        // an empty handle reads as null, engine handles split into kinds, and everything else asks the host before "unknown"
-        inline const char* type_name_script(const variant& _v, type_ex _ex = nullptr, void* _ud = nullptr) {
-            switch (_v.type()) {
-            case variant::id<int_64>(): return "int";
-            case variant::id<double>(): return "float";
-            case variant::id<bool>(): return "bool";
-            case variant::id<std::string>(): return "string";
-            case variant::id<bytes>(): return "bytes";
-            case variant::id<varvec>(): return "vec";
-            case variant::id<varmap>(): return "map";
-            case variant::id<varlst>(): return "lst";
-            case variant::id<anyptr>(): {
-                const anyptr& ap = _v.to<anyptr>();
-                if (ap.null()) return "null";
-                if (anyptr_ex<call_able>::as(ap)) return "func";
-                if (anyptr_ex<impl_import>::as(ap)) return "import";
-                if (anyptr_ex<impl_link>::as(ap)) return "link";
-                if (anyptr_ex<link_area>::as(ap)) return "area";
-                break;
-            }
-            case -1: return "null";
-            default: break;
-            }
-            if (_ex) {
-                const char* name = _ex(_v, _ud);
-                if (name && name[0]) return name;
-            }
-            return "unknown";
-        }
+        // an empty handle reads as null, engine handles split into kinds, a loaded link names its own
+        // handles, then the host, then "unknown"
+        const char* type_name_script(const variant& _v, type_ex _ex = nullptr, void* _ud = nullptr,
+                                     const mod_mng* _mgr = nullptr);
 
         // Strict readers: exact type only (an int is not a float here), except bool which also takes a number
         inline int_64 to_int_strict(const variant& _v) {

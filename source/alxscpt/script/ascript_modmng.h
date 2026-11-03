@@ -55,6 +55,18 @@ namespace alx {
             // teardown only, instances must already be gone: every entry is dropped, refs or not
             void clear();
 
+            // type table: one entry per registered id, owned by the module that bound it; m_name points
+            // into the module, which outlives the entry
+            struct type_entry {
+                const char* m_name;
+                std::string (*m_desc)(const anyptr&) = nullptr;
+                variant (*m_view)(const anyptr&) = nullptr;
+            };
+            const type_entry* type_info(uint_64 _rid) const;
+            bool type_taken(uint_64 _rid) const;
+            // commit what a load entry collected; the fly records the ids to drop at unload
+            void commit_types(fly_link* _fly, std::vector<type_reg>&& _regs);
+
         private:
             // s_users counts the live mod_mng objects; only construction and destruction take this lock
             static res_mng* s_res;
@@ -64,11 +76,12 @@ namespace alx {
             // the shared gate body is defined in the .cpp; a friend only to reach m_loading_stack
             template <typename FlyT, typename DoInit>
             friend bool init_fly_gate(FlyT*, mod_mng*, walker*, script_exception&,
-                                      const char*, const char*, DoInit&&);
+                                      const char*, const char*, error_type, DoInit&&);
 
             // keyed by res_make_key of the resolved path: one fly per resolved file, deleted when its refs hit zero
             std::unordered_map<uint_64, fly_import*> m_imports;
             std::unordered_map<uint_64, fly_link*> m_links;
+            std::unordered_map<uint_64, type_entry> m_types;
             // resolved paths of the init chain in flight: a repeat means self- or circular import
             std::vector<std::string> m_loading_stack;
             // runs the module body in a sub-walker and keeps the store it leaves as the fly's template

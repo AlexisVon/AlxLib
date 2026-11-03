@@ -257,9 +257,9 @@ TEST(gt_ascript_yield, ConcurrentDeliveriesExpireWhileTheEngineRuns) {
     auto fut = std::async(std::launch::async, [&] {
         return run(eng, "$nap(300); var c = yield(0, 0); return c;");
     });
-    for (int i = 0; i < 5000 && !eng->running(); i++)
+    for (int i = 0; i < 5000 && !eng->is_running(); i++)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    ASSERT_TRUE(eng->running());
+    ASSERT_TRUE(eng->is_running());
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     std::vector<std::future<result>> futs;
@@ -466,9 +466,9 @@ TEST(gt_ascript_yield, HardInterruptSettlesEverything) {
                    "def slow() { var i = 0; while (1) { i = i + 1; } }"
                    "$post(\"slow\"); yield(0, 0); return 1;");
     });
-    for (int i = 0; i < 5000 && !eng->running(); i++)
+    for (int i = 0; i < 5000 && !eng->is_running(); i++)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    ASSERT_TRUE(eng->running());
+    ASSERT_TRUE(eng->is_running());
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     eng->set_interrupt();
     auto r = fut.get();
@@ -487,9 +487,9 @@ TEST(gt_ascript_yield, InterruptWakesTheResidencyWait) {
     auto fut = std::async(std::launch::async, [&] {
         return run(eng, "yield(30000, 0); return 1;");
     });
-    for (int i = 0; i < 5000 && !eng->running(); i++)
+    for (int i = 0; i < 5000 && !eng->is_running(); i++)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    ASSERT_TRUE(eng->running());
+    ASSERT_TRUE(eng->is_running());
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     eng->set_interrupt();
     ASSERT_EQ(fut.wait_for(std::chrono::seconds(2)), std::future_status::ready);
@@ -582,7 +582,7 @@ TEST(gt_ascript_yield, ADeletedHandleLeavesTheEngineRunning) {
 TEST(gt_ascript_yield, CurryingRefusedInLoadEntry) {
     engine* eng = engine::create();
     auto r = run(eng, (std::string("link \"") + ALX_TEST_LINK_CURRY_LOAD_SO + "\" as t; 1;").c_str());
-    EXPECT_EQ(r.error, error_type::LinkError);
+    EXPECT_EQ(r.error, error_type::ContextError);
     EXPECT_NE(r.value.to<std::string>().find("currying not available"), std::string::npos);
     delete eng;
 }
@@ -593,7 +593,7 @@ TEST(gt_ascript_yield, CurryingRefusedInCreateEntry) {
     engine* eng = engine::create();
     auto r = run(eng,
                  (std::string("link \"") + ALX_TEST_LINK_CURRY_CREATE_SO + "\" as t; 1;").c_str());
-    EXPECT_EQ(r.error, error_type::LinkError);
+    EXPECT_EQ(r.error, error_type::ContextError);
     EXPECT_NE(r.value.to<std::string>().find("currying not available"), std::string::npos);
     delete eng;
 }
@@ -612,9 +612,9 @@ TEST(gt_ascript_yield, HardInterruptDrainsTheBacklog) {
                    "def later() { $mark(\"later\"); }"
                    "$post(\"slow\"); $post(\"later\"); yield(0, 0); return 1;");
     });
-    for (int i = 0; i < 5000 && !eng->running(); i++)
+    for (int i = 0; i < 5000 && !eng->is_running(); i++)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    ASSERT_TRUE(eng->running());
+    ASSERT_TRUE(eng->is_running());
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     eng->set_interrupt();
     auto r = fut.get();

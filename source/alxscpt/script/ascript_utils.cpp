@@ -8,6 +8,7 @@
  * SPDX-License-Identifier: MIT
  ******************************************************************************/
 #include "ascript_utils.h"
+#include "ascript_modmng.h"
 #include <cmath>
 #include <stdexcept>
 
@@ -18,6 +19,42 @@ namespace alx {
         std::string dirname_of(const std::string& _path) {
             file_info fi(_path);
             return fi.is_dir() ? fi.path() : fi.get_parent().path();
+        }
+
+        const char* type_name_script(const variant& _v, type_ex _ex, void* _ud, const mod_mng* _mgr) {
+            switch (_v.type()) {
+            case variant::id<int_64>(): return "int";
+            case variant::id<double>(): return "float";
+            case variant::id<bool>(): return "bool";
+            case variant::id<std::string>(): return "string";
+            case variant::id<bytes>(): return "bytes";
+            case variant::id<varvec>(): return "vec";
+            case variant::id<varmap>(): return "map";
+            case variant::id<varlst>(): return "lst";
+            case variant::id<anyptr>(): {
+                const anyptr& ap = _v.to<anyptr>();
+                if (ap.null()) return "null";
+                switch (ap.rid()) {
+                case anyptr_ex<call_able>::rid: return "func";
+                case anyptr_ex<impl_import>::rid: return "import";
+                case anyptr_ex<impl_link>::rid: return "link";
+                case anyptr_ex<link_area>::rid: return "area";
+                default: break;
+                }
+                if (_mgr) {
+                    if (const mod_mng::type_entry* e = _mgr->type_info(ap.rid()))
+                        return e->m_name;
+                }
+                break;
+            }
+            case -1: return "null";
+            default: break;
+            }
+            if (_ex) {
+                const char* name = _ex(_v, _ud);
+                if (name && name[0]) return name;
+            }
+            return "unknown";
         }
 
         int_64 cov_int(const variant& _v) {

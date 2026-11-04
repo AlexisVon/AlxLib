@@ -69,6 +69,41 @@ TEST(gt_ascript_types, LinkNamesItsOwnHandle) {
     delete eng;
 }
 
+TEST(gt_ascript_types, HandleOutlivesLinkInstance) {
+    engine* eng = engine::create();
+    ASSERT_TRUE(seed_box(eng)) << "fixture link failed to load";
+    auto r = eng->exec(bytes_view(bytes("delete t; 0;")), "");
+    ASSERT_EQ(r.error, error_type::NoError) << "deleting the link instance failed";
+
+    const variant* slot = eng->load("b");
+    ASSERT_NE(slot, nullptr);
+    ASSERT_TRUE(slot->is<anyptr>());
+    EXPECT_FALSE(slot->to<anyptr>().null()) << "the handle stays valid after its link instance is gone";
+    // the image is still mapped: this destructor runs the module's deleter
+    delete eng;
+}
+
+TEST(gt_ascript_types, ImageOutlivesAnotherEngine) {
+    int unloads = 0;
+    engine* first = engine::create();
+    first->get_csys().connect([&](uint_64, const std::string& _s) {
+        if (_s.find("link unload:") != std::string::npos) ++unloads;
+    });
+    engine* second = engine::create();
+    ASSERT_TRUE(seed_box(first));
+    ASSERT_TRUE(seed_box(second));
+
+    delete first; // not the last engine: the image must stay mapped
+    EXPECT_EQ(unloads, 0);
+    const variant* slot = second->load("b");
+    ASSERT_NE(slot, nullptr);
+    ASSERT_TRUE(slot->is<anyptr>());
+    EXPECT_FALSE(slot->to<anyptr>().null());
+
+    delete second; // the last engine: its handle dies first, then the image is unloaded
+    EXPECT_EQ(unloads, 1);
+}
+
 TEST(gt_ascript_types, DescAndViewComeFromTheClaimingLink) {
     engine* eng = engine::create();
     ASSERT_TRUE(seed_box(eng));

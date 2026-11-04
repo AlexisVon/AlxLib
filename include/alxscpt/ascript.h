@@ -447,7 +447,7 @@ namespace alx {
              * when the load entry returns normally.
              *
              * \return false when the id is already registered, or _name is null or empty
-             * \throws script_exception LinkError from any other entry point
+             * \throws script_exception ContextError from any other entry point
              */
             virtual bool bind(uint_64 _rid, const char* _name,
                               std::string (*_desc)(const anyptr&) = nullptr,
@@ -599,15 +599,15 @@ namespace alx {
             static std::string prtinf(const bytes_view& _data);
 
         public:
-            /// Delete the engine, dropping the root store and every module still loaded
+            /// Delete the engine, dropping the root store and every module instance; a link image is unloaded only when the process's last engine goes
             virtual ~engine() = default;
 
             /**
              * \brief Drop everything the engine has accumulated
              *
              * Root variables, module instances and whatever a failed run left behind go; the
-             * configuration stays. Every module still loaded is released, so a link library's
-             * unload entry point runs.
+             * configuration stays. Every module instance is released, so a link library's unload
+             * entry point runs; the link image itself stays until the process's last engine goes.
              */
             virtual void reset() = 0;
 

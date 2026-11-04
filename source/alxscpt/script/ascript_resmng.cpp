@@ -120,6 +120,7 @@ namespace alx {
             return h->bytedigest().to<uint_64>(0);
         }
 
+        // the ast pool's find-or-create: the ref is taken under the same lock as the find
         template <typename MapT, typename CreateFn, typename DiscardFn, typename NotifyFn>
         static typename MapT::mapped_type pool_ref_impl(MapT& _map,
                                                         thread_safe_readwrite<void>& _lock,
@@ -135,7 +136,7 @@ namespace alx {
                     return it->second;
                 }
             }
-            // created outside the locks: parse / dlopen can re-enter this pool from a host callback
+            // created outside the locks: parse can re-enter this pool from a host callback
             auto* created = _create();
             bool won = false;
             {
@@ -203,64 +204,64 @@ namespace alx {
         }
 #endif
 
+        // a link resource carries no count: it stays pooled until clear()
+        static void unload_module_link(link_resource* _r) {
+            if (!_r->m_handle) return;
+#if defined(__linux__)
+            dlclose(_r->m_handle);
+#elif defined(_WIN32)
+            FreeLibrary((HMODULE) _r->m_handle);
+#endif
+        }
+
+        // deletes a link resource that never reached the pool, its dlopen handle included
+        struct link_discard {
+            explicit link_discard(link_resource* _r) : m_r(_r) {}
+            ~link_discard() {
+                if (!m_r) return;
+                unload_module_link(m_r);
+                delete m_r;
+            }
+            link_resource* take() {
+                link_resource* r = m_r;
+                m_r = nullptr;
+                return r;
+            }
+            link_resource* m_r;
+        };
+
         link_resource* res_mng::ref_link(const std::string& _path, walker* _w,
                                          script_exception& _err) {
             (void) _w;
             uint_64 key = res_make_key(_path);
-            // entry points stay unvalidated here: the instance layer null-tests each before calling
-            return pool_ref_impl(m_links, m_lock, key, [&]() -> link_resource* {
-#if defined(__linux__)
-                                     void* h = dlopen(_path.c_str(), RTLD_NOW);
-                                     if (!h) {
-                                         std::string detail = link_error_detail();
-                                         fire(&on_csys, std::string("link error: dlopen failed: ") +
-                                                            _path + ": " + detail);
-                                         _err = {error_type::LinkError,
-                                                 std::string("Cannot link: ") + _path + ": " + detail};
-                                         return nullptr;
-                                     }
-                                     using bind_fn_t = void (*)(fwrap&);
-                                     bind_fn_t load_fn = (bind_fn_t) dlsym(h, LINK_LOAD);
-                                     script_create create_fn = (script_create) dlsym(h, LINK_CREATE);
-                                     script_release release_fn = (script_release) dlsym(h, LINK_RELEASE);
-                                     script_unload unload_fn = (script_unload) dlsym(h, LINK_UNLOAD);
-#elif defined(_WIN32)
-                                     HMODULE h = LoadLibraryA(_path.c_str());
-                                     if (!h) {
-                                         std::string detail = link_error_detail(GetLastError());
-                                         fire(&on_csys,
-                                              std::string("link error: LoadLibrary failed: ") +
-                                                  _path + ": " + detail);
-                                         _err = {error_type::LinkError,
-                                                 std::string("Cannot link: ") + _path + ": " + detail};
-                                         return nullptr;
-                                     }
-                                     using bind_fn_t = void (*)(fwrap&);
-                                     bind_fn_t load_fn = (bind_fn_t) GetProcAddress(h, LINK_LOAD);
-                                     script_create create_fn = (script_create) GetProcAddress(h, LINK_CREATE);
-                                     script_release release_fn = (script_release) GetProcAddress(h, LINK_RELEASE);
-                                     script_unload unload_fn = (script_unload) GetProcAddress(h, LINK_UNLOAD);
-#endif
-
-                                     link_resource* r = new link_resource();
-                                     auto_delete<link_resource> guard(r);
-                                     r->m_id = key;
-                                     r->m_path = _path;
-                                     r->m_handle = h;
-                                     r->m_load_fn = load_fn;
-                                     r->m_create_fn = create_fn;
-                                     r->m_release_fn = release_fn;
-                                     r->m_unload_fn = unload_fn;
-                                     r->m_ref.init_owned();
-                                     return guard.take(); }, [](link_resource* _r) {
-                                     if (_r->m_handle) {
-#if defined(__linux__)
-                                         dlclose(_r->m_handle);
-#elif defined(_WIN32)
-                                         FreeLibrary((HMODULE) _r->m_handle);
-#endif
-                                     }
-                                     delete _r; }, [&](link_resource*) { fire(&on_csys, "link load: " + _path); });
+            {
+                thread_safe_rlock rl(m_lock);
+                auto it = m_links.find(key);
+                if (it != m_links.end()) return it->second;
+            }
+            // created outside the locks: dlopen can re-enter this pool from a host callback
+            auto* created = new link_resource();
+            link_discard guard(created);
+            created->m_id = key;
+            created->m_path = _path;
+            if (!load_module_link(_path, created, _err)) {
+                // a concurrent first take may have pooled it while ours failed
+                thread_safe_rlock rl(m_lock);
+                auto it = m_links.find(key);
+                if (it != m_links.end()) return it->second;
+                return nullptr;
+            }
+            link_resource* kept = nullptr;
+            {
+                thread_safe_wlock wl(m_lock);
+                auto it = m_links.find(key);
+                if (it != m_links.end()) kept = it->second;
+                else m_links[key] = created;
+            }
+            if (kept) return kept; // a concurrent first take won: the guard drops ours outside the lock
+            guard.take();
+            fire(&on_csys, "link load: " + _path);
+            return created;
         }
 
         void res_mng::release_ast(ast_resource* _r) {
@@ -270,22 +271,7 @@ namespace alx {
             fire(&on_csys, "ast unload: " + _r->m_path);
             delete _r;
         }
-        void res_mng::release_link(link_resource* _r) {
-            if (!_r) return;
-            if (!pool_release_impl(m_links, m_lock, _r)) return;
-            fire(&on_csys, "link unload: " + _r->m_path);
-            // only the library goes away here: m_unload_fn is the instance layer's to call
-            if (_r->m_handle) {
-#if defined(__linux__)
-                dlclose(_r->m_handle);
-#elif defined(_WIN32)
-                FreeLibrary((HMODULE) _r->m_handle);
-#endif
-            }
-            delete _r;
-        }
-
-        // refcounts are ignored: anything still held outside this pool dangles once this returns
+        // the only link unload point; refcounts are ignored, so anything still held outside this pool dangles
         void res_mng::clear() {
             while (!m_asts.empty()) {
                 ast_resource* r;
@@ -305,13 +291,8 @@ namespace alx {
                     r = it->second;
                     m_links.erase(it);
                 }
-                if (r->m_handle) {
-#if defined(__linux__)
-                    dlclose(r->m_handle);
-#elif defined(_WIN32)
-                    FreeLibrary((HMODULE) r->m_handle);
-#endif
-                }
+                fire(&on_csys, "link unload: " + r->m_path);
+                unload_module_link(r);
                 delete r;
             }
         }
@@ -379,6 +360,40 @@ namespace alx {
                 return !p.has_error() && !_res->m_ast.empty();
             }
             return false;
+        }
+
+        bool res_mng::load_module_link(const std::string& _path, link_resource* _res,
+                                       script_exception& _err) {
+            // entry points stay unvalidated here: the instance layer null-tests each before calling
+#if defined(__linux__)
+            void* h = dlopen(_path.c_str(), RTLD_NOW);
+            if (!h) {
+                std::string detail = link_error_detail();
+                fire(&on_csys, std::string("link error: dlopen failed: ") + _path + ": " + detail);
+                _err = {error_type::LinkError, std::string("Cannot link: ") + _path + ": " + detail};
+                return false;
+            }
+            using bind_fn_t = void (*)(fwrap&);
+            _res->m_load_fn = (bind_fn_t) dlsym(h, LINK_LOAD);
+            _res->m_create_fn = (script_create) dlsym(h, LINK_CREATE);
+            _res->m_release_fn = (script_release) dlsym(h, LINK_RELEASE);
+            _res->m_unload_fn = (script_unload) dlsym(h, LINK_UNLOAD);
+#elif defined(_WIN32)
+            HMODULE h = LoadLibraryA(_path.c_str());
+            if (!h) {
+                std::string detail = link_error_detail(GetLastError());
+                fire(&on_csys, std::string("link error: LoadLibrary failed: ") + _path + ": " + detail);
+                _err = {error_type::LinkError, std::string("Cannot link: ") + _path + ": " + detail};
+                return false;
+            }
+            using bind_fn_t = void (*)(fwrap&);
+            _res->m_load_fn = (bind_fn_t) GetProcAddress(h, LINK_LOAD);
+            _res->m_create_fn = (script_create) GetProcAddress(h, LINK_CREATE);
+            _res->m_release_fn = (script_release) GetProcAddress(h, LINK_RELEASE);
+            _res->m_unload_fn = (script_unload) GetProcAddress(h, LINK_UNLOAD);
+#endif
+            _res->m_handle = h;
+            return true;
         }
 
         // returns the resolved absolute path, not the caller's spelling: the pool is keyed on it

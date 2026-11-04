@@ -30,7 +30,7 @@ namespace alx {
         }
 
         mod_mng::~mod_mng() {
-            // clear() first, so the layer the last destructor deletes still holds no resource
+            // clear() first: no fly may outlive the layer the last destructor deletes; link images stay until that layer's own clear()
             clear();
             std::lock_guard<std::mutex> lk(s_res_mtx);
             if (--s_users == 0) {
@@ -512,12 +512,11 @@ namespace alx {
             }
             for (uint_64 id : _fw->m_types) m_types.erase(id);
             delete _fw;
-            m_res->release_link(lr);
         }
 
         // teardown: every pooled fly goes regardless of its refcount, links running their unload hook
         void mod_mng::clear() {
-            // the names point into modules the loop below can dlclose: drop the table first
+            // the names point into the modules: drop the table first
             m_types.clear();
             while (!m_imports.empty()) {
                 auto it = m_imports.begin();
@@ -537,7 +536,6 @@ namespace alx {
                     lr->m_unload_fn(fw);
                 }
                 delete fly;
-                m_res->release_link(lr);
             }
         }
 

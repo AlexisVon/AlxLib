@@ -685,7 +685,7 @@ eval _tree[1] to a string → parse it as an expression
 
 `ref_fly_link`: resolve → the gate hook (a link event) → `res_mng::ref_link` (dlopen + dlsym, the "link load" event) → build the fly (holding a resource reference) → inside the `init_fly_link` simplified gate call `alexis_script_load(fwrap&)` to build the template (once per fly) → `impl_fly_link` calls `alexis_script_create(fwrap&)` per instance (a fresh area; the template is copied by default) → `args.bind()` writes into the instance store. Each link creates a new impl_link sharing the fly_link. Sets `m_parent` + `m_alias`.
 
-The lifecycle is a fixed sequence: `load → create×N → release×N → unload`. On release: `~impl_link` → call `alexis_script_release(fwrap&)` (if present) → `delete inst` (destroys m_data, whose anyptr destructors delete the C++ objects) → `release_fly` deref → on the last reference: `alexis_script_unload(fwrap&)` (if present, with the fly template still alive) → the fly leaves the pool → the resource reference is returned → `res_mng::release_link` (at zero → dlclose + "link unload"). `delete inst` must come before `dlclose`, because the deleter an anyptr destructor calls lives inside the .so. Several engines sharing a handle: each fly pairs one load/unload (the host callback contract), and dlclose happens only when the resource count hits zero (the last one).
+The lifecycle is a fixed sequence: `load → create×N → release×N → unload`. On release: `~impl_link` → call `alexis_script_release(fwrap&)` (if present) → `delete inst` (destroys m_data, whose anyptr destructors delete the C++ objects) → `release_fly` deref → on the last reference: `alexis_script_unload(fwrap&)` (if present, with the fly template still alive) → the fly leaves the pool. The resource itself is never evicted: the image and the module's globals stay mapped until the resource layer is cleared, i.e. when the process's last engine is destroyed (`res_mng::clear()` → dlclose + "link unload"). `delete inst` therefore comes long before the `dlclose`, because the deleter an anyptr destructor calls lives inside the .so. Several engines sharing a link: each fly pairs one load/unload (the host callback contract); the image is loaded once per process generation of engines.
 
 #### 3.7.4 Ownership
 
@@ -695,10 +695,10 @@ The lifecycle is a fixed sequence: `load → create×N → release×N → unload
 | every fly_import | each engine's mod_mng::m_imports pool | **strict reference counting, leaves the pool at zero** (no pool ref; mod_mng is silent, no events) |
 | every fly_link | each engine's mod_mng::m_links pool | at zero → unload_fn → leaves the pool |
 | AST resources | the shared res_mng::m_asts cache | at zero refs → cache erased + "ast unload" |
-| link resources | the shared res_mng::m_links pool | at zero refs → dlclose + "link unload" |
+| link resources | the shared res_mng::m_links pool | never evicted by a release; at `clear()` (the process's last engine dies) → dlclose + "link unload" |
 | root fly_import | walker::m_root_fly (a value member) | as long as the walker (not reference counted) |
 | root impl_import | walker::m_root (a value member) | as long as the walker |
-| res_mng | static to the mod_mng cluster (s_res/s_users/s_res_mtx) | created by the first mod_mng construction; destroyed by the last destructor (at which point the resource layer must be empty — every fly has returned its reference, so nothing is left to delete). The engine never touches its lifetime |
+| res_mng | static to the mod_mng cluster (s_res/s_users/s_res_mtx) | created by the first mod_mng construction; destroyed by the last destructor, whose `clear()` unloads every link resource still pooled (flies, instances and ASTs are already gone). The engine never touches its lifetime |
 
 ---
 
@@ -768,9 +768,9 @@ The `walker` class encapsulates all the runtime state and behaviour. `walk_tree(
 
 Module management is split into two layers (2026-08-06): the resource layer `res_mng` (`source/alxscpt/script/ascript_resmng.{h,cpp}`, read-only/stateless, the only multithreaded surface) + the instance layer `mod_mng` (`source/alxscpt/script/ascript_modmng.{h,cpp}`, per-engine and single-threaded), with the structure in §3.3.
 
-**res_mng is a mod_mng-cluster resource**: held by the mod_mng static members (s_res + s_users + s_res_mtx) — **created when the first mod_mng is constructed and destroyed when the last one is destructed** (at which point the resource layer must be empty: every fly has returned its reference, so nothing is left to delete). The engine never touches its lifetime; a mod_mng may be constructed on another thread, and creating the static pointer is mutex-protected. The engine's destruction order is constrained: **clear the walker state first** (every impl is destructed → fly refs hit zero and leave the pool, ruling out a surviving impl holding a dangling fly during destruction), and the mod_mng member's destruction then clears automatically + returns the cluster reference.
+**res_mng is a mod_mng-cluster resource**: held by the mod_mng static members (s_res + s_users + s_res_mtx) — **created when the first mod_mng is constructed and destroyed when the last one is destructed** (its `clear()` then unloads every link resource still pooled; flies, instances and ASTs are already gone). The engine never touches its lifetime; a mod_mng may be constructed on another thread, and creating the static pointer is mutex-protected. The engine's destruction order is constrained: **clear the walker state first** (every impl is destructed → fly refs hit zero and leave the pool, ruling out a surviving impl holding a dangling fly during destruction), and the mod_mng member's destruction then clears automatically + returns the cluster reference.
 
-**Several engines (several threads) in parallel**: the instance layer is per-engine, single-threaded and lock-free (its own fly pool + simplified gate); the resource layer is shared (cache insert/erase under an rwlock + refcount) — the first import parses once, a link is dlopened only once (a resource cache hit), and the instances stay independent.
+**Several engines (several threads) in parallel**: the instance layer is per-engine, single-threaded and lock-free (its own fly pool + simplified gate); the resource layer is shared (cache insert/erase under an rwlock; AST entries are refcounted, link entries are never erased until the layer dies) — the first import parses once, a link is dlopened only once (a resource cache hit), and the instances stay independent.
 
 **Pool threading model** (the ref/init/impl three-way split + the **zero-exception contract**):
 
@@ -807,7 +807,7 @@ The zero-exception contract: every failure gives nullptr/false plus a script_exc
 Every native boundary (the init walk of a module body, the host code of link load/create) is wrapped in try and turned into err.
 ```
 
-**Strict reference counting (no pool ref)**: every fly ref belongs to a holder — the creator's `init_owned` plus 1 ref per instance. At zero refs the fly leaves the pool (mod_mng is single-threaded: deref → erase → delete — the destruction chain recursively triggers the child fly's release_fly). **Hot reload (a two-level zero)**: all instances released → the fly leaves the pool (the template is destroyed) → the resource reference is returned → the resource hits zero (cache erased / dlclose) → the next import parses/dlopens again and picks up the new contents on disk.
+**Strict reference counting (no pool ref)**: every fly ref belongs to a holder — the creator's `init_owned` plus 1 ref per instance. At zero refs the fly leaves the pool (mod_mng is single-threaded: deref → erase → delete — the destruction chain recursively triggers the child fly's release_fly). **Hot reload**: on an import, all instances released → the fly leaves the pool → the resource hits zero (cache erased) → the next import parses again and picks up the new contents on disk. A link reloads its script-visible state the same way (the fly and the template go, the next `link` re-runs `LINK_LOAD`), but its image is loaded once per generation of engines and only reloaded after the process's last engine dies.
 
 **Recovering references on the failure path**: after an init failure / bad replay / copy exception, the composition layer returns this ref — a reference is never left behind, every fly can leave the pool (with its resource returned), and hot reload is not blocked.
 
@@ -818,13 +818,13 @@ Every native boundary (the init walk of a module body, the host code of link loa
 | `ast load` | resource | first parse/compile into the cache (ref_ast) |
 | `ast unload` | resource | refs hit zero and the cache entry is erased (release_ast) |
 | `link load` | resource | dlopen/LoadLibrary into the pool (ref_link) |
-| `link unload` | resource | refs hit zero, dlclose/FreeLibrary (release_link) |
+| `link unload` | resource | the layer is cleared at the process's last engine's death, dlclose/FreeLibrary |
 | `link error` | resource | the loader failed — dlopen/LoadLibrary (the ref_link failure path) |
 
 Resource events **fire outside the pool lock** (the message is snapshotted inside the lock; a host callback may re-enter the engine — a shared_mutex is not reentrant; destruction is likewise outside the lock — a dtor chain recursively calling release_fly needs to re-enter the pool lock).
 
 **Implementation skeleton**:
-- Resource layer (res_mng): `pool_ref_impl` (a read lock to find+ref → a write lock to double-check → the create callback; shared by ref_ast/ref_link) and `pool_release_impl` (deref+erase inside the lock, events/destruction outside; shared by release_ast/release_link) — **the only multithreaded surface**
+- Resource layer (res_mng): `pool_ref_impl` (read lock find+ref → create outside the locks → write lock double-check; ref_ast only) and `pool_release_impl` (deref+erase inside the lock, events/destruction outside; release_ast only); `ref_link` has its own find-or-create with no count — a link resource is never released by an engine — **the only multithreaded surface**
 - Instance layer (mod_mng): a simplified `init_fly_gate` (fast bool check → loading_stack duplicate check → init/bad) — the template shares init_fly_import/link, single-threaded and lock-free
 
 **Design pseudocode** (consistent with the implementation, `source/alxscpt/script/ascript_modmng.cpp`):
@@ -853,9 +853,9 @@ bool init_fly_gate(FlyT* fly, mod_mng* mng, walker* _w, script_exception& _err, 
 
 **Cross-engine safety (after the 2026-08-06 pool split — the mathematical argument is in the old §4.3, the mechanism is gone)**:
 - Instance layer: per-engine single-threaded sequencing — no locks, no races; cycle detection = loading_stack (nested init recursion within one engine; no cross-thread cycle: no fly is shared between engines)
-- Resource layer: the only multithreaded surface = cache insert/erase (rwlock) + refcount; the AST **read-only invariant** (immutable once pooled — `call_able::m_def` shares one AST pointer across engine instances); a concurrent first take of the same resource → the write lock's double check creates it only once
-- Deadlock surface: no host callback inside a resource-layer lock (events/destruction are outside it); dlopen/parse happen inside the write lock (a concurrent first take serialises once)
-- Zero semantics: release_link derefs+erases inside the lock and dlcloses outside — each .so is dlclosed exactly once (the pool holds one handle)
+- Resource layer: the only multithreaded surface = cache insert/erase (rwlock) + the AST refcount; the AST **read-only invariant** (immutable once pooled — `call_able::m_def` shares one AST pointer across engine instances); a concurrent first take of the same resource may create it twice — the write lock's double check keeps one entry and the loser's result is discarded
+- Deadlock surface: no host callback inside a resource-layer lock — events, destruction and the creation callbacks (parse / dlopen) all run outside it; the write lock covers only the double check and the insert
+- Zero semantics: a link resource is never released by an engine; `clear()` erases inside the lock and dlcloses outside — each .so is dlclosed exactly once (the pool holds one handle)
 
 ### 4.4 Core operations
 
@@ -1353,7 +1353,7 @@ bool bind(uint_64 _rid, const char* _name,
 - `false`: the id is already registered, or the name is null/empty. **A conflict is a runtime condition handed back to the link**, not an engine exception — the link decides whether to `raise`. Any other entry point (create, release, unload, a native call) throws `ContextError` instead: taking a registration is not what that context is for.
 - Transactional: registrations queue in the fwrap and are committed only when the load entry returns normally; a failed load leaves nothing behind.
 
-**Ownership and lifetime**: the table lives in the per-engine `mod_mng` (`rid → {name, desc, view}`); every committed id is also recorded on the fly (`fly_link::m_types`). The fly is the link's presence in this engine: when its last reference goes, `release_fly` erases its ids — **before** `release_link` can `dlclose` the module that owns the name pointers. `clear()` empties the table. A second module registering the same id is refused; no overwrite, no multi-owner stack.
+**Ownership and lifetime**: the table lives in the per-engine `mod_mng` (`rid → {name, desc, view}`); every committed id is also recorded on the fly (`fly_link::m_types`). The fly is the link's presence in this engine: when its last reference goes, `release_fly` erases its ids — well before the resource layer's `dlclose`, which owns the name pointers and runs at the process's last engine's death. `clear()` empties the table. A second module registering the same id is refused; no overwrite, no multi-owner stack.
 
 **Lookup and naming**: `type_name_script` gained a `mod_mng*` and one branch — a handle's `rid()` looks the table up (O(1)); the chain is **built-in names → link table → `set_type_extend` → `"unknown"`**. `op_type` (the script's `type()`) and `engine::type` share it, so script and host see one name. `engine::desc/view` and `hook_info::wkdesc/wkview` read the same entry; no entry, a null hook, an empty summary or a null variant answers `false`. **No runtime gate**: the queries are ordinary reads on the engine's thread; the host-facing entry is `hook_info` inside a callback purely to keep `hkdt` free.
 
@@ -1585,7 +1585,7 @@ public:
 | # | Decision | Key point |
 |---|------|------|
 | — | **import templating** | the first walk → snapshot m_data/m_map/m_free → later imports skip the walk and copy directly |
-| — | **link gives each engine its own fly_link** | linking the same .so several times gives each its own independent impl_link (sharing the fly_link inside this engine's pool), and the resource refcount governs dlclose |
+| — | **link gives each engine its own fly_link** | linking the same .so several times gives each its own independent impl_link (sharing the fly_link inside this engine's pool); the image is loaded once per process generation of engines and unloaded only when the last engine dies |
 | 16 | **The embed switch (2026-08-10)** | `compile(..., bool _embed=false)`: with embed=true an import is resolved and embedded recursively during parse (an absolute path is looked up directly / the `"."` rule = the module's own directory, with **no env/search paths/CWD**), and an unresolvable one is a compile error; **link and env() are compile errors**; a cyclic import (a repeat in the chain) is an error, while a repeated DAG node is de-duplicated; an imported .axp must have no imports/links dependency list; key = `"@"+sha256(absolute path + contents)[0:16]` (bound to both path and contents, so the same path with different contents is a different key and merges without conflict) |
 | 17 | **Hint payload + unpack (2026-08-14)** | `compile(..., const bytes_view& _hint)`: the host's JSON goes verbatim into the product's outer `hint` key (`info` records `hintsize` = the plaintext size; the key existing means the hint exists; compression follows cmps and reuses the `compressed` flag), and an empty hint means no key (backward compatible); the path overload takes a JSON path. `unpack(axp, varmap&)` unpacks statically: `ast` dump text / `modules` key→dump / an `info` metadata subset / the `hint` plaintext (transparently decompressed) — for the host's read-only display and breakpoint location (searching the dump text for the here() text + hook info) |
 | — | **Path resolution** | an absolute path is looked up directly → the env list in order (the module's own directory as an absolute path, replaced by `env(vec)`/`env(lst)`, readable through `env()`) → the `set_search_paths` list → a CWD fallback |
@@ -1711,7 +1711,7 @@ Before the call the walker hands the call_able's `m_area` to the fwrap (`fw.m_ar
 | re-init | `remove(area)` → the anyptr destructor → `wrap<T>()` again |
 | delete an instance (`delete b.x`) | cleans up the area natives + map/data (the `variant()` triggers the anyptr destructor → delete the C++ object) |
 | delete a namespace (`delete b.fs`) | cleans up the area natives, leaving already created instances alone |
-| exit | `delete impl_link` comes **before** `dlclose` — the anyptr destructor calls the deleter, which guarantees cleanup before the .so is unloaded |
+| exit | `delete impl_link` comes **long before** `dlclose` — the anyptr destructor calls the deleter while the image is still mapped (it is unloaded only at the process's last engine's death) |
 
 **link data shielding**: `impl_link::m_store` is invisible to the script, and reading/writing/deleting raises `TypeError`. The script reaches data operations only indirectly, through functions the area registered.
 
@@ -2025,6 +2025,16 @@ Version ALXLIB 1.3.3 → 1.4.0.
 - **Migration notes**: a patch on the surface — the SONAME **stays `.so.1.4`** and no vtable changed. Scripts and hosts that branch on `ImportError` for a link failure must switch to `LinkError`; those that branch on `LinkError` for fwrap misuse must switch to `ContextError` (id 16). No opcode or AST change, so **vtype is untouched**.
 
 Version ALXLIB 1.4.0 → 1.4.1.
+
+**Migration log (2026-11-04, version 1.4.2: a link module's lifetime is the engine population's)**:
+
+- **The image outlives its link instances**: `res_mng::release_link` is gone. The resource layer keeps every link resource it loaded until `res_mng::clear()` — the process's last engine's destruction — the only point where a pooled image is unloaded (a concurrent first-take loser `dlclose`s the handle it never pooled). Dropping a link's last instance still releases the fly (`LINK_UNLOAD` runs with the template alive, the template store is destroyed, the type-table ids are erased), but the module's code, statics and the objects it allocated stay valid.
+- **Why**: a link hands handles out to the script and the host (the 1.4.0 type registration names them), and a handle's destructor runs the module's deleter. A store is destroyed in index order, so `link ... as t; b = t.make_box();` destroys the link instance before the handle — a crash once the image is really unmapped (glibc's GNU_UNIQUE pinning was hiding it; the fixtures now build with `-fno-gnu-unique` so the tests exercise the real thing). Tracking handles is not affordable, so the module outlives every handle the engine can still reach.
+- **Reload semantics split**: an import keeps real-time reload (zero refs → the cache entry is erased → the next import re-parses the file). A link reloads its script-visible state per link (the fly and the template go, a re-link re-runs `LINK_LOAD`), while the image itself is reloaded only after the process's last engine dies — a later engine `dlopen`s again and picks up the new file.
+- **The contract shrinks**: a handle stays valid while any engine is alive; a host copy kept past the last engine's destruction is the caller's violation. `api.md` §11.4 records it; `lang.md` §12 records the lifetime and the reload split.
+- **Migration notes**: no API change; the SONAME **stays `.so.1.4`** and link modules need no rebuild (`res_mng::release_link` was internal). No opcode or AST change, so **vtype is untouched**.
+
+Version ALXLIB 1.4.1 → 1.4.2.
 
 ### 10.2 Syntax
 

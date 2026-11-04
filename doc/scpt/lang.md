@@ -1300,17 +1300,17 @@ link "mylib" as mylib;     // dlopen → dlsym("alexis_script_load"), the engine
 
 - `as NAME` is mandatory, top level only
 - alias conflict (a var/def/link/import of the same name already in this module) → `NameError`
-- `delete aliasName` removes the link instance (refcount-- → dlclose at zero; module top layer — from a frame a module-level alias returns `false`, while an alias the frame declared itself deletes as its own variable); it may be linked again afterwards
-- **multiple engines in parallel**: several engines (in parallel across threads) may link the same library at once — the dlopen handle is shared, the template/instance is per-engine and independent; once every instance has been released, linking again re-dlopens (hot reload)
+- `delete aliasName` removes the link instance (the fly is released; the image stays loaded; module top layer — from a frame a module-level alias returns `false`, while an alias the frame declared itself deletes as its own variable); it may be linked again afterwards
+- **multiple engines in parallel**: several engines (in parallel across threads) may link the same library at once — the dlopen handle is shared, the template/instance is per-engine and independent; the image is loaded once per process generation of engines, and only reloaded (a fresh dlopen picking up the new file) after the process's last engine is destroyed
 - the four link ABI functions (all `void (*)(fwrap&)`, all optional):
   - `alexis_script_load` — whole-link initialisation (once per engine's link, builds the template; the dlopen itself is shared process-wide)
   - `alexis_script_create` — instance initialisation (a fresh area per instance; if absent the template is copied)
   - `alexis_script_release` — instance destruction (releases the instance's resources)
-  - `alexis_script_unload` — whole-link destruction (once per engine's link, before the shared dlclose)
+  - `alexis_script_unload` — whole-link destruction (once per engine's link, when its last instance is released; the image itself is unloaded later, at the process's last engine's death)
   - the lifecycle is a determined sequence: `load → create×N → release×N → unload`
 - **objects and instances**: the template's wrapped objects reach each instance by copy — a copyable `make()` type deep-copies, a non-copyable one arrives empty (a null handle, no crash). Build per-instance objects in `alexis_script_create`, or share with `make_ref()` (single-threaded, so sharing is safe; its copies point at the same object). A script-level copy of an instance (`var b2 = b`) clones the instance's store and runs `create` over it again, so `create` must accept an already-populated store and its data must be copyable (or ref-held)
 - inside a callback, register functions by calling `args.bind("name", callback)`
-- linking the same library several times (under different aliases) gives independent instances that share the module, with a refcount managing the lifetime
+- linking the same library several times (under different aliases) gives independent instances that share the module; the image stays loaded until the process's last engine is destroyed
 - **link has its own data block**: C++ bind functions can operate on it through `args.load/store/remove`
 - **the script layer may not touch a link's data block**: `mylib.x` reaches only the functions the link registered
 

@@ -41,7 +41,6 @@ namespace alx {
             script_create m_create_fn = nullptr;
             script_release m_release_fn = nullptr;
             script_unload m_unload_fn = nullptr;
-            ref_count m_ref;
         };
 
         uint_64 res_make_key(const std::string& _path);
@@ -69,12 +68,12 @@ namespace alx {
             // failure -> nullptr + _err; a success takes one ref that must be released exactly once
             ast_resource* ref_ast(const std::string& _path, walker* _w,
                                   script_exception& _err);
+            // no release counterpart: a link resource stays pooled until clear(), the last engine's death
             link_resource* ref_link(const std::string& _path, walker* _w,
                                     script_exception& _err);
 
-            // last ref -> evict (ast: delete, link: dlclose); the next ref re-reads the file
+            // last ref -> evict (delete); the next ref re-reads the file
             void release_ast(ast_resource* _r);
-            void release_link(link_resource* _r);
 
             void clear();
 
@@ -97,6 +96,8 @@ namespace alx {
             std::unordered_map<uint_64, link_resource*> m_links;
             bool load_module_ast(const std::string& _path, walker* _w,
                                  ast_resource* _res) const;
+            bool load_module_link(const std::string& _path, link_resource* _res,
+                                  script_exception& _err);
 
             void hb_loop();
             // the registry lock spans a whole pass, so a detach cannot race a dying target

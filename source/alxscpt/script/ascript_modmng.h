@@ -18,7 +18,7 @@ namespace alx {
     namespace script {
 
         // per-engine pool of fly objects, single-threaded: one engine uses one mod_mng, one thread at a time
-        // a fly holds its resource ref from birth to pool exit, so the last deref unloads the module
+        // a fly holds its resource ref from birth to pool exit; the last deref runs the unload hook, not the dlclose
         class mod_mng {
         public:
             mod_mng();
@@ -49,7 +49,7 @@ namespace alx {
             impl_link* impl_fly_link(fly_link* _fly, walker* _w,
                                      script_exception& _err);
 
-            // drops one reference; at zero the entry is erased and the resource ref given back (link: unload_fn on the live template first)
+            // drops one reference; at zero the entry is erased (import: the AST ref goes back; link: unload_fn on the live template, no resource ref)
             void release_fly(fly_import* _fw);
             void release_fly(fly_link* _fw);
             // teardown only, instances must already be gone: every entry is dropped, refs or not

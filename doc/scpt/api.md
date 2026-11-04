@@ -54,7 +54,7 @@ eng->config();                 // read the configuration back
 // deliveries admitted from then on see the new capacity immediately)
 eng->set_max_stack(...);  eng->set_parse_depth(...);  eng->set_max_vecfill(...);
 eng->set_max_yield(...);  eng->set_overflow_check(...);  eng->set_search_paths({"mods", "lib"});
-eng->reset();                  // drop the intermediate state of a run: the root store is rebuilt and loaded modules are released with it (hot reload)
+eng->reset();                  // drop the intermediate state of a run: the root store is rebuilt and loaded modules are released with it (an import re-reads its file on the next import; a link's image stays mapped until the process's last engine goes)
 ```
 
 `reset()` is also the only reaper: a run that fails during execution leaves root variables, defs and loaded modules standing — and with them the parsed ASTs behind the defs — so a long-lived engine holds that memory until an explicit `reset()`.
@@ -371,7 +371,7 @@ A link module is a dynamic library that gives a script three layers: **a namespa
 | Symbol | Signature | When |
 |---|---|---|
 | `alexis_script_load` | `void (*)(fwrap&)` | library level: once per engine's link, at load (the dlopen is shared process-wide) |
-| `alexis_script_unload` | `void (*)(fwrap&)` | library level: once per engine's link, at unload (before the shared `dlclose`) |
+| `alexis_script_unload` | `void (*)(fwrap&)` | library level: once per engine's link, when its last instance is released (the image itself is unloaded later, at the process's last engine's death) |
 | `alexis_script_create` | `void (*)(fwrap&)` | instance level: for every link instance created |
 | `alexis_script_release` | `void (*)(fwrap&)` | instance level: when an instance is destroyed |
 
@@ -444,11 +444,12 @@ void fn_read(alx::script::fwrap& _fw) {
 | Rebuild | `remove(area)` runs the anyptr's destructor (the C++ object dies) → `wrap<T>()` again |
 | Instance deleted | the area's natives and data slot are cleared, the anyptr's destructor deletes the C++ object |
 | Namespace deleted | only the area's natives are cleared; instances already created are untouched |
-| Shutdown | **the link instances are destroyed first, `dlclose` after** — the anyptr's destructor lives in the dynamic library and has to be called before the unload |
+| Last instance deleted | the engine releases the link's fly: `LINK_UNLOAD` runs with the template still alive, then the template goes — **the image stays loaded** |
+| Last engine destroyed | the resource layer is cleared and `dlclose`/`FreeLibrary` follows — every instance was destroyed first, so the anyptr's destructor (which lives in the dynamic library) has already run |
 
 A link instance's private data slot is invisible to the script (reading, writing and deleting all throw `TypeError`), so the script reaches it only indirectly, through the functions registered in the area.
 
-A handle a module made (`anyptr_ex<T>::make` / `make_ref`) must not outlive the module **in this engine**: dropping the link's last instance unloads it and the `dlclose` follows, and the engine does not track the handles it handed out — using one afterwards (a destructor included, which runs the module's deleter) is UB. Keep a link value alive for as long as its handles are.
+A handle a module made (`anyptr_ex<T>::make` / `make_ref`) stays valid while a link image of that module is loaded. Dropping the link's last instance does **not** unload the image, so a handle may outlive its link instance — its destructor still runs the module's deleter. The image is unloaded when the process's last engine is destroyed; the engine does not track the handles it handed out, so a handle kept past that point (a host copy held outside every engine) is UB.
 
 ### 11.5 Type registration
 
@@ -466,7 +467,7 @@ static alx::variant fn_view(const anyptr& _h);  // payload for the host; a null 
 - `_name` is **stored, not copied** — it must stay valid for the module's lifetime (a string literal).
 - A second registration of the same id answers `false`; the existing entry stays. The link decides whether that is an error (`_fw.raise(...)`).
 - Registration is transactional: it lands only if the load entry returns normally; a failed load leaves nothing behind.
-- The entries die with the module: dropping the link's last instance removes the table entries **before** the `dlclose` (the same shutdown order as §11.4).
+- The entries die with the fly: dropping the link's last instance removes the table entries long before the `dlclose`, which happens when the process's last engine is destroyed (the same shutdown order as §11.4).
 - `desc` is display-only; `view` is opaque to the engine — its shape is between the provider and the host.
 
 ---

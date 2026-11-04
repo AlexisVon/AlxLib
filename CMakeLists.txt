@@ -56,7 +56,7 @@ set(CMAKE_INSTALL_RPATH "$ORIGIN")
 # an older one instead of failing somewhere at run time.
 set(ALXLIB_VERSION_MAJOR 1 CACHE STRING "Library major version")
 set(ALXLIB_VERSION_MINOR 4 CACHE STRING "Library minor version")
-set(ALXLIB_VERSION_PATCH 1 CACHE STRING "Library patch version")
+set(ALXLIB_VERSION_PATCH 2 CACHE STRING "Library patch version")
 
 set(ALXLIB_VERSION "${ALXLIB_VERSION_MAJOR}.${ALXLIB_VERSION_MINOR}.${ALXLIB_VERSION_PATCH}")
 set(ALXLIB_SOVERSION "${ALXLIB_VERSION_MAJOR}.${ALXLIB_VERSION_MINOR}")

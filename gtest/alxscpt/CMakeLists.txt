@@ -46,6 +46,10 @@ foreach(_link alxscpt_test_link_load alxscpt_test_link_create
         ${CMAKE_SOURCE_DIR}/include/alxbase
         ${CMAKE_SOURCE_DIR}/include/alxscpt
     )
+    # template statics would otherwise become GNU_UNIQUE symbols, which pin the module against dlclose
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_compile_options(${_link} PRIVATE -fno-gnu-unique)
+    endif()
 endforeach()
 target_compile_definitions(alxscpt_test PRIVATE
     ALX_TEST_LINK_LOAD_SO="$<TARGET_FILE:alxscpt_test_link_load>"

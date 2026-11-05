@@ -488,6 +488,89 @@ TEST(gt_ascript_walk, Spread_TooManyPositional) {
     EXPECT_EQ(etype, error_type::ArgError);
 }
 
+TEST(gt_ascript_walk, BuiltinArity_VecRejectsExtraArgument) {
+    auto [etype, eval] = exec_src_catch("vec(1, 2);");
+    EXPECT_EQ(etype, error_type::ArgError);
+    EXPECT_EQ(exec_src_catch("vec(1, 2, 3);").first, error_type::ArgError)
+        << "three arguments share the construction-card shape and must still be refused";
+}
+
+TEST(gt_ascript_walk, BuiltinArity_VecCardArgumentIsNotEvaluated) {
+    auto v = exec_src("var x = 0; def f() { x = 1; } try { vec(1, 2, f()); } catch (e) {} x;");
+    EXPECT_EQ(v.to<int_64>(), 0);
+}
+
+TEST(gt_ascript_walk, BuiltinArity_LstRejectsExtraArgument) {
+    auto [etype, eval] = exec_src_catch("lst(1, 2, 3);");
+    EXPECT_EQ(etype, error_type::ArgError);
+}
+
+TEST(gt_ascript_walk, BuiltinArity_BoolRejectsExtraArgument) {
+    auto [etype, eval] = exec_src_catch("bool(1, 2);");
+    EXPECT_EQ(etype, error_type::ArgError);
+}
+
+TEST(gt_ascript_walk, BuiltinArity_StringFormRejectsExtra) {
+    auto [etype, eval] = exec_src_catch("string(1, 16, 3);");
+    EXPECT_EQ(etype, error_type::ArgError);
+    EXPECT_EQ(exec_src("string(\"%1-%2\", 1, 2);").to<std::string>(), "1-2")
+        << "the format form stays variadic";
+}
+
+TEST(gt_ascript_walk, BuiltinArity_EvalRejectsExtra) {
+    auto [etype, eval] = exec_src_catch("eval(\"1;\", map{}, 9);");
+    EXPECT_EQ(etype, error_type::ArgError);
+}
+
+TEST(gt_ascript_walk, BuiltinSpread_TypeRefused) {
+    auto [etype, eval] = exec_src_catch("var v = vec[1, 2]; type(v[]);");
+    EXPECT_EQ(etype, error_type::TypeError);
+}
+
+TEST(gt_ascript_walk, BuiltinSpread_IntRefused) {
+    auto [etype, eval] = exec_src_catch("var v = vec[1, 2]; int(v[]);");
+    EXPECT_EQ(etype, error_type::TypeError);
+}
+
+TEST(gt_ascript_walk, BuiltinSpread_VecRefused) {
+    auto [etype, eval] = exec_src_catch("var v = vec[1, 2]; vec(v[]);");
+    EXPECT_EQ(etype, error_type::TypeError);
+}
+
+TEST(gt_ascript_walk, MapRejectsIncompletePair) {
+    auto [etype, eval] = exec_src_catch("map(1, 2, 3);");
+    EXPECT_EQ(etype, error_type::ArgError);
+}
+
+TEST(gt_ascript_walk, MapKeyValueFormBuildsPairs) {
+    auto v = exec_src("var m = map(\"a\", 1, \"b\", 2); m[\"b\"];");
+    EXPECT_EQ(v.to<int_64>(), 2);
+}
+
+TEST(gt_ascript_walk, Spread_NotLastPositionRefused) {
+    alx::bytes b("var v = vec[1, 2]; $print(v[], 9);");
+    token_list tl;
+    tl.tokenize(alx::bytes_view(b));
+    parser p(tl);
+    p.parse();
+    EXPECT_TRUE(p.has_error());
+}
+
+TEST(gt_ascript_walk, EvalRefusesLink) {
+    auto [etype, eval] = exec_src_catch("eval(\"link \\\"nope.so\\\" as t;\");");
+    EXPECT_EQ(etype, error_type::ParseError);
+}
+
+TEST(gt_ascript_walk, EvalRefusesImport) {
+    auto [etype, eval] = exec_src_catch("eval(\"import \\\"nope.axc\\\" as m;\");");
+    EXPECT_EQ(etype, error_type::ParseError);
+}
+
+TEST(gt_ascript_walk, EvalRunsPlainStatements) {
+    auto v = exec_src("eval(\"var a = 7; a;\");");
+    EXPECT_EQ(v.to<int_64>(), 7);
+}
+
 TEST(gt_ascript_walk, ListLit) {
     auto v = exec_src("[1, 2, 3];");
     ASSERT_TRUE(v.is<varvec>());

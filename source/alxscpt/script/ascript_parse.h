@@ -45,8 +45,9 @@ namespace alx {
             // Returns {} when the token list holds any lexer error; otherwise an O_PROGRAM-wrapped forest.
             varvec parse();
 
-            // Bare statement list, no O_PROGRAM wrapper and no lexer-error scan: the eval runtime entry.
-            varvec parse_body();
+            // Bare statement list, no O_PROGRAM wrapper and no lexer-error scan. _top admits the
+            // root-only statements (import/link); eval passes false so they stay refused there.
+            varvec parse_body(bool _top = true);
 
             static varvec parse(const bytes_view& _source, const std::string& _file_path = std::string(),
                                 const std::list<std::string>& _search_paths = {},

@@ -255,11 +255,11 @@ namespace alx {
             return p.parse_body();
         }
 
-        varvec parser::parse_body() {
+        varvec parser::parse_body(bool _top) {
             varvec stmts;
             while (!check(T_END_OF_FILE)) {
                 varvec pos = m_debug ? pos_node() : varvec();
-                varvec s = parse_top_stmt();
+                varvec s = _top ? parse_top_stmt() : parse_stmt();
                 // an empty node is the recovery sentinel (stray ';' or a failed stmt), so skip it
                 if (s.empty()) continue;
                 if (m_debug) stmts.push_back(variant(std::move(pos)));
@@ -1952,7 +1952,13 @@ namespace alx {
 
                 if (!check(T_RP)) {
                     do {
-                        node.push_back(variant(parse_assign()));
+                        variant arg = parse_assign();
+                        if (arg.is_vec() && !arg.to<varvec>().empty() &&
+                            arg.to<varvec>()[0].is<OPTYPE>() &&
+                            static_cast<op_enum>(arg.to<varvec>()[0].to<OPTYPE>()) == O_UNPACK &&
+                            !check(T_RP))
+                            error("spread [] only allowed at last position, expected ')'");
+                        node.push_back(std::move(arg));
                     } while (match(T_COMMA));
                 }
                 consume(T_RP, ")");

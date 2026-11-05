@@ -196,9 +196,9 @@ namespace alx {
          * \brief Everything an engine is configured with
          *
          * engine::create() copies it, engine::config() shows the live copy back, and the engine's
-         * set_*() methods write into it. The runtime knobs (max_stack, max_vecfill, max_yield,
-         * overflow_check, search_paths) are read as the script runs, the parse-time ones
-         * (parse_depth, debug_enable) apply to the next compile.
+         * set_*() methods write into it. The runtime knobs (max_stack, max_vecfill, yield_limit,
+         * yield_nest, overflow_check, search_paths) are read as the script runs, the parse-time
+         * ones (parse_depth, debug_enable) apply to the next compile.
          */
         struct engine_config {
 
@@ -243,7 +243,12 @@ namespace alx {
             void* type_ex_ud = nullptr;
 
             /// Deliveries one yield queue may hold; 0 = unlimited
-            size_t max_yield = 256;
+            size_t yield_limit = 256;
+            /// yield() nesting levels allowed, the outermost yield counting as one; 0 = unlimited
+            size_t yield_nest = 64;
+            /// Priorities above this are reserved for the host; a currying handle's deliveries and
+            /// clears are clamped down to it. max_uint_32 (the default) reserves nothing
+            uint_32 yield_rsvprio = max_uint_32;
         };
 
         /**
@@ -508,12 +513,18 @@ namespace alx {
             class callback {
             public:
                 virtual ~callback() = default;
-                /// engine::yield(_name, ...) with this handle's name
+                /// engine::yield(_name, ...) with this handle's name; _priority is clamped to
+                /// engine_config::yield_rsvprio
                 virtual std::future<result> call(const varvec& _args, uint_32 _priority = 0,
-                                                 uint_32 _expiry_ms = 0) = 0;
+                                                 uint_32 _expiry_ms = 0,
+                                                 uint_32 _delay_ms = 0) = 0;
                 /// The varvec&& overload; otherwise identical
                 virtual std::future<result> call(varvec&& _args, uint_32 _priority = 0,
-                                                 uint_32 _expiry_ms = 0) = 0;
+                                                 uint_32 _expiry_ms = 0,
+                                                 uint_32 _delay_ms = 0) = 0;
+                /// Settle queued deliveries without running them, with _priority clamped to
+                /// engine_config::yield_rsvprio
+                virtual uint_64 drop(uint_32 _priority, uint_64 _maxcnt) = 0;
             };
 
             /**
@@ -553,7 +564,8 @@ namespace alx {
          *
          * create() hands back an engine the caller owns and deletes. An engine is single-threaded
          * and not reentrant: nothing may be entered from two threads at once unless it says so,
-         * and only is_running(), set_interrupt() and yield() are callable from another thread.
+         * and only is_running(), set_interrupt(), clr_yield() and yield() are callable from
+         * another thread.
          * A native registered here runs on whichever thread executes the script, so one handler
          * registered in several engines must be thread-safe itself.
          *
@@ -624,6 +636,20 @@ namespace alx {
              * reset() is the only thing that drops them.
              */
             virtual void set_interrupt() = 0;
+            /**
+             * \brief Settle queued deliveries without running them
+             *
+             * Safe to call from any thread, and only effective while a run is in progress; with
+             * nothing running it returns 0 and touches nothing. Scans the queue oldest first,
+             * settles every delivery with priority <= _priority as YieldError("cleared"), and
+             * stops after _maxcnt of them. The delivery already taken for execution is not in
+             * the queue and is unaffected.
+             *
+             * \param _priority Inclusive upper bound on the priority to clear
+             * \param _maxcnt Most deliveries to clear; 0 = unlimited
+             * \return How many deliveries were settled
+             */
+            virtual uint_64 clr_yield(uint_32 _priority, uint_64 _maxcnt) = 0;
 
         public:
             /// The run report, hoisted to the script namespace so fwrap can name it
@@ -670,10 +696,13 @@ namespace alx {
              * Accepted only while a run is in progress: the delivery is serviced by the
              * script's own yield() instruction, under the priority order and the count/time
              * window that instruction asks for. A delivery with nothing running, or past
-             * engine_config::max_yield, comes back as a ready future carrying YieldError --
+             * engine_config::yield_limit, comes back as a ready future carrying YieldError --
              * never a broken promise; the serviced call's value and its failures alike arrive
              * inside the future. The name is resolved at the service position, so a delivery
-             * may name a def defined later. Callable from any thread; the thread that runs
+             * may name a def defined later. A serviced call may itself call yield() and service
+             * the queue; engine_config::yield_nest bounds that nesting (the outermost yield is
+             * level one, default 64, 0 = unlimited), and a yield beyond the bound throws the
+             * catchable script-level YieldError("nested yield"). Callable from any thread; the thread that runs
              * the script must never block on a future it queued itself -- its synchronous
              * tool is fwrap::call(). A future is never broken from the engine's own paths (a
              * host slot that breaks the signal contract, or an allocation failure while
@@ -685,13 +714,18 @@ namespace alx {
              * \param _priority Higher priorities run first; equal ones keep their arrival order
              * \param _expiry_ms How long the delivery may wait in the queue; 0 = unlimited. It
              *                   is settled as YieldError("expired") instead of running
+             * \param _delay_ms How long before the delivery becomes eligible; 0 = immediately.
+             *                  Eligibility is granted by the heartbeat pass, so it starts no
+             *                  earlier than the delay and typically within one period of it
              * \return The delivery's future; every outcome is inside it
              */
             virtual std::future<result> yield(const std::string& _name, const varvec& _args,
-                                              uint_32 _priority = 0, uint_32 _expiry_ms = 0) = 0;
+                                              uint_32 _priority = 0, uint_32 _expiry_ms = 0,
+                                              uint_32 _delay_ms = 0) = 0;
             /// The varvec&& overload of yield(); otherwise identical
             virtual std::future<result> yield(const std::string& _name, varvec&& _args,
-                                              uint_32 _priority = 0, uint_32 _expiry_ms = 0) = 0;
+                                              uint_32 _priority = 0, uint_32 _expiry_ms = 0,
+                                              uint_32 _delay_ms = 0) = 0;
 
             /**
              * \brief Run source text, or a product of compile()
@@ -823,7 +857,11 @@ namespace alx {
             /// Elements a single vec/lst fill may produce; 0 = unlimited
             virtual void set_max_vecfill(size_t _n) = 0;
             /// Deliveries one yield queue may hold; 0 = unlimited
-            virtual void set_max_yield(size_t _n) = 0;
+            virtual void set_yield_limit(size_t _n) = 0;
+            /// yield() nesting levels allowed, the outermost counting as one (default 64); 0 = unlimited
+            virtual void set_yield_nest(size_t _n) = 0;
+            /// Priorities above this are reserved for the host; a currying handle is clamped to it
+            virtual void set_yield_rsvprio(uint_32 _n) = 0;
             /// Directories import and link targets are looked up in, replacing the previous list
             virtual void set_search_paths(const std::list<std::string>& _paths) = 0;
             /// The host's type naming for extend types; null removes it

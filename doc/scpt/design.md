@@ -305,6 +305,8 @@ return func_name(args)         → [O_TCALL, [O_LOAD, "func_name"], args...]  //
 f(vec_arg[])                   → f([O_UNPACK, [O_LOAD, "vec_arg"]])   // last argument only
 ```
 
+A def call expands `O_UNPACK`; a native (`$` / link) call receives the container as one argument; anywhere else the marker reaches `op_unpack` and is a `TypeError` (`spread [] is not a value`), so a builtin such as `type(v[])` refuses instead of reading null.
+
 **Constant folding** — a dot chain's `[]` accepts literals only. `-N` (unary minus + int literal) is constant-folded by the parser into an inlined negative integer and produces no `O_UMINUS` node:
 
 ```
@@ -777,8 +779,8 @@ Module management is split into two layers (2026-08-06): the resource layer `res
 ```
 ref_fly_import(path, w, err)   // ① lookup/create + ref (mod_mng, single-threaded lock-free map)
   - resolve (res_mng::resolve_runtime_path) fails → nullptr + err (ImportError;
-    every import/link failure propagates up the walk — to the enclosing try when
-    the import/link runs in an eval body, otherwise to the entry. A module-init
+    every import/link failure propagates up the walk to the entry — an import/link
+    inside an eval body is a ParseError before it can run. A module-init
     failure is wrapped as its module class (ImportError for an import, LinkError
     for a link); an instance-construction or link load/create failure keeps its
     own class (MemoryError / NativeError); the interrupt stays the one uncatchable
@@ -968,7 +970,7 @@ The `compile_error` struct: `msg`, `row`/`col` (1-based, UTF-8 aware), `index` (
 | `ShiftError` | shift count out of range |
 | `IndexError` | index out of bounds |
 | `KeyError` | map key absent |
-| `ArgError` | a parameter with no default left unspecified, or a builtin that checks its own arity was given more arguments than it takes (`env(a, b)`, `type(a, b)`); the one-value builtins that still ignore an extra argument are a known defect (issue ledger I-1), not the contract |
+| `ArgError` | a parameter with no default left unspecified, or a builtin was given more arguments than its form takes (`env(a, b)`, `type(a, b)`, `vec(1, 2)`, `string(1, 16, 3)`); the extra argument is never evaluated |
 | `ImportError` | an import failed — a script module that will not parse/load, a circular or self import, a corrupt payload |
 | `LinkError` | a link (dynamic module) failed — unresolved, refused by the loader (`dlopen` / `LoadLibrary`; the four `dlsym` results are stored unvalidated and every use site skips a null one, so a missing symbol is not an error), or a circular/self link |
 | `ContextError` | an fwrap call the current context does not allow (entry point vs native call, a registration only the load entry takes) |
@@ -980,7 +982,7 @@ The `compile_error` struct: `msg`, `row`/`col` (1-based, UTF-8 aware), `index` (
 | `NavError` | `..` beyond the depth of the entity tree |
 | `VersionError` | the .axp version tag does not match the engine |
 | `InterruptedError` | the host stopped the run (`set_interrupt()` or a hook returning false); uncatchable, see §4.9 |
-| `YieldError` | the yield service refused or ended a delivery (`no main fiber` / `yield full` / `expired` / `not executed`), a serviced call's uncaught nested `yield()`, or a `yield()` during module init; see §4.9f |
+| `YieldError` | the yield service refused or ended a delivery (`no main fiber` / `yield full` / `expired` / `cleared` / `not executed`), a serviced call's uncaught `yield()` past `engine_config::yield_nest`, or a `yield()` during module init; see §4.9f |
 
 
 
@@ -988,7 +990,7 @@ The `compile_error` struct: `msg`, `row`/`col` (1-based, UTF-8 aware), `index` (
 - `throw expr` → `op_throw` raises `script_exception{error_type::RuntimeError, cov_string(val)}` (the value is stringified)
 - `try/catch`: the catch variable is bound to `varmap{"what": ..., "info": ...}` (info = the info string)
 - `std::exception&` and `...` are caught alike and wrapped as `NativeError`
-- **A sub-module init failure** (`run_init_walk`): the original ImportError is passed through as it is (not nested — **it already carries the deeper context and trace**); any other error is wrapped as `ImportError` with info = `"in module <path>: <type>: <info>"` + **the sub-walker's folded trace** (a module init runs on its own frame stack, so the trace can only come from `sub`; beyond the module name it also gives the row/col **inside** the module) — bubbling up to the main script (a script try/catch can catch it when the import runs inside an `eval` body, otherwise the engine reports it in the result)
+- **A sub-module init failure** (`run_init_walk`): the original ImportError is passed through as it is (not nested — **it already carries the deeper context and trace**); any other error is wrapped as `ImportError` with info = `"in module <path>: <type>: <info>"` + **the sub-walker's folded trace** (a module init runs on its own frame stack, so the trace can only come from `sub`; beyond the module name it also gives the row/col **inside** the module) — bubbling up to the main script (the engine reports it in the result; an import/link inside an `eval` body is refused at parse time, so that channel no longer runs)
 - An exception with no `try` aborts: it propagates up the C++ stack, and **no op pops a frame on the exception path** (frames and positions are left on the stack as they are, which is the only way the trace can read every level); `op_try` unwinds once at its own boundary (everything above `frame_snap` is popped, through `pop_frame()` ⇒ per-level store cleanup + flag reset), and an uncaught one is left on the stack for that trace — the next entry's cleanup clears it, and only an explicit `reset()` drops it otherwise
 - The shared entry ladder (`walker::run_entry`): `script_exception` → trace + `on_cerr` + return the result (no re-throw; no reset anywhere — every failure only ends that run)
 - The `max_stack` check is centralised in `walk_state::push_frame(impl_import*)`
@@ -1249,22 +1251,24 @@ virtual void set_type_extend(type_ex _fn, void* _ud = nullptr) = 0;
 
 ---
 
-### 4.9f The yield service — the script yield() point, cross-thread delivery, the heartbeat (2026-10-17 — landed, F-1 steps ③ and ④)
+### 4.9f The yield service — the script yield() point, cross-thread delivery, the heartbeat (2026-10-17 — landed, F-1 steps ③ and ④; delayed deliveries and clr_yield added 2026-11-05)
 
 **Motivation**: a link's comm threads and host worker threads need to hand a call back onto the engine's own timeline. `call()` is an entry (it wants a non-running engine), and checkpoint-time insertion was rejected — it tears the intra-segment synchronization of ordinary script code. The injection point is therefore a **yield point the script writes itself**: `yield()` reads as a sleep with event service, and between two yield points the script is plain sequential code (a property of the structure, not a discipline). yield ≡ `call` serialized to the main walk's next yield point; the only differences are deferred admission, priority and future delivery.
 
-**Script surface** — `yield(time_ms = 0, maxcnt = 0) -> cnt` (the 14th reserved word, `ascript_lex.cpp:18`; the same table makes `set_extend("yield")` refuse). `(0,0)` drains the backlog and returns; `(0,n)` drains or stops at n (a non-blocking single pass); `ms > 0` is a residency window — arrivals during it are serviced, an empty queue waits on the clock, n short-circuits; at the deadline no new item is taken and the in-flight one still runs to completion (the atomicity of a serviced call lives in exactly that line). The return counts items serviced; a serviced call that failed still counts (its error went to its own future). A hard interrupt in the window wakes the wait and takes the standard teardown. A yield during a module init throws a script-level `YieldError`; a **nested** yield (op_yield inside a serviced call) does the same with `"nested yield"` — the serviced call may catch it, and uncaught it ends that call, the delivery's future carrying the `YieldError` (the main walk is untouched either way).
+**Script surface** — `yield(time_ms = 0, maxcnt = 0) -> cnt` (the 14th reserved word, `ascript_lex.cpp:18`; the same table makes `set_extend("yield")` refuse). `(0,0)` drains the backlog and returns; `(0,n)` drains or stops at n (a non-blocking single pass); `ms > 0` is a residency window — arrivals during it are serviced, an empty queue waits on the clock, n short-circuits; at the deadline no new item is taken and the in-flight one is not interrupted (it may itself run a nested window; each level keeps its own clock). The return counts items serviced; a serviced call that failed still counts (its error went to its own future). A hard interrupt in the window wakes the wait and takes the standard teardown. A yield during a module init throws a script-level `YieldError`. A **nested** yield (op_yield inside a serviced call) is allowed: the serviced call services the queue from its own yield point; `engine_config::yield_nest` caps the levels (the outermost counts as one, default 64, 0 = unlimited), and a yield past the cap throws the same catchable script-level `YieldError("nested yield")` — uncaught it ends that call, the delivery's future carrying it (the main walk is untouched either way).
 
-**C++ surface** — `engine::yield(_name, _args, _priority = 0, _expiry_ms = 0) -> std::future<result>`; `fwrap::currying` returns a `callback*` owned by the caller, which deletes it before the engine dies (`call` = the same delivery); `set_max_yield` writes `engine_config::max_yield` (appended field, default 256, 0 = unlimited). `call` and both delivery entries take `const varvec&` and `varvec&&`: the rvalue form moves **only when the submission is accepted** (enqueue success); every refusal — `no main fiber`, `yield full`, call's two name-resolution misses — leaves the caller's varvec untouched (order: refuse, allocate the node, move last). Every outcome travels inside the future — value, script error, `no main fiber`, `yield full`, `expired`, `not executed`, and `InterruptedError` when an interrupt tears the run down — and a future is never broken, the only ways out being an allocation failure while settling and a host slot that breaks the signal contract (api.md §3.5). `result` moves from the engine's nested type to the `script` namespace (`engine::result` stays as an alias); `YieldError` is appended to `error_type`'s tail.
+**C++ surface** — `engine::yield(_name, _args, _priority = 0, _expiry_ms = 0, _delay_ms = 0) -> std::future<result>`; `fwrap::currying` returns a `callback*` owned by the caller, which deletes it before the engine dies (`call` = the same delivery); `set_yield_limit` writes `engine_config::yield_limit` (appended field, default 256, 0 = unlimited); `set_yield_nest` writes `engine_config::yield_nest` (appended field, default 64, 0 = unlimited nesting levels); `set_yield_rsvprio` writes `engine_config::yield_rsvprio` (appended field, default `max_uint_32` = nothing reserved): priorities above it are reserved for the host, and a currying handle clamps both `call`'s priority and its `drop` threshold down to it, while the engine's own faces are unclamped. `clr_yield(_priority, _maxcnt) -> uint_64` settles queued deliveries without running them, only while a run is in progress (0 otherwise), oldest first, `pri <= _priority`, at most `_maxcnt` (0 = unlimited), each as `YieldError("cleared")`; the engine exposes it under that name, the currying handle as `drop` (the same clear, clamped). `call` and both delivery entries take `const varvec&` and `varvec&&`: the rvalue form moves **only when the submission is accepted** (enqueue success); every refusal — `no main fiber`, `yield full`, call's two name-resolution misses — leaves the caller's varvec untouched (order: refuse, allocate the node, move last). Every outcome travels inside the future — value, script error, `no main fiber`, `yield full`, `expired`, `cleared`, `not executed`, and `InterruptedError` when an interrupt tears the run down — and a future is never broken, the only ways out being an allocation failure while settling and a host slot that breaks the signal contract (api.md §3.5). `result` moves from the engine's nested type to the `script` namespace (`engine::result` stays as an alias); `YieldError` is appended to `error_type`'s tail.
 
 **Data structures**:
 
 ```cpp
-// one delivery, late-bound by name; ttd is stamped at enqueue (expiry_ms 0 -> a zero ttd, never expires)
+// one delivery, late-bound by name; ttd and nbf are stamped at enqueue
+// (expiry_ms 0 -> a zero ttd, never expires; delay_ms 0 -> a zero nbf, eligible immediately)
 struct yield_request {
     std::string name;
     varvec args;
     std::chrono::steady_clock::time_point ttd;
+    std::chrono::steady_clock::time_point nbf;
     std::promise<result> ret;
     uint_32 pri;
 };
@@ -1276,40 +1280,52 @@ public:
     explicit yield_queue(const engine_config& _cfg);
     ~yield_queue();   // the last net: leftovers drain as `not executed`, so no promise dies unset
     // admission: this delivery's future, or an already-fulfilled `yield full` (args untouched)
-    std::future<result> push(std::string _name, varvec&& _args, uint_32 _pri, uint_32 _expiry_ms);
-    // take: the maximum, earliest on ties, removed; nullptr = empty. The taker owns the ttd
-    // comparison, the execution and the fulfillment
+    std::future<result> push(std::string _name, varvec&& _args, uint_32 _pri,
+                             uint_32 _expiry_ms, uint_32 _delay_ms);
+    // take: the maximum among the eligible (nbf == 0), earliest on ties, removed;
+    // nullptr = none eligible. The taker owns the ttd comparison, the execution and the fulfillment
     yield_request* pop_max();
-    // liquidation (heartbeat): expired nodes removed, fulfilled `expired` outside the lock
-    void expire(std::chrono::steady_clock::time_point _now);
+    // one heartbeat pass: expired nodes removed, due nodes made eligible, fulfilled `expired`
+    // outside the lock; try_lock only, a locked queue is skipped and the next pass catches up
+    void tick(std::chrono::steady_clock::time_point _now);
+    // settle entries with pri <= _priority, oldest first, at most _maxcnt (0 = unlimited)
+    uint_64 clear(uint_32 _priority, uint_64 _maxcnt);
     // teardown: everything removed, fulfilled as _type/_msg outside the lock -- run exit
     // `not executed`, a torn-down interrupt `InterruptedError`, the entry-start net
     void drain(error_type _type, const std::string& _msg);
-    // the residency wait: returns at an item or the deadline; the interrupt is judged by the
-    // caller after the wake
+    // the residency wait: returns at an eligible entry or the deadline; the interrupt is judged
+    // by the caller after the wake
     void wait_for_item(std::chrono::steady_clock::time_point _deadline, const std::atomic<bool>& _stop);
     // the external wake (set_interrupt): the flag is stored first, then this
     void wake();
-    void set_max_yield(size_t _n);
+    void set_yield_limit(size_t _n);
 
 private:
-    std::atomic<size_t> m_max_yield;   // capacity = max_yield, synced by set_max_yield
+    std::atomic<size_t> m_limit;   // capacity = yield_limit, synced by set_yield_limit
     std::mutex m_mtx;
     std::list<yield_request*> m_queue;
     std::condition_variable m_cv;
 };
 ```
 
-- Pointers in a `std::list` because arbitrary removal is needed three ways (heartbeat, teardown, take), and the list order *is* the arrival order.
-- **Take = a linear scan for the max**: a strict `>` replacement keeps the *first* maximum, so equal priorities come out FIFO for free; the scan stops at `UINT32_MAX` (nothing can outrank it). No sequence field.
+- Pointers in a `std::list` because arbitrary removal is needed four ways (heartbeat, teardown, take, clear), and the list order *is* the arrival order.
+- **Take = a linear scan for the max among the eligible**: a strict `>` replacement keeps the *first* maximum, so equal priorities come out FIFO for free, and a delayed entry keeps its arrival position (a delivery that becomes eligible may precede a later immediate one); the scan stops at `UINT32_MAX` (nothing can outrank it). No sequence field.
 - **No doorbell**: with the service point script-driven, its only reader left was the heartbeat's skip — and the heartbeat already try_locks and skips on failure. An atomic saving tens of nanoseconds is not worth the write-under-lock discipline it demands.
-- `ttd` is `steady_clock`-based (`time_t` would quantize a 50ms TTL and jump under NTP); the capacity lives in the queue as an atomic seeded from the config and synced by `set_max_yield` — a delivery thread's push races that setter, so a live read of the config field would be a data race.
-- The residency wait judges its predicate (`!empty || interrupted`) under the mutex; `set_interrupt` must store the flag, then lock/unlock the queue mutex, then notify — a bare store loses the wakeup and the window drags to the deadline.
-- **Exactly-once fulfillment**: push (refusal), expire, drain and the dtor all remove under the lock and fulfill outside it; `pop_max` hands the node over and the taker fulfills. That single form is where "each item is settled once" lives.
+- `ttd` and `nbf` are `steady_clock`-based (`time_t` would quantize a 50ms TTL and jump under NTP). `nbf` is an absolute stamp, not a remaining counter decremented per pass: a global decrement would over-credit an entry pushed between two passes (it would run early, breaking not-before) and a fixed per-pass decrement would drift whenever a pass is skipped. The capacity lives in the queue as an atomic seeded from the config and synced by `set_yield_limit` — a delivery thread's push races that setter, so a live read of the config field would be a data race.
+- The residency wait judges its predicate (an eligible entry exists || interrupted) under the mutex; `set_interrupt` must store the flag, then lock/unlock the queue mutex, then notify — a bare store loses the wakeup and the window drags to the deadline. The heartbeat's eligibility pass notifies the same condition variable after it unlocks, which is how a sleeping window picks a delayed delivery up at its delay.
+- **Exactly-once fulfillment**: push (refusal), tick, clear, drain and the dtor all remove under the lock and fulfill outside it; `pop_max` hands the node over and the taker fulfills. That single form is where "each item is settled once" lives.
 
-**The service point (op_yield)**: the body sets `m_yield_exec` (RAII — a nested op_yield raises its script-level error), then loops: take (locked), compare ttd outside the lock (an expired item is fulfilled `expired`, never executed, not counted), run the shared execution helper, repeat; ms/n boundaries end it. The serviced call runs under **root pose**: `frames` (a pointer since `64d84aa`) is repointed at a local empty deque while `current` (a last-frame pop leaves it as-is), the four control flags and the position are saved and restored by RAII — the spare deque is declared before the guard, so the restore precedes its destruction. `m_insn`/`m_insn_total` are deliberately not saved: instructions count and exec events fire, so the host's watchdog covers serviced calls, and `max_stack` is each serviced call's root budget. Name resolution happens here and only here (a miss = NameError into the future); admission never looks the name up, so a delivery to a def defined later is legal.
+**The service point (op_yield)**: the body arms a depth guard (the nesting level; `engine_config::yield_nest` caps it), then loops: take (locked; only eligible entries are candidates), compare ttd outside the lock (an expired item is fulfilled `expired`, never executed, not counted), run the shared execution helper, repeat; ms/n boundaries end it. A `(0, n)` pass therefore never sees a still-delayed delivery.
 
-**Expiry**: "an expired item never executes" is exact at the take point (the clock is compared before the take commits to execution); settling an item that expires *while queued* waits for the heartbeat, so TTL granularity below the period is quantized. The heartbeat only liquidates — it never reorders.
+**Nested service**: a serviced call may call yield() itself — the Qt `processEvents` pattern: the caller keeps its stack while other handlers run above it. Each op_yield level's context_guard saves the previous `frames` pointer and installs its own spare deque, so the levels unwind by the C++ stack alone (no chain structure); the nested call runs root-pose and cannot see the caller's locals, and the caller's frames are untouched (frame bases rise with creation order, so the store still truncates LIFO). Consequences: a serviced call is no longer atomic — its own yield() is a declared reentrancy point — and its wall time is not bounded by the outer window; each level has its own window, maxcnt and count. `engine_config::yield_nest` caps the levels, the outermost counting as one (default 64, 0 = unlimited); past the cap, yield() throws the catchable script-level `YieldError("nested yield")`. The serviced call runs under **root pose**: `frames` (a pointer since `64d84aa`) is repointed at a local empty deque while `current` (a last-frame pop leaves it as-is), the four control flags and the position are saved and restored by RAII — the spare deque is declared before the guard, so the restore precedes its destruction. `m_insn`/`m_insn_total` are deliberately not saved: instructions count and exec events fire, so the host's watchdog covers serviced calls, and `max_stack` is each serviced call's root budget. Name resolution happens here and only here (a miss = NameError into the future); admission never looks the name up, so a delivery to a def defined later is legal.
+
+**Expiry**: "an expired item never executes" is exact at the take point (the clock is compared before the take commits to execution); settling an item that expires *while queued* waits for the heartbeat, so TTL granularity below the period is quantized. Expiry is counted from submission and is independent of the delay: a delivery can expire before it ever becomes eligible, and the heartbeat settles it there; in one pass expiry wins over eligibility.
+
+**Delayed deliveries**: `_delay_ms` stamps `nbf = now + delay`; zero means eligible. The take point ignores a non-zero `nbf` regardless of priority, so a delivery cannot run early; the heartbeat makes it eligible and notifies a waiting window. The heartbeat is therefore the only thing that turns a delay into service: a skipped pass delays eligibility by one period, and with no run there is no service at all. `ttd` stays independent (counted from submission), so `delay >= expiry` is a legal dead-on-arrival delivery, settled `expired` at its ttd without ever running.
+
+**clr_yield**: the management face, effective only while a run is in progress (otherwise 0, no queue touch). One locked scan from the head (oldest first), removals collected, settled outside the lock as `YieldError("cleared")`, up to `_maxcnt` matches (0 = unlimited). The in-flight delivery was taken and is not in the queue. Its purpose is the escape hatch for a queue full of delayed deliveries: clear the low-priority tier and admission continues. The currying handle exposes the same clear as `drop`, its threshold clamped to `engine_config::yield_rsvprio` (default `max_uint_32`, nothing reserved); the engine face is unclamped.
+
+**Intended use**: the host grades its events by priority; the script, written as an event loop with a periodic `yield()`, is the only service point. The grades make the take order meaningful and give `clr_yield(tier, 0)` its bite: a jammed queue is broken from the privileged side by clearing the low tier, and a runaway script by `set_interrupt()`. Priority buys ordering, not admission or preemption — a full queue refuses a high-priority delivery like any other, and nothing reaches the script between two yield points.
 
 **The heartbeat** — `res_mng` (the process-wide resource layer behind `mod_mng::s_res`) owns the script layer's first background thread, a 50ms periodic pass over its registered targets:
 
@@ -1326,14 +1342,14 @@ void hb_attach(hb_target* _t);
 void hb_detach(hb_target* _t);
 ```
 
-- `time_event()` must be light (today: `try_lock`, scan, fail out expired items, fulfill outside the lock) — heavy work's sanctioned channel is a delivery into the queue; the overrun warning is this contract's tripwire. A failing `try_lock` skips the engine for this pass (the next one catches up).
+- `time_event()` must be light (today: `try_lock`, one scan that fails out expired items and clears the `nbf` of due ones, fulfill outside the lock, notify a waiting window) — heavy work's sanctioned channel is a delivery into the queue; the overrun warning is this contract's tripwire. A failing `try_lock` skips the engine for this pass (the next one catches up).
 - Registration is per engine: `hb_attach` from engine_impl's constructor, `hb_detach` first thing in `~engine_impl` — before the walker (and its queue) dies. The registry lock spans a whole pass (the light contract bounds it); the overrun `on_csys` fire happens *after* the lock is released.
 - A pass longer than the period fires one `on_csys` entry (`heartbeat overrun: …`, the sys family after ast/link) — the duration, no per-engine detail, no rate limiting: appearance means "go measure". No catch-up, no skipped-pass compensation. A target whose `time_event()` throws is reported as `heartbeat error: time_event() threw` — one bad target does not kill the thread.
-- `~res_mng` stops and joins the thread explicitly (process-exit ordering). Promise: settlement lag ≤ 200ms (the period leaves margin). `on_csys` thereby becomes cross-thread — host slots may arrive on the heartbeat thread (api.md contract).
+- `~res_mng` stops and joins the thread explicitly (process-exit ordering). Promise: settlement lag ≤ 200ms, and a delayed delivery becomes eligible within 200ms past its delay (the period leaves margin); its start additionally needs the script at a yield point. `on_csys` thereby becomes cross-thread — host slots may arrive on the heartbeat thread (api.md contract).
 
 **Teardown**: a failed run keeps root, defs and modules (reset-on-failure died in ②) — the queue is drained at run exit (`not executed`), at a hard interrupt (`InterruptedError` for every delivery, the in-flight one short-circuited layer by layer), and at every entry's start (the safety net for a racing enqueue, mirroring the flag clears). The queue must be empty before the store and the module layer go: nodes hold args (possibly anyptrs) and unfulfilled promises. `reset()` is the only reaper.
 
-**Impact**: `O_YIELD` appends after `O_DEBUG` — **no engine-side vtype change** (old products never carry it; a product that uses yield is the host's own stamping call, the gate at `check_version` (`ascript.cpp:343`) doing the refusing).
+**Impact**: `O_YIELD` appends after `O_DEBUG` — **no engine-side vtype change** (old products never carry it; a product that uses yield is the host's own stamping call, the gate at `check_version` (`ascript.cpp:343`) doing the refusing). The 2026-11-05 additions change the `engine::yield` virtual signatures (one more parameter), rename `max_yield`/`set_max_yield` to `yield_limit`/`set_yield_limit`, and add `clr_yield`/`set_yield_nest` to the virtual surface plus the `yield_nest` config field — an ABI break, so the release that carries them is a minor; no opcode change, so vtype stays untouched.
 
 ### 4.9g Link type registration — `fwrap::bind(rid, name, desc, view)` (2026-11-03)
 
@@ -2036,6 +2052,16 @@ Version ALXLIB 1.4.0 → 1.4.1.
 
 Version ALXLIB 1.4.1 → 1.4.2.
 
+**Migration log (2026-11-05, version 1.5.0: delayed deliveries, clr_yield, and nested yield)**:
+
+- **Deliveries can be delayed**: `engine::yield` and `fwrap::callback::call` take a fourth parameter, `_delay_ms` (default 0). A delayed delivery is stamped with an `nbf` (not-before) at enqueue, cannot be taken before it, and is made eligible by the heartbeat pass — which now also notifies a waiting `yield(ms)` window, so the window wakes at the delay instead of at its own deadline. `_expiry_ms` still counts from submission and can expire a delivery before its delay ends. Timer precision is the heartbeat's: eligible no earlier than the delay, typically within one 50ms period.
+- **`clr_yield(_priority, _maxcnt)` / callback `drop`**: the management face of the queue — the engine under `clr_yield`, the currying handle under `drop` (never on `fwrap` itself). Only effective while a run is in progress (otherwise 0); scans oldest first, settles deliveries with priority <= _priority as `YieldError("cleared")`, up to _maxcnt (0 = unlimited), and returns the count. The in-flight delivery is unaffected. The handle's threshold and its `call` priority are clamped to `engine_config::yield_rsvprio` (default `max_uint_32` = nothing reserved), so a host that sets it keeps the band above for itself.
+- **`max_yield`/`set_max_yield` are now `yield_limit`/`set_yield_limit`**: the config field, the setter and the queue's internal limit all use the new name. Source and ABI break for hosts.
+- **Nested yield is allowed**: a serviced call may call yield() and service the queue itself (the Qt `processEvents` pattern). Each level saves and restores the previous frame stack; the old unconditional `YieldError("nested yield")` is now the cap violation only. `engine_config::yield_nest` (and `set_yield_nest`) bounds the levels, the outermost yield counting as one; default 64, 0 = unlimited, and `yield_nest = 1` reproduces the old refusal. A level past the cap throws the catchable script-level error; uncaught it ends that delivery's call.
+- **Migration notes**: the engine's virtual surface changed — both `yield` overloads and both `fwrap::callback::call` overloads take the new parameter; `clr_yield` (engine) and `drop` (callback), `set_yield_nest` and `set_yield_rsvprio` are new virtuals, and `engine_config` gains `yield_nest` and `yield_rsvprio`; `max_yield`/`set_max_yield` are gone. The SONAME moves `.so.1.4` → `.so.1.5`, so a mixed set is refused at load; every host and link module must be rebuilt. No opcode or AST change, so **vtype is untouched** and `.axp` products need no recompilation.
+
+Version ALXLIB 1.4.2 → 1.5.0.
+
 ### 10.2 Syntax
 
 `$foo(args)` → `T_DOLLAR` + `T_NAME` (the value is the bare name `foo`) + the `O_EXCALL` opcode.
@@ -2104,7 +2130,9 @@ eval(str, map)         // named parameters: the keys go into the anonymous frame
 
 ```
 at runtime:
-  1. decode   lexparse(str) → body (parse_body(), the unwrapped interface, a bare statement list, the same shape as a def body)
+  1. decode   lexparse(str) → body (parse_body(false), a bare statement list, the same shape as a def body;
+              the non-top entry, so import/link are refused here as inside any block -- the frame that
+              would hold the alias dies with the call)
               the ext/def tables are passed null -- $xxx/$name are resolved at runtime (get_extend / O_ECONST),
               the same path as reflection re-parsing
   2. push     push_frame(current, the function frame mask)   // max_stack counting and the frame cleanup flags arrive automatically
@@ -2127,7 +2155,7 @@ at runtime:
 | runtime error | the existing exception path |
 | nested eval depth | each level pushes a frame → counted by `max_stack`; hitting the limit = StackError, and the engine does not crash (the red line) |
 | parse_depth | nested structures inside the string are bounded the same way |
-| gate | an `import`/`link` inside the string fires hook events as usual, keeping the firewall semantics |
+| gate | an `import`/`link` inside the string is a `ParseError` (the non-top entry), so no module event fires |
 
 ### 11.4 Boundaries with the existing machinery
 

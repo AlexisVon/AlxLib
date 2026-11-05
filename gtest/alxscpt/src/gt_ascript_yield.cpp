@@ -35,6 +35,25 @@ namespace {
         _f.freturn(variant());
     }
 
+    // $post_delay(name, delay_ms, pri?, expiry?, arg?) -- queue a delayed delivery
+    void native_post_delay(fwrap& _f) {
+        std::string name = _f[0].to<std::string>();
+        uint_32 delay = static_cast<uint_32>(_f[1].to<int_64>());
+        uint_32 pri = _f.size() > 2 ? static_cast<uint_32>(_f[2].to<int_64>()) : 0;
+        uint_32 exp = _f.size() > 3 ? static_cast<uint_32>(_f[3].to<int_64>()) : 0;
+        varvec args;
+        if (_f.size() > 4) args.push_back(variant(_f[4]));
+        g_futs.push_back(g_eng->yield(name, std::move(args), pri, exp, delay));
+        _f.freturn(variant());
+    }
+
+    // $clr(pri, maxcnt?) -- clear queued deliveries from inside the run
+    void native_clr(fwrap& _f) {
+        uint_32 pri = static_cast<uint_32>(_f[0].to<int_64>());
+        uint_64 maxcnt = _f.size() > 1 ? static_cast<uint_64>(_f[1].to<int_64>()) : 0;
+        _f.freturn(variant(static_cast<int_64>(g_eng->clr_yield(pri, maxcnt))));
+    }
+
     // $refuse() -- an rvalue delivery into a full queue must leave the caller's vector intact
     void native_refuse(fwrap& _f) {
         varvec args;
@@ -73,7 +92,7 @@ namespace {
 
     // $shrink(n) -- resize the yield queue from inside the run
     void native_shrink(fwrap& _f) {
-        g_eng->set_max_yield(static_cast<size_t>(_f[0].to<int_64>()));
+        g_eng->set_yield_limit(static_cast<size_t>(_f[0].to<int_64>()));
         _f.freturn(variant());
     }
 
@@ -200,9 +219,9 @@ TEST(gt_ascript_yield, NoRunRefusesWithNoMainFiber) {
 
 TEST(gt_ascript_yield, FullQueueRefusesAndLeavesTheArgs) {
     engine_config cfg;
-    cfg.max_yield = 1;
+    cfg.yield_limit = 1;
     engine* eng = engine::create(cfg);
-    EXPECT_EQ(eng->config().max_yield, 1u);
+    EXPECT_EQ(eng->config().yield_limit, 1u);
     g_eng = eng;
     g_futs.clear();
     g_marks.clear();
@@ -316,8 +335,69 @@ TEST(gt_ascript_yield, NoYieldPointMeansNotExecuted) {
     g_eng = nullptr;
 }
 
-TEST(gt_ascript_yield, UncaughtNestedYieldEndsThatDelivery) {
+TEST(gt_ascript_yield, NestedYieldServicesTheQueueAndResumes) {
     engine* eng = engine::create();
+    g_eng = eng;
+    g_futs.clear();
+    g_marks.clear();
+    eng->set_extend("post", native_post);
+    eng->set_extend("mark", native_mark);
+    auto r = run(eng,
+                 "def b() { $mark(\"b\"); }"
+                 "def a() { var keep = 7; $post(\"b\"); var n = yield(0, 0); return keep * 10 + n; }"
+                 "$post(\"a\"); var c = yield(0, 0); return c;");
+    ASSERT_EQ(r.error, error_type::NoError);
+    EXPECT_EQ(r.value.to<int_64>(), 1);
+    ASSERT_EQ(g_marks.size(), 1u);
+    EXPECT_EQ(g_marks[0], "b");
+    ASSERT_EQ(g_futs.size(), 2u);
+    auto fa = g_futs[0].get();
+    auto fb = g_futs[1].get();
+    EXPECT_EQ(fa.error, error_type::NoError);
+    EXPECT_EQ(fa.value.to<int_64>(), 71);
+    EXPECT_EQ(fb.error, error_type::NoError);
+    g_futs.clear();
+    g_marks.clear();
+    delete eng;
+    g_eng = nullptr;
+}
+
+TEST(gt_ascript_yield, DeepNestingResumesEveryLevelByDefault) {
+    engine* eng = engine::create();
+    g_eng = eng;
+    g_futs.clear();
+    g_marks.clear();
+    eng->set_extend("post", native_post);
+    eng->set_extend("mark", native_mark);
+    auto r = run(eng,
+                 "def c() { $mark(\"c\"); return 3; }"
+                 "def b() { $post(\"c\"); var n = yield(0, 0); return n; }"
+                 "def a() { var keep = 7; $post(\"b\"); var n = yield(0, 0); return keep * 100 + n; }"
+                 "$post(\"a\"); var n = yield(0, 0); return n;");
+    ASSERT_EQ(r.error, error_type::NoError);
+    EXPECT_EQ(r.value.to<int_64>(), 1);
+    ASSERT_EQ(g_marks.size(), 1u);
+    EXPECT_EQ(g_marks[0], "c");
+    ASSERT_EQ(g_futs.size(), 3u);
+    auto fa = g_futs[0].get();
+    auto fb = g_futs[1].get();
+    auto fc = g_futs[2].get();
+    EXPECT_EQ(fa.error, error_type::NoError);
+    EXPECT_EQ(fa.value.to<int_64>(), 701);
+    EXPECT_EQ(fb.error, error_type::NoError);
+    EXPECT_EQ(fb.value.to<int_64>(), 1);
+    EXPECT_EQ(fc.error, error_type::NoError);
+    EXPECT_EQ(fc.value.to<int_64>(), 3);
+    g_futs.clear();
+    g_marks.clear();
+    delete eng;
+    g_eng = nullptr;
+}
+
+TEST(gt_ascript_yield, NestedYieldBeyondTheCapEndsThatDelivery) {
+    engine_config cfg;
+    cfg.yield_nest = 1;
+    engine* eng = engine::create(cfg);
     g_eng = eng;
     g_futs.clear();
     g_marks.clear();
@@ -338,13 +418,13 @@ TEST(gt_ascript_yield, UncaughtNestedYieldEndsThatDelivery) {
     g_eng = nullptr;
 }
 
-TEST(gt_ascript_yield, AServicedCallMayCatchItsNestedYield) {
-    engine* eng = engine::create();
+TEST(gt_ascript_yield, NestedYieldBeyondTheCapIsCatchable) {
+    engine_config cfg;
+    cfg.yield_nest = 1;
+    engine* eng = engine::create(cfg);
     g_eng = eng;
     g_futs.clear();
-    g_marks.clear();
     eng->set_extend("post", native_post);
-    eng->set_extend("mark", native_mark);
     auto r = run(eng,
                  "def f() { try { yield(0, 0); } catch (e) { return e[\"what\"]; } return \"missed\"; }"
                  "$post(\"f\"); var c = yield(0, 0); return c;");
@@ -355,6 +435,254 @@ TEST(gt_ascript_yield, AServicedCallMayCatchItsNestedYield) {
     EXPECT_EQ(fr.error, error_type::NoError);
     EXPECT_EQ(fr.value.to<std::string>(), "YieldError");
     g_futs.clear();
+    delete eng;
+    g_eng = nullptr;
+}
+
+TEST(gt_ascript_yield, NestingStopsAtTheConfiguredDepth) {
+    engine_config cfg;
+    cfg.yield_nest = 2;
+    engine* eng = engine::create(cfg);
+    g_eng = eng;
+    g_futs.clear();
+    g_marks.clear();
+    eng->set_extend("post", native_post);
+    eng->set_extend("mark", native_mark);
+    auto r = run(eng,
+                 "def c() { try { yield(0, 0); } catch (e) { return e[\"what\"]; } return \"missed\"; }"
+                 "def b() { $post(\"c\"); try { var n = yield(0, 0); return n; } catch (e) { return e[\"what\"]; } }"
+                 "def a() { $post(\"b\"); var n = yield(0, 0); return n; }"
+                 "$post(\"a\"); var n = yield(0, 0); return n;");
+    ASSERT_EQ(r.error, error_type::NoError);
+    EXPECT_EQ(r.value.to<int_64>(), 1);
+    ASSERT_EQ(g_futs.size(), 3u);
+    auto fa = g_futs[0].get();
+    auto fb = g_futs[1].get();
+    auto fc = g_futs[2].get();
+    EXPECT_EQ(fa.error, error_type::NoError);
+    EXPECT_EQ(fa.value.to<int_64>(), 2);
+    EXPECT_EQ(fb.error, error_type::NoError);
+    EXPECT_EQ(fb.value.to<std::string>(), "YieldError");
+    EXPECT_EQ(fc.error, error_type::NoError);
+    EXPECT_EQ(fc.value.to<std::string>(), "YieldError");
+    g_futs.clear();
+    delete eng;
+    g_eng = nullptr;
+}
+
+TEST(gt_ascript_yield, NestingDepthIsReleasedBetweenYields) {
+    engine_config cfg;
+    cfg.yield_nest = 1; // only the outermost level; a leaked depth would fail the second yield
+    engine* eng = engine::create(cfg);
+    g_eng = eng;
+    g_futs.clear();
+    g_marks.clear();
+    eng->set_extend("post", native_post);
+    eng->set_extend("mark", native_mark);
+    auto r = run(eng,
+                 "def f() { $mark(\"f\"); }"
+                 "$post(\"f\"); var a = yield(0, 0);"
+                 "$post(\"f\"); var b = yield(0, 0);"
+                 "return a * 10 + b;");
+    ASSERT_EQ(r.error, error_type::NoError);
+    EXPECT_EQ(r.value.to<int_64>(), 11);
+    EXPECT_EQ(g_marks.size(), 2u);
+    for (auto& f : g_futs) EXPECT_EQ(f.get().error, error_type::NoError);
+    g_futs.clear();
+    g_marks.clear();
+    delete eng;
+    g_eng = nullptr;
+}
+
+TEST(gt_ascript_yield, NestingDepthIsReleasedInsideOneDelivery) {
+    engine_config cfg;
+    cfg.yield_nest = 2; // the outer level plus one inside f
+    engine* eng = engine::create(cfg);
+    g_eng = eng;
+    g_futs.clear();
+    g_marks.clear();
+    eng->set_extend("post", native_post);
+    eng->set_extend("mark", native_mark);
+    auto r = run(eng,
+                 "def g() { $mark(\"g\"); }"
+                 "def f() { $post(\"g\"); var a = yield(0, 0);"
+                 "$post(\"g\"); var b = yield(0, 0); return a * 10 + b; }"
+                 "$post(\"f\"); var n = yield(0, 0); return n;");
+    ASSERT_EQ(r.error, error_type::NoError);
+    EXPECT_EQ(r.value.to<int_64>(), 1);
+    ASSERT_EQ(g_futs.size(), 3u);
+    auto ff = g_futs[0].get();
+    auto g1 = g_futs[1].get();
+    auto g2 = g_futs[2].get();
+    EXPECT_EQ(ff.error, error_type::NoError);
+    EXPECT_EQ(ff.value.to<int_64>(), 11);
+    EXPECT_EQ(g1.error, error_type::NoError);
+    EXPECT_EQ(g2.error, error_type::NoError);
+    g_futs.clear();
+    g_marks.clear();
+    delete eng;
+    g_eng = nullptr;
+}
+
+TEST(gt_ascript_yield, AnExpiryThatCoincidesWithEligibilityExpires) {
+    engine* eng = engine::create();
+    g_eng = eng;
+    g_futs.clear();
+    g_marks.clear();
+    eng->set_extend("post_delay", native_post_delay);
+    eng->set_extend("mark", native_mark);
+    eng->set_extend("nap", native_nap);
+    // both stamps pass before the take: expiry wins in the same pass and the item never runs
+    auto r = run(eng,
+                 "def f() { $mark(\"ran\"); }"
+                 "$post_delay(\"f\", 10, 0, 20);"
+                 "$nap(120);"
+                 "var c = yield(0, 0); return c;");
+    ASSERT_EQ(r.error, error_type::NoError);
+    EXPECT_EQ(r.value.to<int_64>(), 0);
+    EXPECT_TRUE(g_marks.empty());
+    ASSERT_EQ(g_futs.size(), 1u);
+    auto fr = g_futs[0].get();
+    EXPECT_EQ(fr.error, error_type::YieldError);
+    EXPECT_EQ(fr.value.to<std::string>(), "expired");
+    g_futs.clear();
+    delete eng;
+    g_eng = nullptr;
+}
+
+TEST(gt_ascript_yield, ANestedFailureLeavesTheOuterFramesIntact) {
+    engine* eng = engine::create();
+    g_eng = eng;
+    g_futs.clear();
+    eng->set_extend("post", native_post);
+    auto r = run(eng,
+                 "def c() { return [1, 2][9]; }"
+                 "def b() { var kb = 2; $post(\"c\"); var n = yield(0, 0); return kb * 1000 + n; }"
+                 "def a() { var ka = 7; $post(\"b\"); var n = yield(0, 0); return ka * 1000 + n; }"
+                 "$post(\"a\"); var n = yield(0, 0); return n;");
+    ASSERT_EQ(r.error, error_type::NoError);
+    EXPECT_EQ(r.value.to<int_64>(), 1);
+    ASSERT_EQ(g_futs.size(), 3u);
+    auto fa = g_futs[0].get();
+    auto fb = g_futs[1].get();
+    auto fc = g_futs[2].get();
+    EXPECT_EQ(fa.error, error_type::NoError);
+    EXPECT_EQ(fa.value.to<int_64>(), 7001);
+    EXPECT_EQ(fb.error, error_type::NoError);
+    EXPECT_EQ(fb.value.to<int_64>(), 2001);
+    EXPECT_EQ(fc.error, error_type::IndexError);
+    g_futs.clear();
+    delete eng;
+    g_eng = nullptr;
+}
+
+TEST(gt_ascript_yield, NestedWaitInterruptsTheChain) {
+    engine* eng = engine::create();
+    g_eng = eng;
+    g_futs.clear();
+    eng->set_extend("post", native_post);
+    auto fut = std::async(std::launch::async, [&] {
+        return run(eng,
+                   "def a() { yield(30000, 0); return 1; }"
+                   "$post(\"a\"); yield(3000, 0); return 2;");
+    });
+    for (int i = 0; i < 5000 && !eng->is_running(); i++)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    ASSERT_TRUE(eng->is_running());
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    eng->set_interrupt();
+    ASSERT_EQ(fut.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(fut.get().error, error_type::InterruptedError);
+    ASSERT_EQ(g_futs.size(), 1u);
+    auto fa = g_futs[0].get();
+    EXPECT_EQ(fa.error, error_type::InterruptedError);
+    g_futs.clear();
+    delete eng;
+    g_eng = nullptr;
+}
+
+TEST(gt_ascript_yield, YieldNestConfig) {
+    engine_config cfg;
+    EXPECT_EQ(cfg.yield_nest, 64u);
+    cfg.yield_nest = 3;
+    engine* eng = engine::create(cfg);
+    EXPECT_EQ(eng->config().yield_nest, 3u);
+    eng->set_yield_nest(1);
+    EXPECT_EQ(eng->config().yield_nest, 1u);
+    delete eng;
+}
+
+TEST(gt_ascript_yield, YieldRsvprioConfig) {
+    engine_config cfg;
+    EXPECT_EQ(cfg.yield_rsvprio, max_uint_32);
+    cfg.yield_rsvprio = 7;
+    engine* eng = engine::create(cfg);
+    EXPECT_EQ(eng->config().yield_rsvprio, 7u);
+    eng->set_yield_rsvprio(3);
+    EXPECT_EQ(eng->config().yield_rsvprio, 3u);
+    delete eng;
+}
+
+TEST(gt_ascript_yield, TheReservedBandClampsLinkDeliveriesAndClears) {
+    engine_config cfg;
+    cfg.yield_rsvprio = 5;
+    engine* eng = engine::create(cfg);
+    g_eng = eng;
+    g_cb = nullptr;
+    eng->set_extend("curry", native_curry);
+    auto fut = std::async(std::launch::async, [&] {
+        return run(eng, "def f() { } $curry(\"f\"); yield(3000, 0); return 1;");
+    });
+    for (int i = 0; i < 5000 && !g_cb; i++)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    ASSERT_NE(g_cb.load(), nullptr);
+
+    // delayed so the resident window cannot take them before the clears
+    auto link = g_cb.load()->call(varvec(), 9, 0, 60000); // clamped to 5
+    auto host = eng->yield("f", varvec(), 6, 0, 60000); // host face, unclamped
+    EXPECT_EQ(g_cb.load()->drop(9, 0), 1u); // clamps to 5: only the link one
+    EXPECT_EQ(eng->clr_yield(9, 0), 1u); // host face: the reserved one
+    auto fl = link.get();
+    auto fh = host.get();
+    EXPECT_EQ(fl.error, error_type::YieldError);
+    EXPECT_EQ(fl.value.to<std::string>(), "cleared");
+    EXPECT_EQ(fh.error, error_type::YieldError);
+    EXPECT_EQ(fh.value.to<std::string>(), "cleared");
+
+    eng->set_interrupt();
+    ASSERT_EQ(fut.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(fut.get().error, error_type::InterruptedError);
+    delete g_cb.load();
+    g_cb = nullptr;
+    delete eng;
+    g_eng = nullptr;
+}
+
+TEST(gt_ascript_yield, TheReservedBandIsOpenByDefault) {
+    engine* eng = engine::create(); // yield_rsvprio = max: nothing is reserved
+    g_eng = eng;
+    g_cb = nullptr;
+    eng->set_extend("curry", native_curry);
+    auto fut = std::async(std::launch::async, [&] {
+        return run(eng, "def f() { } $curry(\"f\"); yield(3000, 0); return 1;");
+    });
+    for (int i = 0; i < 5000 && !g_cb; i++)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    ASSERT_NE(g_cb.load(), nullptr);
+
+    auto link = g_cb.load()->call(varvec(), 9, 0, 60000); // not clamped
+    auto host = eng->yield("f", varvec(), 1, 0, 60000);
+    EXPECT_EQ(g_cb.load()->drop(9, 0), 2u); // both are <= 9
+    auto fl = link.get();
+    auto fh = host.get();
+    EXPECT_EQ(fl.value.to<std::string>(), "cleared");
+    EXPECT_EQ(fh.value.to<std::string>(), "cleared");
+
+    eng->set_interrupt();
+    ASSERT_EQ(fut.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(fut.get().error, error_type::InterruptedError);
+    delete g_cb.load();
+    g_cb = nullptr;
     delete eng;
     g_eng = nullptr;
 }
@@ -649,7 +977,7 @@ TEST(gt_ascript_yield, TheHookRejectReasonSettlesDeliveries) {
     g_eng = nullptr;
 }
 
-TEST(gt_ascript_yield, MaxYieldChangeAdmitsImmediately) {
+TEST(gt_ascript_yield, YieldLimitChangeAdmitsImmediately) {
     engine* eng = engine::create();
     g_eng = eng;
     g_futs.clear();
@@ -701,16 +1029,245 @@ TEST(gt_ascript_yield, YieldIsReserved) {
 
 TEST(gt_ascript_yield, DefaultCapacityIs256) {
     engine* eng = engine::create();
-    EXPECT_EQ(eng->config().max_yield, 256u);
+    EXPECT_EQ(eng->config().yield_limit, 256u);
     delete eng;
 }
 
-TEST(gt_ascript_yield, MaxYieldConfig) {
+TEST(gt_ascript_yield, YieldLimitConfig) {
     engine_config cfg;
-    cfg.max_yield = 3;
+    cfg.yield_limit = 3;
     engine* eng = engine::create(cfg);
-    EXPECT_EQ(eng->config().max_yield, 3u);
-    eng->set_max_yield(0);
-    EXPECT_EQ(eng->config().max_yield, 0u);
+    EXPECT_EQ(eng->config().yield_limit, 3u);
+    eng->set_yield_limit(0);
+    EXPECT_EQ(eng->config().yield_limit, 0u);
     delete eng;
+}
+
+TEST(gt_ascript_yield, DelayedDeliveryStartsNoEarlier) {
+    engine* eng = engine::create();
+    g_eng = eng;
+    g_futs.clear();
+    g_marks.clear();
+    eng->set_extend("post_delay", native_post_delay);
+    eng->set_extend("mark", native_mark);
+    eng->set_extend("nap", native_nap);
+    auto r = run(eng,
+                 "def f() { $mark(\"ran\"); }"
+                 "$post_delay(\"f\", 100);"
+                 "var c0 = yield(0, 0);"
+                 "$nap(220);"
+                 "var c1 = yield(0, 0);"
+                 "return c0 * 10 + c1;");
+    ASSERT_EQ(r.error, error_type::NoError);
+    EXPECT_EQ(r.value.to<int_64>(), 1);
+    ASSERT_EQ(g_marks.size(), 1u);
+    ASSERT_EQ(g_futs.size(), 1u);
+    EXPECT_EQ(g_futs[0].get().error, error_type::NoError);
+    g_futs.clear();
+    delete eng;
+    g_eng = nullptr;
+}
+
+TEST(gt_ascript_yield, TheResidencyWindowWakesAtTheDelay) {
+    engine* eng = engine::create();
+    g_eng = eng;
+    g_futs.clear();
+    g_marks.clear();
+    eng->set_extend("post_delay", native_post_delay);
+    eng->set_extend("mark", native_mark);
+    auto r = run(eng,
+                 "def f() { $mark(\"ran\"); }"
+                 "$post_delay(\"f\", 100);"
+                 "var c = yield(1000, 1); return c;");
+    ASSERT_EQ(r.error, error_type::NoError);
+    EXPECT_EQ(r.value.to<int_64>(), 1);
+    EXPECT_EQ(g_marks.size(), 1u);
+    // maxcnt=1 returns as soon as the delayed item runs: well before the 1s deadline
+    EXPECT_LT(r.elapsed_us, 600000);
+    ASSERT_EQ(g_futs.size(), 1u);
+    EXPECT_EQ(g_futs[0].get().error, error_type::NoError);
+    g_futs.clear();
+    delete eng;
+    g_eng = nullptr;
+}
+
+TEST(gt_ascript_yield, AnExpiryBeforeTheDelaySettlesUnrun) {
+    engine* eng = engine::create();
+    g_eng = eng;
+    g_futs.clear();
+    g_marks.clear();
+    eng->set_extend("post_delay", native_post_delay);
+    eng->set_extend("mark", native_mark);
+    eng->set_extend("nap", native_nap);
+    auto r = run(eng,
+                 "def f() { $mark(\"ran\"); }"
+                 "$post_delay(\"f\", 5000, 0, 50);"
+                 "$nap(150);"
+                 "var c = yield(0, 0); return c;");
+    ASSERT_EQ(r.error, error_type::NoError);
+    EXPECT_EQ(r.value.to<int_64>(), 0);
+    EXPECT_TRUE(g_marks.empty());
+    ASSERT_EQ(g_futs.size(), 1u);
+    auto fr = g_futs[0].get();
+    EXPECT_EQ(fr.error, error_type::YieldError);
+    EXPECT_EQ(fr.value.to<std::string>(), "expired");
+    g_futs.clear();
+    delete eng;
+    g_eng = nullptr;
+}
+
+TEST(gt_ascript_yield, ArrivalOrderAcrossTheDelayBoundary) {
+    engine* eng = engine::create();
+    g_eng = eng;
+    g_futs.clear();
+    g_marks.clear();
+    eng->set_extend("post", native_post);
+    eng->set_extend("post_delay", native_post_delay);
+    eng->set_extend("mark", native_mark);
+    eng->set_extend("nap", native_nap);
+    auto r = run(eng,
+                 "def a() { $mark(\"a\"); } def b() { $mark(\"b\"); }"
+                 "$post_delay(\"a\", 60); $post(\"b\");"
+                 "$nap(150);"
+                 "var c = yield(0, 0); return c;");
+    ASSERT_EQ(r.error, error_type::NoError);
+    EXPECT_EQ(r.value.to<int_64>(), 2);
+    ASSERT_EQ(g_marks.size(), 2u);
+    EXPECT_EQ(g_marks[0], "a");
+    EXPECT_EQ(g_marks[1], "b");
+    for (auto& f : g_futs) EXPECT_EQ(f.get().error, error_type::NoError);
+    g_futs.clear();
+    delete eng;
+    g_eng = nullptr;
+}
+
+TEST(gt_ascript_yield, ClearedDeliveriesSettleWithoutRunning) {
+    engine* eng = engine::create();
+    g_eng = eng;
+    g_futs.clear();
+    g_marks.clear();
+    eng->set_extend("post", native_post);
+    eng->set_extend("clr", native_clr);
+    eng->set_extend("mark", native_mark);
+    auto r = run(eng,
+                 "def f() { $mark(\"ran\"); }"
+                 "$post(\"f\", 0); $post(\"f\", 5); $post(\"f\", 1);"
+                 "var n = $clr(1, 0);"
+                 "var c = yield(0, 0);"
+                 "return n * 10 + c;");
+    ASSERT_EQ(r.error, error_type::NoError);
+    EXPECT_EQ(r.value.to<int_64>(), 21);
+    ASSERT_EQ(g_marks.size(), 1u);
+    ASSERT_EQ(g_futs.size(), 3u);
+    auto f0 = g_futs[0].get();
+    auto f1 = g_futs[1].get();
+    auto f2 = g_futs[2].get();
+    EXPECT_EQ(f0.error, error_type::YieldError);
+    EXPECT_EQ(f0.value.to<std::string>(), "cleared");
+    EXPECT_EQ(f1.error, error_type::NoError);
+    EXPECT_EQ(f2.error, error_type::YieldError);
+    EXPECT_EQ(f2.value.to<std::string>(), "cleared");
+    g_futs.clear();
+    delete eng;
+    g_eng = nullptr;
+}
+
+TEST(gt_ascript_yield, ClearStopsAtMaxcntOldestFirst) {
+    engine* eng = engine::create();
+    g_eng = eng;
+    g_futs.clear();
+    g_marks.clear();
+    eng->set_extend("post", native_post);
+    eng->set_extend("clr", native_clr);
+    eng->set_extend("mark", native_mark);
+    auto r = run(eng,
+                 "def a() { $mark(\"a\"); } def b() { $mark(\"b\"); }"
+                 "$post(\"a\", 0); $post(\"b\", 0);"
+                 "var n = $clr(0, 1);"
+                 "var c = yield(0, 0);"
+                 "return n * 10 + c;");
+    ASSERT_EQ(r.error, error_type::NoError);
+    EXPECT_EQ(r.value.to<int_64>(), 11);
+    ASSERT_EQ(g_marks.size(), 1u);
+    EXPECT_EQ(g_marks[0], "b");
+    ASSERT_EQ(g_futs.size(), 2u);
+    auto fa = g_futs[0].get();
+    auto fb = g_futs[1].get();
+    EXPECT_EQ(fa.error, error_type::YieldError);
+    EXPECT_EQ(fa.value.to<std::string>(), "cleared");
+    EXPECT_EQ(fb.error, error_type::NoError);
+    g_futs.clear();
+    delete eng;
+    g_eng = nullptr;
+}
+
+TEST(gt_ascript_yield, ClearIsIdleWithoutARun) {
+    engine* eng = engine::create();
+    EXPECT_EQ(eng->clr_yield(0, 0), 0u);
+    delete eng;
+}
+
+TEST(gt_ascript_yield, ClearFromAnotherThreadWhileRunning) {
+    engine* eng = engine::create();
+    auto fut = std::async(std::launch::async, [&] {
+        return run(eng, "def f() { } yield(3000, 0); return 1;");
+    });
+    for (int i = 0; i < 5000 && !eng->is_running(); i++)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    ASSERT_TRUE(eng->is_running());
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // delayed so the resident window cannot service them before the clear
+    auto f1 = eng->yield("f", varvec(), 0, 0, 60000);
+    auto f2 = eng->yield("f", varvec(), 0, 0, 60000);
+    EXPECT_EQ(eng->clr_yield(0, 0), 2u);
+    auto r1 = f1.get();
+    auto r2 = f2.get();
+    EXPECT_EQ(r1.error, error_type::YieldError);
+    EXPECT_EQ(r1.value.to<std::string>(), "cleared");
+    EXPECT_EQ(r2.value.to<std::string>(), "cleared");
+
+    eng->set_interrupt();
+    ASSERT_EQ(fut.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(fut.get().error, error_type::InterruptedError);
+    delete eng;
+}
+
+TEST(gt_ascript_yield, ClearFreesTheSharedBound) {
+    engine_config cfg;
+    cfg.yield_limit = 2;
+    engine* eng = engine::create(cfg);
+    g_eng = eng;
+    g_futs.clear();
+    g_marks.clear();
+    eng->set_extend("post", native_post);
+    eng->set_extend("post_delay", native_post_delay);
+    eng->set_extend("clr", native_clr);
+    eng->set_extend("mark", native_mark);
+    auto r = run(eng,
+                 "def f() { $mark(\"ran\"); }"
+                 "$post_delay(\"f\", 60000); $post_delay(\"f\", 60000);"
+                 "$post(\"f\");"
+                 "var n = $clr(0, 0);"
+                 "$post(\"f\");"
+                 "var c = yield(0, 0);"
+                 "return n * 100 + c;");
+    ASSERT_EQ(r.error, error_type::NoError);
+    EXPECT_EQ(r.value.to<int_64>(), 201);
+    ASSERT_EQ(g_marks.size(), 1u);
+    ASSERT_EQ(g_futs.size(), 4u);
+    auto f0 = g_futs[0].get();
+    auto f1 = g_futs[1].get();
+    auto f2 = g_futs[2].get();
+    auto f3 = g_futs[3].get();
+    EXPECT_EQ(f0.error, error_type::YieldError);
+    EXPECT_EQ(f0.value.to<std::string>(), "cleared");
+    EXPECT_EQ(f1.error, error_type::YieldError);
+    EXPECT_EQ(f1.value.to<std::string>(), "cleared");
+    EXPECT_EQ(f2.error, error_type::YieldError);
+    EXPECT_EQ(f2.value.to<std::string>(), "yield full");
+    EXPECT_EQ(f3.error, error_type::NoError);
+    g_futs.clear();
+    delete eng;
+    g_eng = nullptr;
 }

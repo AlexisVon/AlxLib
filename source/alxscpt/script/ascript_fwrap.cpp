@@ -22,15 +22,24 @@ namespace alx {
                     : m_engine(_e), m_name(std::move(_name)) {}
 
                 std::future<result> call(const varvec& _args, uint_32 _priority,
-                                         uint_32 _expiry_ms) override {
-                    return m_engine->yield(m_name, _args, _priority, _expiry_ms);
+                                         uint_32 _expiry_ms, uint_32 _delay_ms) override {
+                    return m_engine->yield(m_name, _args, clamp(_priority), _expiry_ms, _delay_ms);
                 }
                 std::future<result> call(varvec&& _args, uint_32 _priority,
-                                         uint_32 _expiry_ms) override {
-                    return m_engine->yield(m_name, std::move(_args), _priority, _expiry_ms);
+                                         uint_32 _expiry_ms, uint_32 _delay_ms) override {
+                    return m_engine->yield(m_name, std::move(_args), clamp(_priority), _expiry_ms,
+                                           _delay_ms);
+                }
+                uint_64 drop(uint_32 _priority, uint_64 _maxcnt) override {
+                    return m_engine->clr_yield(clamp(_priority), _maxcnt);
                 }
 
             private:
+                uint_32 clamp(uint_32 _pri) const {
+                    uint_32 cap = m_engine->config().yield_rsvprio;
+                    return _pri > cap ? cap : _pri;
+                }
+
                 engine* m_engine;
                 std::string m_name;
             };

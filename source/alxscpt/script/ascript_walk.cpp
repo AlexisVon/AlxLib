@@ -150,21 +150,21 @@ namespace alx {
                 throw script_exception{error_type::TypeError, std::string("Type does not support [i] index")};
             }
 
-            // New code runs on a clean root: frames repoint at a local empty deque, current goes to
-            // the root entity, the control flags and position are saved, and the walk is marked as
-            // executing a delivery so a nested yield is refused
+            // New code runs on a clean root: frames repoint at a local empty deque and the previous
+            // pointer is restored on the way out, so nested service levels unwind naturally
             struct context_guard {
                 walker& w;
                 std::deque<scope_frame> spare;
+                std::deque<scope_frame>* saved_frames;
                 impl_import* saved_current;
-                bool saved_break, saved_cont, saved_ret, saved_tail, saved_yield_exec;
+                bool saved_break, saved_cont, saved_ret, saved_tail;
                 src_pos saved_pos;
 
                 explicit context_guard(walker& _w)
-                    : w(_w), saved_current(_w.state.current),
+                    : w(_w), saved_frames(_w.state.frames), saved_current(_w.state.current),
                       saved_break(_w.state.break_flag), saved_cont(_w.state.cont_flag),
                       saved_ret(_w.state.ret_flag), saved_tail(_w.state.tail_flag),
-                      saved_yield_exec(_w.m_yield_exec), saved_pos(_w.state.top_pos) {
+                      saved_pos(_w.state.top_pos) {
                     _w.state.frames = &spare;
                     _w.state.current = &_w.m_root;
                     _w.state.break_flag = false;
@@ -172,21 +172,26 @@ namespace alx {
                     _w.state.ret_flag = false;
                     _w.state.tail_flag = false;
                     _w.state.top_pos = src_pos();
-                    _w.m_yield_exec = true;
                 }
                 ~context_guard() {
                     // unwind inner-to-outer: a frame dtor truncates the store to its base, and a
                     // front-to-back destruction would regrow it through the higher bases
                     while (!spare.empty()) spare.pop_back();
-                    w.state.frames = &w.state.frames_main;
+                    w.state.frames = saved_frames;
                     w.state.current = saved_current;
                     w.state.break_flag = saved_break;
                     w.state.cont_flag = saved_cont;
                     w.state.ret_flag = saved_ret;
                     w.state.tail_flag = saved_tail;
                     w.state.top_pos = saved_pos;
-                    w.m_yield_exec = saved_yield_exec;
                 }
+            };
+
+            // active op_yield levels, argument evaluation included
+            struct yield_depth_guard {
+                walker& w;
+                explicit yield_depth_guard(walker& _w) : w(_w) { ++w.m_yield_depth; }
+                ~yield_depth_guard() { --w.m_yield_depth; }
             };
         }
 
@@ -195,22 +200,26 @@ namespace alx {
         }
 
         std::future<result> yield_queue::push(std::string _name, varvec&& _args, uint_32 _pri,
-                                              uint_32 _expiry_ms) {
+                                              uint_32 _expiry_ms, uint_32 _delay_ms) {
             std::promise<result> pro;
             std::future<result> fut = pro.get_future();
             bool accepted = false;
+            bool ready = false;
             {
                 std::lock_guard<std::mutex> lk(m_mtx);
-                size_t max = m_max_yield.load(std::memory_order_relaxed);
+                size_t max = m_limit.load(std::memory_order_relaxed);
                 if (!max || m_queue.size() < max) {
+                    auto now = std::chrono::steady_clock::now();
                     std::chrono::steady_clock::time_point ttd{};
-                    if (_expiry_ms)
-                        ttd = std::chrono::steady_clock::now() + std::chrono::milliseconds(_expiry_ms);
+                    if (_expiry_ms) ttd = now + std::chrono::milliseconds(_expiry_ms);
+                    std::chrono::steady_clock::time_point nbf{};
+                    if (_delay_ms) nbf = now + std::chrono::milliseconds(_delay_ms);
+                    ready = !_delay_ms;
                     // the list node first, the request second: whichever allocation fails leaves the
                     // args untouched (new allocates before it initializes; the moves are noexcept)
                     m_queue.push_back(nullptr);
                     try {
-                        m_queue.back() = new yield_request{std::move(_name), std::move(_args), ttd,
+                        m_queue.back() = new yield_request{std::move(_name), std::move(_args), ttd, nbf,
                                                            std::move(pro), _pri};
                     } catch (...) {
                         auto it = m_queue.end();
@@ -225,7 +234,7 @@ namespace alx {
                 pro.set_value(result{variant(std::string("yield full")), 0, error_type::YieldError});
                 return fut;
             }
-            m_cv.notify_one();
+            if (ready) m_cv.notify_one();
             return fut;
         }
 
@@ -233,6 +242,8 @@ namespace alx {
             std::lock_guard<std::mutex> lk(m_mtx);
             auto best = m_queue.end();
             for (auto it = m_queue.begin(); it != m_queue.end(); ++it) {
+                // a waiting entry is not a candidate; the heartbeat makes it eligible
+                if ((*it)->nbf != std::chrono::steady_clock::time_point{}) continue;
                 if (best == m_queue.end() || (*it)->pri > (*best)->pri) {
                     best = it;
                     // nothing can outrank it, so the earliest maximum is already in hand
@@ -245,25 +256,53 @@ namespace alx {
             return req;
         }
 
-        void yield_queue::expire(std::chrono::steady_clock::time_point _now) {
+        void yield_queue::tick(std::chrono::steady_clock::time_point _now) {
             std::list<yield_request*> dead;
+            bool ready = false;
             {
                 std::unique_lock<std::mutex> lk(m_mtx, std::try_to_lock);
                 // a locked queue is skipped; the next pass catches up
                 if (!lk.owns_lock()) return;
                 for (auto it = m_queue.begin(); it != m_queue.end();) {
+                    // expiry wins over eligibility when both land in the same pass
                     if (expired(**it, _now)) {
                         dead.push_back(*it);
                         it = m_queue.erase(it);
-                    } else {
-                        ++it;
+                        continue;
                     }
+                    if ((*it)->nbf != std::chrono::steady_clock::time_point{} && (*it)->nbf <= _now) {
+                        (*it)->nbf = std::chrono::steady_clock::time_point{};
+                        ready = true;
+                    }
+                    ++it;
                 }
             }
             for (yield_request* req : dead) {
                 req->ret.set_value(result{variant(std::string("expired")), 0, error_type::YieldError});
                 delete req;
             }
+            if (ready) m_cv.notify_all();
+        }
+
+        uint_64 yield_queue::clear(uint_32 _priority, uint_64 _maxcnt) {
+            std::list<yield_request*> gone;
+            {
+                std::lock_guard<std::mutex> lk(m_mtx);
+                for (auto it = m_queue.begin(); it != m_queue.end();) {
+                    if ((*it)->pri > _priority) {
+                        ++it;
+                        continue;
+                    }
+                    gone.push_back(*it);
+                    it = m_queue.erase(it);
+                    if (_maxcnt && static_cast<uint_64>(gone.size()) >= _maxcnt) break;
+                }
+            }
+            for (yield_request* req : gone) {
+                req->ret.set_value(result{variant(std::string("cleared")), 0, error_type::YieldError});
+                delete req;
+            }
+            return static_cast<uint_64>(gone.size());
         }
 
         void yield_queue::drain(error_type _type, const std::string& _msg) {
@@ -282,7 +321,10 @@ namespace alx {
                                         const std::atomic<bool>& _stop) {
             std::unique_lock<std::mutex> lk(m_mtx);
             m_cv.wait_until(lk, _deadline, [&] {
-                return !m_queue.empty() || _stop.load(std::memory_order_relaxed);
+                if (_stop.load(std::memory_order_relaxed)) return true;
+                for (const yield_request* req : m_queue)
+                    if (req->nbf == std::chrono::steady_clock::time_point{}) return true;
+                return false;
             });
         }
 
@@ -401,7 +443,7 @@ namespace alx {
             s_ops[O_ROOT] = op_nop;
             s_ops[O_ACT] = op_nop;
             s_ops[O_ECONST] = op_econst;
-            s_ops[O_UNPACK] = op_nop;
+            s_ops[O_UNPACK] = op_unpack;
             s_ops[O_HERE] = op_here;
             s_ops[O_TRAP] = op_trap;
             s_ops[O_EVAL] = op_eval;
@@ -563,6 +605,11 @@ namespace alx {
 
         variant walker::op_nop(const varvec&, walker&) { return variant(); }
 
+        // A bare spread is not a value: only a call's argument list may consume it
+        variant walker::op_unpack(const varvec&, walker&) {
+            throw script_exception{error_type::TypeError, std::string("spread [] is not a value")};
+        }
+
         variant walker::op_here(const varvec& _tree, walker&) {
             return _tree.size() > 1 ? _tree[1] : variant();
         }
@@ -602,6 +649,9 @@ namespace alx {
         }
 
         variant walker::op_eval(const varvec& _tree, walker& _w) {
+            if (_tree.size() > 3)
+                throw script_exception{error_type::ArgError,
+                                       std::string("eval: at most 2 arguments")};
             if (_tree.size() < 2)
                 throw script_exception{error_type::ArgError,
                                        std::string("eval: missing code string")};
@@ -636,7 +686,7 @@ namespace alx {
                      _w.m_cfg.parse_depth, nullptr, nullptr, nullptr, std::string(), 0,
                      _w.m_cfg.debug_enable);
 
-            varvec body = lex_ok ? p.parse_body() : varvec();
+            varvec body = lex_ok ? p.parse_body(false) : varvec();
             if (!lex_ok || p.has_error()) {
 
                 std::string at = ce.loc.row ? (" at " + std::to_string(ce.loc.row) + ":" + std::to_string(ce.loc.col))
@@ -669,10 +719,12 @@ namespace alx {
             if (_w.m_init_walk)
                 throw script_exception{error_type::YieldError,
                                        std::string("yield: not available during module init")};
-            // a yield inside a serviced call is an ordinary script-level error: the serviced
-            // script may catch it, and uncaught it ends that delivery's call
-            if (_w.m_yield_exec)
+            // the nesting cap (0 = unlimited): the level past it is an ordinary script-level
+            // error, which the serviced call may catch
+            size_t nest = _w.m_cfg.yield_nest;
+            if (nest && _w.m_yield_depth >= nest)
                 throw script_exception{error_type::YieldError, std::string("nested yield")};
+            yield_depth_guard _depth(_w);
             if (_tree.size() > 3)
                 throw script_exception{error_type::ArgError, std::string("yield: at most 2 arguments")};
 
@@ -1360,13 +1412,17 @@ namespace alx {
         }
 
         variant walker::op_int(const varvec& _tree, walker& _w) {
+            if (_tree.size() == 2)
+                return variant(cov_int(walker::eval_arg(_tree[1], _w)));
             if (_tree.size() < 2) return int_64(0);
-            return variant(cov_int(walker::eval_arg(_tree[1], _w)));
+            throw script_exception{error_type::ArgError, std::string("int: at most 1 argument")};
         }
 
         variant walker::op_float(const varvec& _tree, walker& _w) {
+            if (_tree.size() == 2)
+                return variant(cov_float(walker::eval_arg(_tree[1], _w)));
             if (_tree.size() < 2) return 0.0;
-            return variant(cov_float(walker::eval_arg(_tree[1], _w)));
+            throw script_exception{error_type::ArgError, std::string("float: at most 1 argument")};
         }
 
         // Names fold to lowercase alnum only, so "UTF-8", "utf_8" and "utf8" name the same codec
@@ -1487,6 +1543,11 @@ namespace alx {
                 }
             }
 
+            // base / precision / encoding take exactly one second argument; only a format pattern is variadic
+            if (v1.is<bytes>() || v1.is<int_64>() || v1.is<double>())
+                throw script_exception{error_type::ArgError,
+                                       std::string("string: too many arguments for this form")};
+
             std::string pattern = cov_string(v1);
             std::vector<std::string> fmt_args;
             for (size_t i = 2; i < _tree.size(); i++) {
@@ -1503,8 +1564,10 @@ namespace alx {
         }
 
         variant walker::op_bool(const varvec& _tree, walker& _w) {
+            if (_tree.size() == 2)
+                return variant(cov_bool(walker::eval_arg(_tree[1], _w)));
             if (_tree.size() < 2) return false;
-            return variant(cov_bool(walker::eval_arg(_tree[1], _w)));
+            throw script_exception{error_type::ArgError, std::string("bool: at most 1 argument")};
         }
 
         variant walker::op_bytes(const varvec& _tree, walker& _w) {
@@ -1516,6 +1579,9 @@ namespace alx {
             if (_tree.size() == 2) {
                 return variant(bytes(v1.to<std::string>()));
             }
+            if (_tree.size() > 3)
+                throw script_exception{error_type::ArgError,
+                                       std::string("bytes: at most 2 arguments")};
             variant v2 = walker::eval_arg(_tree[2], _w);
             std::string enc = cov_string(v2);
             std::string key = normalize_enc(enc);
@@ -1528,7 +1594,15 @@ namespace alx {
         }
 
         variant walker::op_vec(const varvec& _tree, walker& _w) {
-            if (_tree.size() == 4 && _tree[1].is<varvec>()) {
+            if (_tree.size() == 2) {
+                variant v = walker::eval_arg(_tree[1], _w);
+                return variant(cov_vec(v));
+            }
+            if (_tree.size() < 2) return varvec();
+
+            // A construction card never carries both elements and a fill value (see parse_seq_lit)
+            if (_tree.size() == 4 && _tree[1].is<varvec>() &&
+                (_tree[1].to<varvec>().empty() || _tree[2].null())) {
 
                 auto& elems = _tree[1].to<varvec>();
                 if (!elems.empty()) {
@@ -1568,19 +1642,20 @@ namespace alx {
                 return variant(std::move(result));
             }
 
-            if (_tree.size() < 2) return varvec();
-            variant v = walker::eval_arg(_tree[1], _w);
-            return variant(cov_vec(v));
+            throw script_exception{error_type::ArgError, std::string("vec: at most 1 argument")};
         }
 
         variant walker::op_map(const varvec& _tree, walker& _w) {
-
             if (_tree.size() < 2) return varmap();
 
             if (_tree.size() == 2) {
                 variant v = walker::eval_arg(_tree[1], _w);
                 return variant(cov_map(v));
             }
+
+            if (_tree.size() % 2 == 0)
+                throw script_exception{error_type::ArgError,
+                                       std::string("map: incomplete key/value pair")};
 
             varmap result;
             for (size_t i = 1; i + 1 < _tree.size(); i += 2) {
@@ -1595,7 +1670,15 @@ namespace alx {
         }
 
         variant walker::op_lst(const varvec& _tree, walker& _w) {
-            if (_tree.size() == 4 && _tree[1].is<varvec>()) {
+            if (_tree.size() == 2) {
+                variant v = walker::eval_arg(_tree[1], _w);
+                return variant(cov_lst(v));
+            }
+            if (_tree.size() < 2) return varlst();
+
+            // A construction card never carries both elements and a fill value (see parse_seq_lit)
+            if (_tree.size() == 4 && _tree[1].is<varvec>() &&
+                (_tree[1].to<varvec>().empty() || _tree[2].null())) {
 
                 auto& elems = _tree[1].to<varvec>();
                 if (!elems.empty()) {
@@ -1631,9 +1714,7 @@ namespace alx {
                 return variant(std::move(result));
             }
 
-            if (_tree.size() < 2) return varlst();
-            variant v = walker::eval_arg(_tree[1], _w);
-            return variant(cov_lst(v));
+            throw script_exception{error_type::ArgError, std::string("lst: at most 1 argument")};
         }
 
         variant walker::op_type(const varvec& _tree, walker& _w) {

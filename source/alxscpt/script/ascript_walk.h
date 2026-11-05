@@ -25,11 +25,13 @@ namespace alx {
         using op_func = variant (*)(const varvec&, walker&);
         using op_table = op_func[O_ENUMSIZE];
 
-        // One delivery: late-bound by name; ttd is stamped at enqueue (default = never expires)
+        // One delivery: late-bound by name; ttd and nbf are stamped at enqueue
+        // (default = never expires / eligible immediately)
         struct yield_request {
             std::string name;
             varvec args;
             std::chrono::steady_clock::time_point ttd{};
+            std::chrono::steady_clock::time_point nbf{};
             std::promise<result> ret;
             uint_32 pri = 0;
         };
@@ -38,35 +40,39 @@ namespace alx {
         // spans structural instants only -- never across execution, never across a wait.
         class yield_queue {
         public:
-            explicit yield_queue(const engine_config& _cfg) : m_max_yield(_cfg.max_yield) {}
+            explicit yield_queue(const engine_config& _cfg) : m_limit(_cfg.yield_limit) {}
             // the last net: leftovers drain as `not executed`, so no promise ever dies unset
             ~yield_queue();
 
             // admission: this delivery's future, or an already-fulfilled `yield full`
-            std::future<result> push(std::string _name, varvec&& _args, uint_32 _pri, uint_32 _expiry_ms);
-            // take: the maximum, earliest on ties, removed; nullptr = empty. The taker judges
-            // expiration, executes and fulfills
+            std::future<result> push(std::string _name, varvec&& _args, uint_32 _pri,
+                                     uint_32 _expiry_ms, uint_32 _delay_ms);
+            // take: the maximum among the eligible (nbf == 0), earliest on ties, removed;
+            // nullptr = none eligible. The taker judges expiration, executes and fulfills
             yield_request* pop_max();
             // a stamped ttd that has passed
             static bool expired(const yield_request& _r, std::chrono::steady_clock::time_point _now) {
                 return _r.ttd != std::chrono::steady_clock::time_point{} && _r.ttd <= _now;
             }
-            // liquidation (heartbeat): expired nodes removed, fulfilled `expired` outside the
-            // lock; try_lock only, a locked queue is skipped and the next pass catches up
-            void expire(std::chrono::steady_clock::time_point _now);
+            // one heartbeat pass: expired nodes removed, due nodes made eligible; fulfillment
+            // outside the lock; try_lock only, a locked queue is skipped and the next pass
+            // catches up
+            void tick(std::chrono::steady_clock::time_point _now);
+            // settle entries with pri <= _priority, oldest first, at most _maxcnt (0 = unlimited)
+            uint_64 clear(uint_32 _priority, uint_64 _maxcnt);
             // teardown: everything removed, fulfilled as _type/_msg outside the lock
             void drain(error_type _type, const std::string& _msg);
-            // the residency wait: returns at an item or the deadline; the caller judges the
-            // interrupt after the wake
+            // the residency wait: returns at an eligible entry or the deadline; the caller
+            // judges the interrupt after the wake
             void wait_for_item(std::chrono::steady_clock::time_point _deadline, const std::atomic<bool>& _stop);
             // the external wake (set_interrupt): the flag is stored first, then this
             void wake();
-            // capacity, synced by set_max_yield: a delivery thread's push races that setter,
+            // capacity, synced by set_limit: a delivery thread's push races that setter,
             // so the admission value lives here as an atomic instead of in the config
-            void set_max_yield(size_t _n) { m_max_yield.store(_n, std::memory_order_relaxed); }
+            void set_limit(size_t _n) { m_limit.store(_n, std::memory_order_relaxed); }
 
         private:
-            std::atomic<size_t> m_max_yield; // 0 = unlimited
+            std::atomic<size_t> m_limit; // 0 = unlimited
             std::mutex m_mtx;
             std::list<yield_request*> m_queue;
             std::condition_variable m_cv;
@@ -100,8 +106,8 @@ namespace alx {
             // pending deliveries: constructed with the walker, settled by reset() and the dtor
             // before the store and the module layer go
             yield_queue m_yq;
-            // set while op_yield serves: a yield inside a serviced call is a script-level error
-            bool m_yield_exec = false;
+            // active op_yield levels; engine_config::yield_nest bounds this (0 = unlimited)
+            size_t m_yield_depth = 0;
             // set on the sub-walker an import init runs on: yield there is a script-level error
             bool m_init_walk = false;
 
@@ -140,6 +146,7 @@ namespace alx {
 
         public:
             static variant op_nop(const varvec&, walker&);
+            static variant op_unpack(const varvec&, walker&);
             static variant op_here(const varvec&, walker&);
             static variant op_trap(const varvec&, walker&);
             static variant op_debug(const varvec&, walker&);

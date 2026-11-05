@@ -103,6 +103,11 @@ namespace alx {
                 // the store above precedes the wake, so a residency wait cannot check and then sleep through it
                 m_w.m_yq.wake();
             }
+            // the management face: only a run owns pending deliveries, so an idle engine answers 0
+            uint_64 clr_yield(uint_32 _priority, uint_64 _maxcnt) override {
+                if (!is_running()) return 0;
+                return m_w.m_yq.clear(_priority, _maxcnt);
+            }
 
             variant* load(const std::string& _name,
                           bool _auto_create = false) override {
@@ -138,13 +143,15 @@ namespace alx {
             }
 
             std::future<result> yield(const std::string& _name, const varvec& _args,
-                                      uint_32 _priority, uint_32 _expiry_ms) override {
+                                      uint_32 _priority, uint_32 _expiry_ms,
+                                      uint_32 _delay_ms) override {
                 varvec copy(_args);
-                return yield(_name, std::move(copy), _priority, _expiry_ms);
+                return yield(_name, std::move(copy), _priority, _expiry_ms, _delay_ms);
             }
 
             std::future<result> yield(const std::string& _name, varvec&& _args,
-                                      uint_32 _priority, uint_32 _expiry_ms) override {
+                                      uint_32 _priority, uint_32 _expiry_ms,
+                                      uint_32 _delay_ms) override {
                 if (!is_running()) {
                     std::promise<result> pro;
                     std::future<result> fut = pro.get_future();
@@ -152,7 +159,7 @@ namespace alx {
                                          error_type::YieldError});
                     return fut;
                 }
-                return m_w.m_yq.push(_name, std::move(_args), _priority, _expiry_ms);
+                return m_w.m_yq.push(_name, std::move(_args), _priority, _expiry_ms, _delay_ms);
             }
 
             result exec(const bytes_view& _data,
@@ -302,12 +309,14 @@ namespace alx {
             void set_parse_depth(size_t _n) override { m_cfg.parse_depth = _n; }
             void set_overflow_check(bool _on) override { m_cfg.overflow_check = _on; }
             void set_max_vecfill(size_t _n) override { m_cfg.max_vecfill = _n; }
-            void set_max_yield(size_t _n) override {
-                m_cfg.max_yield = _n;
+            void set_yield_limit(size_t _n) override {
+                m_cfg.yield_limit = _n;
                 // the admission value the delivery threads read: synced, so a concurrent push
                 // cannot tear it
-                m_w.m_yq.set_max_yield(_n);
+                m_w.m_yq.set_limit(_n);
             }
+            void set_yield_nest(size_t _n) override { m_cfg.yield_nest = _n; }
+            void set_yield_rsvprio(uint_32 _n) override { m_cfg.yield_rsvprio = _n; }
             void set_search_paths(const std::list<std::string>& _paths) override {
                 m_cfg.search_paths = _paths;
             }
@@ -336,8 +345,9 @@ namespace alx {
 
             alx::signal<uint_64, const std::string&>& get_csys() override { return m_mod.m_res->on_csys; }
 
-            // the heartbeat's per-engine duty: liquidate expired deliveries; try_lock only
-            void time_event() override { m_w.m_yq.expire(std::chrono::steady_clock::now()); }
+            // the heartbeat's per-engine duty: liquidate expired deliveries and make due ones
+            // eligible; try_lock only
+            void time_event() override { m_w.m_yq.tick(std::chrono::steady_clock::now()); }
 
             varvec do_parse(const bytes_view& _src, const std::string& _file_path,
                             compile_result* _embed_out = nullptr) const {

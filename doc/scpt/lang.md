@@ -321,6 +321,8 @@ map(v)      // → map, failure ConvError; null→empty map
 lst(v)      // → lst, failure ConvError; null→empty lst
 ```
 
+- **Argument count**: `int`/`float`/`bool`/`vec`/`lst`/`type`/`env` take at most one argument; `bytes` at most two; `map` takes one argument or key/value pairs (`map(k, v, ...)`, the same shape as `map{...}` — a dangling key is an `ArgError`); `string`'s base/precision/encoding forms exactly two, and only its format form `string(fmt, args...)` is variadic. An extra argument is an `ArgError` and is not evaluated. A builtin call admits no spread — `type(v[])` is a `TypeError` (`spread [] is not a value`); `[]` belongs to a script def's arguments.
+
 ## 5.2 Conversion matrix
 
 | Source \ Target | `int` | `float` | `bool` | `string` | `bytes` | `vec` | `map` | `lst` |
@@ -828,7 +830,7 @@ def init(x, y) { ... }  // always succeeds, the engine will not stop it for a na
 | `ShiftError` | shift count out of range, or a negative value left-shifted (both under `overflow_check`) |
 | `IndexError` | vec/lst/string/bytes index out of bounds |
 | `KeyError` | `m["key"]` with the key absent, or a middle segment of a dot chain absent (the chain's last key reads null, §13.2) |
-| `ArgError` | a parameter with no default is missing, or a builtin that checks its own arity was given more arguments than it takes (`env(a, b)`, `type(a, b)`); the one-value builtins that still ignore an extra argument are a known defect (issue ledger I-1), not the contract |
+| `ArgError` | a parameter with no default is missing, or a builtin was given more arguments than its form takes (`env(a, b)`, `type(a, b)`, `vec(1, 2)`, `string(1, 16, 3)`); the extra argument is never evaluated |
 | `ImportError` | a script module failed to import: not found / circular or self import / unreadable or corrupt payload |
 | `LinkError` | a link (dynamic module) failed: not found / circular or self link / the loader refused it (`Cannot link: <path>`, with the loader's text appended when the failure came from the loader) |
 | `ContextError` | a call the current context does not allow: the fwrap call face outside a walk, or a registration the entry point does not take |
@@ -840,7 +842,7 @@ def init(x, y) { ... }  // always succeeds, the engine will not stop it for a na
 | `NativeError` | a wrapped C++ native exception (resource errors are not in this class, see above) |
 | `NavError` | reverse navigation past the entity tree depth |
 | `InterruptedError` | the host hook forced an interrupt (uncatchable, a script's try/catch cannot swallow it; see engine interface semantics · execution interrupt hook) |
-| `YieldError` | the yield service (§9.4): a `yield()` during module init or inside a serviced call (both thrown into the script, catchable; the nested one reads `nested yield`), or a delivery refused or ended by the service (`no main fiber` / `yield full` / `expired` / `not executed` / `nested yield` uncaught) — those travel inside the delivery's own future, not into the script |
+| `YieldError` | the yield service (§9.4): a `yield()` during module init, or one past `engine_config::yield_nest` (both thrown into the script, catchable; the latter reads `nested yield`), or a delivery refused or ended by the service (`no main fiber` / `yield full` / `expired` / `cleared` / `not executed` / `nested yield` uncaught) — those travel inside the delivery's own future, not into the script |
 
 <div style="page-break-after: always;"></div>
 
@@ -1057,7 +1059,7 @@ yield(ms, maxcnt); // also return early once maxcnt deliveries have been service
 - `(0, 0)` is a non-blocking single pass, `(0, n)` stops at n; with `ms > 0` arrivals during the window are serviced, an empty queue sleeps until the deadline and `n` short-circuits; **past the deadline no new delivery is taken and the in-flight one runs to completion**; a window beyond a year is clamped to a year — a value that large can only mean "until interrupted"
 - a serviced call runs like a root call: it sees root variables and modules, **not** the caller's locals or execution position; `max_stack` is its own root budget, and hook events and interrupts keep firing during it (the host's watchdog covers serviced calls)
 - **during module init** (an `import`/`link` body) `yield()` throws a script-level `YieldError` — init runs before the engine's service point exists
-- **inside a serviced call** a nested `yield()` raises a script-level `YieldError` (`nested yield`): the serviced call may catch it, and if it does not, that call ends with the `YieldError` in its delivery's future — the main script is unaffected
+- **inside a serviced call** `yield()` is allowed and services the queue from there — the Qt `processEvents` pattern: the caller's stack stays and other handlers run above it. `engine_config::yield_nest` caps the levels, the outermost yield counting as one (default 64; 0 = unlimited); a `yield()` past the cap raises a script-level `YieldError` (`nested yield`), which the serviced call may catch — if it does not, that call ends with the `YieldError` in its delivery's future, the main script unaffected. Each level keeps its own window, `maxcnt` and return count
 - an interrupt behaves as everywhere else: it wakes the wait, no value is produced, and the run comes back as `InterruptedError`; queued deliveries settle as `InterruptedError` too (the hook's reject reason, when there is one, is the value)
 
 <div style="page-break-after: always;"></div>
@@ -1148,6 +1150,7 @@ eval("");                        // null
 - **function form**, `eval` is a reserved word: `eval(str)` or `eval(str, map)`
 - `str` is any expression; its run-time value must be a string
 - the optional second argument `map` supplies **named parameters**: the key names become names usable inside the code
+- a third argument is an `ArgError`; an `import`/`link` inside the string is a `ParseError` — those statements are top-level-only, and eval's body is a block
 
 ```js
 eval("a + b;", map{"a": 1, "b": 2});    // 3
@@ -1425,7 +1428,7 @@ Build the module as a shared library that links the engine (`alxscpt`). Its entr
 | `args.object()` | the `anyptr*` stored for the current area — area natives only |
 | `args.unwrap<T>()` | `anyptr_ex<T>::as(*object())` — type-safe access to the C++ object (area natives only, like `object()`) |
 | `args.wrap<T>(ptr, "area", {{"m1", fn1}, ...})` | `bind("area", anyptr_ex<T>::make(ptr), methods)` — creates the area; false on a taken name; the handle consumes the object either way |
-| `args.currying("f")` | mint a cross-thread delivery handle (`fwrap::callback*`) naming a def — **the caller owns it and deletes it** before the engine dies; `cb->call(vec[, pri, expiry])` queues a delivery serviced at the script's `yield()` (`api.md` §3.2b), the name resolved late; an entry point has no engine to name (`ContextError`) |
+| `args.currying("f")` | mint a cross-thread delivery handle (`fwrap::callback*`) naming a def — **the caller owns it and deletes it** before the engine dies; `cb->call(vec[, pri, expiry, delay])` queues a delivery serviced at the script's `yield()` (`api.md` §3.2b), the name resolved late; the priority and `cb->drop(pri, maxcnt)`'s threshold are clamped to `yield_rsvprio`; an entry point has no engine to name (`ContextError`) |
 
 > **Pointer validity (one contract)**: everything this interface hands back — the `args[i]` view, an `iload`/`load` slot, the `m_area` behind `object()`/`unwrap<T>()` — dies the moment script code runs again: a `fw.call()` back into the script, a run that fails during execution (the walk tears mid-op), or an explicit `reset()` invalidates them all, after which they must not be touched. The delivery handle from `currying()` is the one deliberate exception: it belongs to the caller, so it stays valid across calls and runs until the caller deletes it — which must happen before the engine dies. `object()`/`unwrap<T>()` are for area natives only — outside an area dispatch (an extend handler, a `bind` with no `_area`) there is nothing to hand back and the call throws `ContextError`, as it does from an entry point.
 
@@ -2013,7 +2016,9 @@ struct engine_config {
     size_t max_stack = 1024;    // 0 = unlimited
     size_t max_vecfill = 0;     // 0 = unlimited
     size_t parse_depth = 1024;
-    size_t max_yield = 256;     // yield queue capacity, 0 = unlimited
+    size_t yield_limit = 256;     // yield queue capacity, 0 = unlimited
+    size_t yield_nest = 64;       // yield() nesting levels, outermost counted as one; 0 = unlimited
+    uint_32 yield_rsvprio = max_uint_32; // priorities above this are host-reserved; a handle is clamped to it
 
     // import search paths
     std::list<std::string> search_paths;
@@ -2155,7 +2160,8 @@ eng->get_csys().connect([](uint_64 tid, const std::string& s) {
 | `exec(data, home_dir)` | execute source or compiled bytes (recognised automatically) → `result{value, elapsed_us, error}` |
 | `exec(file_path)` | execute from a file path (home_dir extracted automatically) |
 | `call(name, args)` | call a script-defined def function (looked up in the root scope); args is a `varvec` (the `varvec&&` overload moves only once the name resolves to a def), returns a `result`. def functions only (a native function is called from C++ directly, with no need to go through the engine). Exception handling is isomorphic to exec |
-| `yield(name, args, pri, expiry)` | queue a call to a root-scope def, serviced at the script's next `yield()` — `call()` serialized onto the running timeline (`api.md` §3.2b); returns `future<result>`, every outcome inside. Cross-thread; the `varvec&&` overload moves only on acceptance. `fwrap::currying` mints a caller-owned handle that carries the same delivery (§12.4) |
+| `yield(name, args, pri, expiry, delay)` | queue a call to a root-scope def, serviced at the script's next `yield()` — `call()` serialized onto the running timeline (`api.md` §3.2b); returns `future<result>`, every outcome inside. `delay` holds the delivery ineligible until it elapses (granted by the yield service's background pass). Cross-thread; the `varvec&&` overload moves only on acceptance. `fwrap::currying` mints a caller-owned handle that carries the same delivery (§12.4) |
+| `clr_yield(pri, maxcnt)` | settle queued deliveries without running them: oldest first, priority `<= pri`, at most `maxcnt` (0=unlimited), each as `YieldError("cleared")`; returns the count. Effective only while a run is in progress (otherwise 0). Cross-thread; the in-flight delivery is unaffected |
 | `load(name, auto_create)` | read and write a root scope variable. Returns a `variant*` (nullptr when absent; created automatically when auto_create=true) |
 | `compile(data, home_dir, cmps, embed, hint)` | compile to .axp; `embed=true` compiles self-contained (link/env are errors, imports must resolve); `hint` (bytes_view) = a host JSON payload stored as given (compressed internally when `cmps=true`), empty leaves the key out of the product; the path version's hint is a JSON file path |
 | `compile(path, cmps, embed, hint)` | compile from a file path (hint = a JSON file path the engine reads and then takes the same path with) |
@@ -2169,7 +2175,9 @@ eng->get_csys().connect([](uint_64 tid, const std::string& s) {
 | `set_parse_depth(n)` | parser nesting depth (default 1024) |
 | `set_overflow_check(on)` | integer overflow / shift checking (default false) |
 | `set_max_vecfill(n)` | vec fill count cap (default 0=unlimited) |
-| `set_max_yield(n)` | yield queue capacity (default 256, 0=unlimited) |
+| `set_yield_limit(n)` | yield queue capacity (default 256, 0=unlimited) |
+| `set_yield_nest(n)` | yield() nesting levels allowed, outermost counted as one (default 64, 0=unlimited) |
+| `set_yield_rsvprio(n)` | priorities above n are reserved for the host; a currying handle's deliveries and clears are clamped to n (default max_uint_32 = nothing reserved) |
 | `set_search_paths(paths)` | global search paths (`std::list<string>`, persist across reset) |
 | `set_type_extend(fn, ud)` | host type-naming callback (`type_ex`): `type()` asks it for a value the script layer cannot name and uses the returned name as-is; null removes it |
 | `set_debug_enable(on)` | statement-by-statement position tracking: the parser inserts a marker per statement and the walker records positions and fires `hook_event::debug`; off by default (an already compiled product stays without positions and reports row 0) |

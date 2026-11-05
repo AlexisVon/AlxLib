@@ -45,21 +45,25 @@ cfg.max_stack   = 1024;        // live frames allowed, 0 = unlimited
 cfg.max_vecfill = 0;           // elements one vec/lst fill may produce, 0 = unlimited
 cfg.parse_depth = 1024;        // syntax nesting depth of one parse, 0 = unlimited
 cfg.overflow_check = false;    // integer overflow check
-cfg.max_yield   = 256;         // deliveries the yield queue may hold, 0 = unlimited
+cfg.yield_limit   = 256;         // deliveries the yield queue may hold, 0 = unlimited
+cfg.yield_nest    = 64;          // yield() nesting levels allowed, outermost counted as one; 0 = unlimited
+cfg.yield_rsvprio = max_uint_32; // priorities above this are host-reserved; a handle is clamped to it
 
 alx::script::engine* eng = alx::script::engine::create(cfg);
 eng->config();                 // read the configuration back
 
-// runtime adjustment (affects later compiles and execs only — set_max_yield is the exception:
+// runtime adjustment (affects later compiles and execs only — set_yield_limit is the exception:
 // deliveries admitted from then on see the new capacity immediately)
 eng->set_max_stack(...);  eng->set_parse_depth(...);  eng->set_max_vecfill(...);
-eng->set_max_yield(...);  eng->set_overflow_check(...);  eng->set_search_paths({"mods", "lib"});
+eng->set_yield_limit(...);  eng->set_yield_nest(...);  eng->set_yield_rsvprio(...);
+eng->set_overflow_check(...);
+eng->set_search_paths({"mods", "lib"});
 eng->reset();                  // drop the intermediate state of a run: the root store is rebuilt and loaded modules are released with it (an import re-reads its file on the next import; a link's image stays mapped until the process's last engine goes)
 ```
 
 `reset()` is also the only reaper: a run that fails during execution leaves root variables, defs and loaded modules standing — and with them the parsed ASTs behind the defs — so a long-lived engine holds that memory until an explicit `reset()`.
 
-`engine` is **single-threaded and not reentrant**: one instance runs on one thread at a time. Nothing may be entered from two threads at once unless it says so; the only methods meant to cross threads are `is_running()` and `set_interrupt()` (§10) and `yield()` (§3.2b).
+`engine` is **single-threaded and not reentrant**: one instance runs on one thread at a time. Nothing may be entered from two threads at once unless it says so; the only methods meant to cross threads are `is_running()`, `set_interrupt()` and `clr_yield()` (§10) and `yield()` (§3.2b).
 
 ---
 
@@ -99,21 +103,26 @@ Unlike `exec()`, `call()` has **no result gate** — a value holding an object h
 
 ```cpp
 std::future<alx::script::result> yield(const std::string& _name, const varvec& _args,
-                                       uint_32 _priority = 0, uint_32 _expiry_ms = 0);
+                                       uint_32 _priority = 0, uint_32 _expiry_ms = 0,
+                                       uint_32 _delay_ms = 0);
 std::future<alx::script::result> yield(const std::string& _name, varvec&& _args,
-                                       uint_32 _priority = 0, uint_32 _expiry_ms = 0);
-void set_max_yield(size_t _n);   // writes engine_config::max_yield
+                                       uint_32 _priority = 0, uint_32 _expiry_ms = 0,
+                                       uint_32 _delay_ms = 0);
+void set_yield_limit(size_t _n);   // writes engine_config::yield_limit
 ```
 
 Queues a call to run at the script's next `yield()` (`lang.md` §9.4) — `call()` serialized onto the running timeline. Before this interface, host code could only call into a script between runs; a delivery lets it run *inside* one, in the window the script itself opens. What runs there is **script**: the delivery names a root-scope def and the engine calls it like any other def — no arbitrary C++ is injected. The point is the reverse channel — the C++ layer's native threads hand calls to the script's timeline, the requests wait in the queue, and they execute only when the script yields; a script in a `yield(ms)` window is not blocking them, it is servicing them as they arrive. Callable from any thread; the thread that runs the script must never block on a future it queued itself (its synchronous tool is `fwrap::call`).
 
-- **accepted only while a run is in progress and the queue is below `max_yield`**; otherwise the future comes back already fulfilled with `YieldError` (`no main fiber`, `yield full`) and nothing was moved — the rvalue overload hands the arguments over only on acceptance
+- **accepted only while a run is in progress and the queue is below `yield_limit`**; otherwise the future comes back already fulfilled with `YieldError` (`no main fiber`, `yield full`) and nothing was moved — the rvalue overload hands the arguments over only on acceptance
 - the name is resolved when the delivery is serviced, in the root scope like `call()`: a delivery may name a def defined later, and a miss comes back as `NameError` inside the future
-- `_priority`: higher runs first, equal priorities keep their arrival order; `_expiry_ms` is the longest the delivery may wait in the queue — an **expired delivery never runs**: the take point settles one it finds expired exactly, and one still waiting in the queue is settled by the background pass (precision: about one 50 ms beat)
-- **every outcome is inside the future** — the value, a script error, `YieldError` (`expired`, `not executed` when the run ends before a yield point reached it, `nested yield` when a serviced call calls `yield()` and does not catch the script-level error), or `InterruptedError` when an interrupt tears the run down (the hook's reject reason, when there is one, is the value); a future is never broken — the only ways out are an allocation failure while settling and a host slot that breaks the signal contract (§3.5), both outside the guarantee
+- `_priority`: higher runs first, equal priorities keep their arrival order — a delivery that becomes eligible keeps its arrival position, so a delayed one may precede a later immediate one; `_expiry_ms` is the longest the delivery may wait in the queue, counted from submission — an **expired delivery never runs**, even one whose delay would have outlived the expiry: the take point settles one it finds expired exactly, and one still waiting is settled by the background pass (precision: about one 50 ms beat)
+- `_delay_ms`: how long before the delivery becomes eligible, counted from submission; until then it is queued but can never be taken (a `yield(0, n)` pass does not see it). The background pass makes it eligible, so it starts no earlier than the delay and typically within one 50 ms beat of it; that pass also wakes a `yield(ms)` window, which is how a sleeping window picks the delivery up at the delay rather than at its own deadline
+- **every outcome is inside the future** — the value, a script error, `YieldError` (`expired`, `cleared` when `clr_yield()` settled it, `not executed` when the run ends before a yield point reached it, `nested yield` when a serviced call's `yield()` goes past `yield_nest` and is left uncaught), or `InterruptedError` when an interrupt tears the run down (the hook's reject reason, when there is one, is the value); a future is never broken — the only ways out are an allocation failure while settling and a host slot that breaks the signal contract (§3.5), both outside the guarantee
 - the result is shaped like `call()`'s and, like `call()`'s, has no exec result gate — a value holding an object handle must be dropped before the engine dies or `reset()` runs
 - the serviced call runs in root posture: root variables and modules only, `max_stack` as its own root budget, hook events and interrupts still firing (the watchdog covers it)
-- `set_max_yield` shrinks without evicting what is already queued
+- a serviced call may itself call `yield()` and service the queue — the Qt `processEvents` pattern: the caller keeps its stack while other handlers run above it. `engine_config::yield_nest` caps the levels, the outermost yield counting as one (default 64; 0 = unlimited); a `yield()` past the cap throws the catchable script-level `YieldError("nested yield")`. Each level has its own window, `maxcnt` and return count, and the outer window does not bound a nested one. A serviced call is therefore not atomic: its own `yield()` is a declared reentrancy point, and root state shared with other handlers must treat it as one
+- a **currying handle** is the link-side delivery face: `call(...)`'s priority and `drop(...)`'s threshold are clamped down to `engine_config::yield_rsvprio`, so a link can neither post into nor clear the host-reserved band above it (default `max_uint_32` = nothing reserved). `drop` settles queued deliveries like the engine's `clr_yield`, restricted this way; the engine's own `yield`/`clr_yield` are not clamped
+- `set_yield_limit` shrinks without evicting what is already queued
 
 ### 3.3 Compiling into a product
 
@@ -231,7 +240,7 @@ eng->set_extend("print", [](alx::script::fwrap& _fw) {
 | `load/store/remove(name)` | reach the call's data scope: the calling link instance's own store, or the current entity's store for an extension handler (where `load`/`store` are misuse — use `iload`, `lang.md` §12.4); a returned pointer follows the same rule (any addition to the store, any reset) |
 | `object()` / `unwrap<T>()` | the C++ object bound to the current area — **area natives only**: outside an area dispatch (an extend handler, a `bind` with no area) there is nothing to hand back and the call throws `ContextError`, as it does from an entry point |
 | `config()` | read the engine configuration (the pipe pointers included) |
-| `currying(name)` | mint a **delivery handle** (`fwrap::callback*`) naming a def — each `cb->call(args, priority, expiry)` is `engine::yield` under that name (§3.2b), the native's channel to its worker threads. **The caller owns the handle and deletes it**, before the engine dies (using one afterwards is UB). An entry point has no engine to name, so calling it there throws `ContextError` |
+| `currying(name)` | mint a **delivery handle** (`fwrap::callback*`) naming a def — each `cb->call(args, priority, expiry, delay)` is `engine::yield` under that name (§3.2b), the native's channel to its worker threads; the priority and `cb->drop(pri, maxcnt)`'s threshold are clamped to `engine_config::yield_rsvprio`. **The caller owns the handle and deletes it**, before the engine dies (using one afterwards is UB). An entry point has no engine to name, so calling it there throws `ContextError` |
 
 ---
 
@@ -356,9 +365,12 @@ The channels are per-engine; with none set (`nullptr`) the host's default is std
 ```cpp
 bool is_running() const;     // true while an entry runs: exec() or call()
 void set_interrupt();        // ask for an interrupt (callable from any thread)
+uint_64 clr_yield(uint_32 _priority, uint_64 _maxcnt);   // clear queued deliveries (any thread)
 ```
 
 The interrupt is **cooperative**: once the request is raised it takes effect at the next checkpoint of the execution flow (the run comes back as `InterruptedError`). Every entry that runs a walk reports it the same way — `exec` and `call` alike; a request made while nothing is running is discarded (an entry clears the flag as it starts), and a run that fails during execution — an error or an interrupt — **only ends that run**: root variables and loaded modules survive it, and `reset()` is the only thing that drops them. The checkpoints are governed by `set_hook`'s `_interval`, but **the flag is looked at on every checkpoint** — an interval of 0 only turns `exec` events off, `set_interrupt()` still works. `set_interrupt()` also wakes a `yield()` residency wait (§3.2b), so an interrupt lands promptly even while the script is sleeping there.
+
+`clr_yield()` is the management face of the delivery queue (§3.2b): it settles queued deliveries without running them. It is effective only while a run is in progress — with nothing running it returns 0 and touches nothing — scans oldest first, settles every delivery with priority `<= _priority` as `YieldError("cleared")`, and stops after `_maxcnt` of them (0 = no limit). The delivery already taken for execution is not in the queue and is unaffected. It is the escape hatch for a queue filled by delayed deliveries: clear the low-priority tier and admission continues. Priority orders the take, it does not admit: a full queue refuses a high-priority delivery like any other, so clearing is what makes room. This engine face is unclamped; the currying handle's `drop` is the same clear with its threshold clamped to `engine_config::yield_rsvprio`, so a link cannot clear the reserved band.
 
 ---
 
@@ -489,7 +501,7 @@ A script-side `throw`, a host-side `raise` and an engine-internal failure all la
 | Compile | `ParseError` |
 | Module | `ImportError`, `LinkError`, `VersionError` |
 | Host | `NativeError` (a wrapped C++ exception), `InterruptedError` (an engine interrupt, uncatchable) |
-| Delivery | `YieldError` — `no main fiber` / `yield full` / `expired` / `not executed` / `nested yield` arrive inside a delivery's future; a `yield()` during module init throws it into the script and is catchable. A delivery torn down by an interrupt reports `InterruptedError` (the interrupt's, not a `YieldError`) |
+| Delivery | `YieldError` — `no main fiber` / `yield full` / `expired` / `cleared` / `not executed` / `nested yield` arrive inside a delivery's future; a `yield()` during module init throws it into the script and is catchable. A delivery torn down by an interrupt reports `InterruptedError` (the interrupt's, not a `YieldError`) |
 | Fallback | `UnknownError` |
 
 - A script-side `try/catch` catches only what is catchable; the engine's `InterruptedError` (a hook returning `false` in §8, or `set_interrupt()`), **passes through the script's catch**. A native that raises `InterruptedError` itself through `fwrap::raise` without the interrupt flag is just an ordinary failed call — that one is catchable.

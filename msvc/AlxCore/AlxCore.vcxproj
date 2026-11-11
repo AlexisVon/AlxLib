@@ -32,6 +32,9 @@
     <ClCompile Include="..\..\source\alxcore\afiber.cpp" />
     <ClCompile Include="..\..\source\alxcore\afile.cpp" />
     <ClCompile Include="..\..\source\alxcore\afpacker.cpp" />
+    <ClCompile Include="..\..\source\alxcore\fpacker\afpacker_base.cpp" />
+    <ClCompile Include="..\..\source\alxcore\fpacker\afpacker_v1.cpp" />
+    <ClCompile Include="..\..\source\alxcore\fpacker\afpacker_v2.cpp" />
     <ClCompile Include="..\..\source\alxcore\aimage.cpp" />
     <ClCompile Include="..\..\source\alxcore\alogger.cpp" />
     <ClCompile Include="..\..\source\alxcore\aplatform.cpp" />

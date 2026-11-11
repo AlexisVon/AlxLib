@@ -26,6 +26,15 @@
     <ClCompile Include="..\..\source\alxcore\afpacker.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\source\alxcore\fpacker\afpacker_base.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\source\alxcore\fpacker\afpacker_v1.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\source\alxcore\fpacker\afpacker_v2.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\source\alxcore\aimage.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

@@ -1,6 +1,6 @@
 /*****************************************************************/ /**
  * \file   aalgo.h
- * \brief  Byte-string search algorithms (KMP, Boyer-Moore, Rabin-Karp, brute-force)
+ * \brief  Byte-string search algorithms, the local entropy mix and PBKDF2
  *
  * \author alexis
  *
@@ -103,6 +103,33 @@ namespace alx {
         const void* _dst, const uint_64 _dsz,
         const void** _val_lst, const uint_64 _val_lsz, const uint_64 _vsz,
         const uint_64 _rfrom, const uint_64 _rto);
+
+    /**
+     * \brief A 64-bit value from the local entropy mix, always available
+     *
+     * Samples the steady clock before every SHA-256 update, so the gap between two samples -- the
+     * previous update's own execution jitter -- is part of the mix, then folds the digest to 64
+     * bits. It is not a CSPRNG: it is the fallback for when the OS entropy source is unavailable.
+     *
+     * \return The mixed value; zero is a possible value, not a failure code
+     */
+    ALXBASE_API uint_64 rand();
+
+    /**
+     * \brief PBKDF2-HMAC-SHA256 (RFC 8018) over a password and a salt
+     *
+     * The cost of an offline guess is the iteration count times the password's entropy; the
+     * function adds no entropy of its own, so a weak password stays weak.
+     *
+     * \param _pswd Password, any length
+     * \param _salt Salt, any length; a fresh random salt per stored key is the caller's job
+     * \param _iterations Rounds per block; at least 1
+     * \param _out Buffer that receives the key; the caller owns it
+     * \param _dklen Bytes to write, at least 1 and no more than _out holds
+     *
+     * Nothing is written when _iterations or _dklen is 0, or when _out is null.
+     */
+    ALXBASE_API void pbkdf2_hmac_sha256(const uint_8* _pswd, uint_64 _pswd_len, const uint_8* _salt, uint_64 _salt_len, uint_32 _iterations, uint_8* _out, uint_32 _dklen);
 
     /**
      * \brief The search kernels find(), rfind() and the _enum pair dispatch to

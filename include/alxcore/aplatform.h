@@ -126,6 +126,16 @@ namespace alx {
      * only stretch it. Linux resumes the remainder of the sleep when a signal interrupts it.
      */
     void ALXCORE_API high_precision_sleep(uint_64 _ms);
+
+    /**
+     * \brief A 64-bit value from the OS entropy source
+     *
+     * Linux uses getrandom(2), falling back to /dev/urandom; Windows uses BCryptGenRandom.
+     *
+     * \return The value, or 0 when every OS source is unavailable -- zero is also a legitimate
+     *         value, so a caller that treats 0 as failure must fall back to alx::rand()
+     */
+    uint_64 ALXCORE_API sys_rand();
 #ifdef _WIN32
 
     /**
@@ -170,7 +180,6 @@ namespace alx {
  */
 class ALXCORE_API alx::mmap : public noncopyable {
 public:
-
     /**
      * \brief Name the segment; nothing is mapped yet
      *
@@ -183,7 +192,6 @@ public:
     virtual ~mmap();
 
 public:
-
     /**
      * \brief Create the segment, or attach to the one already under this name
      *
@@ -373,7 +381,6 @@ protected:
  */
 class ALXCORE_API alx::process_info {
 public:
-
     /**
      * \brief Snapshot this process
      *
@@ -456,7 +463,6 @@ private:
  */
 class ALXCORE_API alx::process_ctrl : public noncopyable {
 public:
-
     /// Outcome of the child process: how it ended, and with what
     class wait_status {
     public:
@@ -595,7 +601,6 @@ public:
     inline HANDLE handle() const { return h_process; }
 #endif
 public:
-
     /// Child stdout, in chunks of at most 4096 bytes. The slot runs on the reader thread, where
     /// calling kill() or destroying the object would join that thread from itself
     signal<const std::string&> sig_output;

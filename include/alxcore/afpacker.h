@@ -15,10 +15,16 @@
 #include "acompress.h"
 #include "afile.h"
 #include "astream.h"
+#include "autility.h"
 #include "avariant.h"
 
 namespace alx {
     namespace fpacker {
+
+        namespace detail {
+            struct encoder_base;
+            struct decoder_base;
+        }
 
         /**
          * \brief Progress and error callback, shared by encoder and decoder
@@ -28,68 +34,33 @@ namespace alx {
          * and _v2 how much of it is done. _path is the source path when packing; when unpacking
          * it is the name of the output stream -- the target file for save(), empty for a memory
          * buffer.
+         *
+         * The encoder also reports two creation-time codes through this slot: randfallback is a
+         * warning (the OS entropy source failed, the local mix was used and packing continues),
+         * randfail is a failure (no usable salt; start() returns false).
          */
         typedef std::function<void(const std::string&, uint_64, uint_64)> MesgFunc;
         /**
          * \brief Write a packed archive: the file data in blocks, then an index of the packed tree
          *
-         * Layout, every field written raw in host byte order:
-         *   [0]   uint_32 magic 0x5F415A4C
-         *   [4]   uint_32 0x5F535043 when the blocks are LZ4-compressed, 0 otherwise
-         *   [8]   uint_32 0x5F534541 when the blocks are AES-CTR encrypted, 0 otherwise
-         *   [12]  the file data, in blocks, in append() order
-         *   [..]  the index: the packed tree serialized with varsolid, compressed and encrypted
-         *         under those same two flags
-         *   [-20] uint_64 index size before compression
-         *   [-12] uint_64 index size as stored
-         *   [-4]  uint_32 magic 0x5F455942
+         * Instances come from create() (plain v1), create_encrypt_v1() (encrypted v1) or
+         * create_encrypt_v2() (authenticated), and the caller deletes them. The factories never
+         * throw: a bad parameter returns null with the code in _err.
          *
-         * There is no version field: the two flag words are the whole format marker. The encoder
-         * owns the stream given to start() and deletes it.
+         * Lifecycle: start() takes the stream, append() adds entries, finish() writes the index
+         * and releases the stream; the destructor finishes an open archive. The encoder owns the
+         * stream from start() on.
+         *
+         * This class is a shell: every call forwards to a detail::encoder_base, which owns the
+         * traversal, the compression state and the index.
          */
         class ALXCORE_API encoder : public noncopyable {
-        public:
-
-            /**
-             * \brief Configure the archive to write
-             *
-             * The password is hashed once with SHA-256 into the AES-256-CTR key, so the same
-             * password always yields the same key: use a fresh one for each archive. Salting and
-             * key stretching are the caller's business. An empty password turns encryption off.
-             *
-             * \param _cmps Compress the data blocks and the index with LZ4
-             * \param _pswd Password; empty means no encryption
-             * \param _blck_size Plain bytes of one file per block, default 64 MiB
-             */
-            encoder(bool _cmps, const std::string& _pswd, uint_64 _blck_size = 0X04000000U);
-            /// Finish an open archive as finish() does, then delete the stream
-            ~encoder();
+        private:
+            explicit encoder(detail::encoder_base* _impl);
 
         public:
-
-            /**
-             * \brief Open a new archive on a stream, taking ownership of it
-             *
-             * Writes the 12-byte header and clears the index. An archive already open is finished
-             * first; the new stream is only taken when that succeeds.
-             *
-             * \param _ostm Output stream; deleted by finish() or by the destructor
-             * \return false only when a previously opened archive could not be finished
-             */
-            bool start(ostream* _ostm);
-
-            /**
-             * \brief Write the index and the trailer, then close the archive
-             *
-             * A no-op returning true when no archive is open, so a second call is harmless. On
-             * success the stream is deleted; on failure it stays with the encoder and the
-             * destructor deletes it.
-             *
-             * \return false when the index cannot be serialized or compressed, or cannot be
-             *         written and flushed
-             */
-            bool finish();
-            /// Result codes of append(); error_message() turns one into text
+            /// Result codes of append() and of the factories; error_message() turns one into text.
+            /// The factory writes success or badparams; randfallback and randfail only travel through MesgFunc.
             enum : uint_8 {
                 /// The call did what it was asked to
                 success = 0,
@@ -107,25 +78,124 @@ namespace alx {
                 flushfail,
                 /// The abort flag was raised; the archive is left incomplete
                 forceabort,
+                /// A creation parameter is out of range
+                badparams,
+                /// The OS entropy source failed; a local-mix salt was used and packing continues
+                randfallback,
+                /// The OS entropy source failed and the fallback was not accepted; packing stopped
+                randfail,
             };
+
+            /// Finish an open archive as finish() does, then delete the stream and the encoder
+            ~encoder();
+
+            /**
+             * \brief Create an encoder for a plain (unencrypted) v1 archive
+             *
+             * \param _cmps Compress the data blocks and the index with LZ4
+             * \param _err When not null, receives success, or badparams when _blck_size is 0 or
+             *             4 GiB and above
+             * \param _blck_size Plain bytes of one file per block, default 64 MiB; 0 and 4 GiB
+             *                   and above are refused
+             * \return A new encoder owned by the caller, or null
+             */
+            static encoder* create(bool _cmps, uint_8* _err = nullptr, uint_64 _blck_size = 0X04000000U);
+
+            /**
+             * \brief Create an encoder for an encrypted v1 archive
+             *
+             * This is the fast, legacy-strength profile: deterministic and unauthenticated. The
+             * same password yields the same key, so use a fresh one for each archive; use it only
+             * where that trade-off is acceptable.
+             *
+             * \param _pswd Password; empty is refused
+             * \param _cmps Compress the data blocks and the index with LZ4
+             * \param _err When not null, receives success, or badparams for an empty password, a
+             *             zero block size or 4 GiB and above
+             * \param _blck_size Plain bytes of one file per block, default 64 MiB; 0 and 4 GiB
+             *                   and above are refused
+             * \return A new encoder owned by the caller, or null
+             */
+            static encoder* create_encrypt_v1(const std::string& _pswd, bool _cmps,
+                                              uint_8* _err = nullptr,
+                                              uint_64 _blck_size = 0X04000000U);
+
+            /**
+             * \brief Create an encoder for an authenticated (v2) archive
+             *
+             * One key per archive, derived from the password and a fresh random salt; every block
+             * and the index are authenticated. The salt comes from the OS entropy source; when
+             * that fails, the encoder either falls back to the local mix (reported as randfallback
+             * through the callback) or stops with randfail, depending on
+             * set_igerr_randfallback().
+             *
+             * \param _pswd Password; empty is refused
+             * \param _cmps Compress the data blocks and the index with LZ4
+             * \param _err When not null, receives success, or badparams for an empty password, a
+             *             block size below 64 KiB or 4 GiB and above, or an iteration count
+             *             outside 1..16 Mi
+             * \param _blck_size Plain bytes of one file per block, default 64 MiB; below 64 KiB
+             *                   and 4 GiB and above are refused
+             * \param _iterations Key-derivation rounds per archive; default 4 Mi, maximum 16 Mi
+             * \return A new encoder owned by the caller, or null
+             */
+            static encoder* create_encrypt_v2(const std::string& _pswd, bool _cmps,
+                                              uint_8* _err = nullptr,
+                                              uint_64 _blck_size = 0X04000000U,
+                                              uint_32 _iterations = 0X00400000U);
+
+            /**
+             * \brief Archive-level metadata as a caller-owned map, written into the index
+             *
+             * The caller may insert any keys between start() and finish(); the map is cleared by
+             * start(). A v1 writer ignores it.
+             */
+            varmap& archive();
+
+            /**
+             * \brief Open a new archive on a stream, taking ownership of it
+             *
+             * Writes the format header and clears the index. An archive already open is finished
+             * first.
+             *
+             * \param _ostm Output stream; deleted by finish() or by the destructor
+             * \return false when a previously opened archive could not be finished -- the new
+             *         stream is then not taken -- or when the header could not be written, in
+             *         which case the encoder already owns the stream
+             */
+            bool start(ostream* _ostm);
+
+            /**
+             * \brief Write the index and close the archive
+             *
+             * A no-op returning true when no archive is open, so a second call is harmless. On
+             * success the stream is deleted; on failure it stays with the encoder and the
+             * destructor deletes it. An archive holding no entry at all is refused, because the
+             * index format cannot represent one.
+             *
+             * \return false when the archive holds no entry, or the index cannot be serialized or
+             *         compressed, or cannot be written and flushed
+             */
+            bool finish();
 
             /**
              * \brief Add one file or one directory tree to the archive
              *
              * Valid only between start() and finish(). A file is cut into blocks of at most
-             * _blck_size plain bytes, compressed and encrypted as configured, and the CRC-32C of
-             * every block's plain bytes goes into the index. A directory is walked recursively into
-             * a nested index entry; the first failing child drops the whole subtree, while the
-             * blocks already written stay in the stream, unreferenced.
+             * _blck_size plain bytes, compressed and encrypted as configured. A directory is
+             * walked recursively into a nested index entry; the first failing child drops the
+             * whole subtree, while the blocks already written stay in the stream, unreferenced.
              *
              * \param _finf Source file or directory
-             * \param _name Name the entry takes in the index, i.e. the root name used by get()
+             * \param _name Name the entry takes in the index, i.e., the root name used by get()
              * \return success, or the first failure encountered; a missing source or a symbolic
              *         link still returns success when the matching ignore flag is set, though the
              *         message callback reports it either way
              */
             uint_8 append(const file_info& _finf, const std::string& _name);
 
+            /// The stream passed to start(); null before start() and after a successful finish()
+            const ostream* get_stream() const;
             /**
              * \brief Abort packing on an external flag
              *
@@ -134,19 +204,21 @@ namespace alx {
              *
              * \param _abort_flag Caller-owned flag; packing stops once *flag is true
              */
-            inline void set_abort_flag(const bool* _abort_flag) { abort_ = _abort_flag; }
-            /// The stream passed to start(); null before start() and after a successful finish()
-            inline const ostream* get_stream() const { return ostm_; }
+            void set_abort_flag(const bool* _abort_flag);
             /// Install the progress callback; null, the default, reports nothing
-            inline void set_print_rtmsg(MesgFunc _fc) { print_rtmsg_ = _fc; }
+            void set_print_rtmsg(MesgFunc _fc);
             /// True when a missing source is skipped instead of failing the append
-            inline bool is_igerr_notexist() const { return igerr_notexist_; }
+            bool is_igerr_notexist() const;
             /// Skip a missing source: the callback still reports notexist, append() returns success
-            inline void set_igerr_notexist(bool _ig) { igerr_notexist_ = _ig; }
+            void set_igerr_notexist(bool _ig);
             /// True when a symbolic link is skipped instead of failing the append
-            inline bool is_igerr_linkfile() const { return igerr_linkfile_; }
+            bool is_igerr_linkfile() const;
             /// Skip a symbolic link: the callback still reports linkfile, append() returns success
-            inline void set_igerr_linkfile(bool _ig) { igerr_linkfile_ = _ig; }
+            void set_igerr_linkfile(bool _ig);
+            /// True when a failed OS entropy source may fall back to the local mix (v2 only)
+            bool is_igerr_randfallback() const;
+            /// Accept the fallback: the callback reports randfallback and packing continues
+            void set_igerr_randfallback(bool _ig);
 
         public:
             /**
@@ -158,86 +230,23 @@ namespace alx {
             static const char* error_message(uint_8 _err);
 
         private:
-            static uint_8 append_impl(const file_info& _finf, const std::string& _name, encoder* _this, varmap& _root);
-            static uint_8 append_impl_dir(const file_info& _finf, const std::string& _name, encoder* _this, varmap& _root);
-            static uint_8 append_impl_file(const file_info& _finf, const std::string& _name, encoder* _this, varmap& _root);
-
-        private:
-            compress::encoder_lz4* cmps_;
-            ostream* ostm_;
-            uint_64 size_;
-            varmap fsys_;
-            bytes pswd_;
-
-            const bool* abort_{nullptr};
-            MesgFunc print_rtmsg_;
-            bool igerr_notexist_{false};
-            bool igerr_linkfile_{false};
+            detail::encoder_base* impl_;
         };
 
         /**
-         * \brief Read a packed archive: header and index at construction, file data on demand
+         * \brief Read a packed archive: header and index at creation, file data on demand
          *
-         * The constructor reads the 12-byte header for the two flags, then the 20-byte trailer and
-         * the whole index, so the stream must support reading at an arbitrary offset -- the trailer
-         * is read before anything else. The stream is owned and deleted by the destructor.
+         * Instances come from create() and are deleted by the caller. create() reads the header
+         * and the index, so the stream must support reading at an arbitrary offset; the decoder
+         * owns and deletes it. There is no separate validity flag: a stream that cannot be opened
+         * makes create() return null.
          *
-         * valid() reports whether the index came out of that read: a truncated trailer, a wrong
-         * password, or an index that will not decrypt, decompress or deserialize leaves it false
-         * instead of throwing. When the header says the archive is not encrypted, the password is
-         * dropped and the index is taken as plain.
+         * This class is a shell: every call forwards to a detail::decoder_base, which owns the
+         * traversal, the compression state and the index.
          */
         class ALXCORE_API decoder : public noncopyable {
-        public:
-
-            /**
-             * \brief Whether a stream is marked as encrypted, judged from its header alone
-             *
-             * Reads the flag word at offset 8, so a caller can pick the password before building a
-             * decoder. False when the stream is too short or the word says anything else.
-             *
-             * \param _istm Stream to inspect; read positionally, so it is left as it was
-             */
-            static bool is_encrypt(const istream& _istm);
-
-            /**
-             * \brief Whether a stream is marked as compressed, judged from its header alone
-             *
-             * Reads the flag word at offset 4. False when the stream is too short or the word says
-             * anything else.
-             *
-             * \param _istm Stream to inspect; read positionally, so it is left as it was
-             */
-            static bool is_compress(const istream& _istm);
-
-        public:
-
-            /**
-             * \brief Open an archive and read its index
-             *
-             * The password is hashed once with SHA-256 into the AES-256-CTR key and is used only
-             * when the header marks the archive as encrypted; given an empty password, an encrypted
-             * archive cannot be read and valid() ends up false.
-             *
-             * \param _istm Stream to own; deleted by the destructor, and read from at construction
-             * \param _pswd Password; empty means no decryption
-             */
-            decoder(istream* _istm, const std::string& _pswd);
-            /// Delete the stream
-            ~decoder();
-
-        public:
-
-            /// True when the index was read and holds at least one entry
-            inline bool valid() const { return !fsys_.empty(); }
-
-            /**
-             * \brief The packed tree as it was indexed
-             *
-             * Nested varmaps for directories, one varvec of block records per file -- the shape
-             * that get() and save() walk with a path. Valid for the life of the decoder.
-             */
-            inline const varmap& fsystem() const { return fsys_; }
+        private:
+            explicit decoder(detail::decoder_base* _impl);
 
         public:
             /// Result codes of get() and save(); error_message() turns one into text
@@ -252,7 +261,7 @@ namespace alx {
                 needdir,
                 /// The selected entry is neither a directory nor a file
                 badfsys,
-                /// A block record is malformed, or a block failed its CRC-32C check
+                /// A block record is malformed, or a block failed its integrity check
                 badblock,
                 /// A block could not be read in full, or the entry's size does not add up
                 readfail,
@@ -266,21 +275,94 @@ namespace alx {
                 flushfail,
                 /// The abort flag was raised; the target may hold a partial entry
                 forceabort,
+                /// The stream is not an archive this build knows, or its head is not valid
+                badversion,
+                /// The head is recognized but a parameter in it is not supported
+                badparams,
+                /// An authenticated region failed its tag check
+                badauth,
             };
 
             /**
+             * \brief What this build makes of a stream's header, as create() reads it
+             *
+             * When no family claims the stream every field is zero.
+             */
+            struct alignas(uint_32) pktype {
+                /// A family this build has claims the head
+                bool clan;
+                /// The common head marks it compressed
+                bool cmps;
+                /// A password is needed to read it
+                bool encrypt;
+                /// 1 or 2; 0 when no family claims the stream
+                uint_8 version;
+
+                /// The four fields as one word
+                uint_32& valid() { return r_interpret<uint_32>(this); }
+                const uint_32& valid() const { return r_interpret<const uint_32>(this); }
+            };
+
+            static_assert(sizeof(pktype) == sizeof(uint_32), "pktype must fit one word");
+
+            /// Delete the stream
+            ~decoder();
+
+            /**
+             * \brief Open an archive from a stream, taking ownership of it
+             *
+             * Picks the matching reader from the header and parses the index. The stream is owned
+             * from the call on: it is deleted by the returned decoder, and also when the call
+             * fails.
+             *
+             * \param _istm Stream to own; deleted by the returned decoder and on failure
+             * \param _pswd Password; empty means the archive carries no key
+             * \param _err When not null, receives success on success and the failure code
+             *             otherwise -- badversion, badparams, badauth, readfail, dcmpsfail, badfsys
+             * \return A decoder owned by the caller, or null when the stream cannot be read
+             */
+            static decoder* create(istream* _istm, const std::string& _pswd, uint_8* _err = nullptr);
+
+            /**
+             * \brief Classify a stream from its header alone, without opening it
+             *
+             * The one header reader behind create(): the common head is checked first, then each
+             * version from the newest down, the first to accept winning. Every field is zero when
+             * no family claims the stream.
+             *
+             * \param _istm Stream to inspect; read positionally, so it is left as it was
+             */
+            static pktype probe(const istream& _istm);
+
+            /**
+             * \brief Archive-level metadata as it came out of the index
+             *
+             * Nested varmaps and scalars as the writer left them. A v1 archive gives an empty
+             * map. Valid for the life of the decoder.
+             */
+            const varmap& archive() const;
+
+            /**
+             * \brief The packed tree as it was indexed
+             *
+             * Nested varmaps for directories, one varvec of block records per file -- the shape
+             * that get() and save() walk with a path. Valid for the life of the decoder.
+             */
+            const varmap& fsystem() const;
+
+        public:
+            /**
              * \brief Read one file out of the archive into memory
              *
-             * Every block named by the index is read, decrypted, decompressed and checked against
-             * its stored CRC-32C before its bytes are appended to _odat, so what lands there is
-             * plain data. A CRC covers one plain block; the index has no checksum of its own.
-             * _odat is cleared first, and keeps what was decoded before a failing block.
+             * Every block named by the index is read, decrypted, decompressed and checked before
+             * its bytes are appended to _odat, so what lands there is plain data. _odat is
+             * cleared first, and keeps what was decoded before a failing block.
              *
              * \param _root Root name handed to encoder::append()
              * \param _path Names below that root; empty selects _root itself
              * \param _odat Filled with the file content
              * \return success, or the first failure among notexist, notfile, badblock, readfail,
-             *         dcmpsfail, flushfail and forceabort
+             *         dcmpsfail, badauth, flushfail and forceabort
              */
             uint_8 get(const std::string& _root, const std::list<std::string>& _path, bytes& _odat) const;
 
@@ -322,15 +404,15 @@ namespace alx {
              *
              * \param _abort_flag Caller-owned flag; extraction stops once *flag is true
              */
-            inline void set_abort_flag(const bool* _abort_flag) { abort_ = _abort_flag; }
-            /// The stream the constructor was given
-            inline const istream* get_stream() const { return istm_; }
+            void set_abort_flag(const bool* _abort_flag);
+            /// The stream the factory was given
+            const istream* get_stream() const;
             /// Whether this archive is marked as encrypted, read again from its header
-            inline bool is_encrypt() const { return is_encrypt(*istm_); }
+            bool is_encrypt() const;
             /// Whether this archive is marked as compressed, read again from its header
-            inline bool is_compress() const { return is_compress(*istm_); }
+            bool is_compress() const;
             /// Install the progress callback; null, the default, reports nothing
-            inline void set_print_rtmsg(MesgFunc _fc) { print_rtmsg_ = _fc; }
+            void set_print_rtmsg(MesgFunc _fc);
 
         public:
             /**
@@ -342,22 +424,7 @@ namespace alx {
             static const char* error_message(uint_8 _err);
 
         private:
-            bool parse_head();
-            bool parse_tail();
-            static uint_8 get_impl(const decoder* _this, const variant& _ctrl, bytes& _odat);
-            static uint_8 get_impl(const decoder* _this, const variant& _ctrl, ostream& _ostm);
-            static uint_8 save_impl(const decoder* _this, const variant& _fsys, const file_info& _dir, const std::string& _key);
-            static uint_8 save_impl_dir(const decoder* _this, const variant& _fsys, const file_info& _dir, const std::string& _key);
-            static uint_8 save_impl_file(const decoder* _this, const variant& _ctrl, const file_info& _dir, const std::string& _key);
-
-        private:
-            compress::decoder_lz4* cmps_{nullptr};
-            istream* istm_;
-            varmap fsys_;
-            bytes pswd_;
-
-            const bool* abort_{nullptr};
-            MesgFunc print_rtmsg_;
+            detail::decoder_base* impl_;
         };
     }
 }

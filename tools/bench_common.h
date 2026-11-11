@@ -40,6 +40,22 @@ namespace bench {
         printf("%-34s %10.4f ms/op\n", _name, iqr_mean(taken));
         fflush(stdout);
     }
+
+    /// Like run(), with _bytes per operation reported alongside as MiB/s
+    inline void run_rate(const char* _name, unsigned long long _bytes, const std::function<void()>& _op, int _samples = 21) {
+        _op();
+        std::vector<double> taken;
+        taken.reserve((size_t) _samples);
+        for (int i = 0; i < _samples; i++) {
+            const auto start = clk::now();
+            _op();
+            taken.push_back(std::chrono::duration<double, std::milli>(clk::now() - start).count());
+        }
+        const double ms = iqr_mean(taken);
+        printf("%-30s %10.4f ms/op  %9.1f MiB/s\n", _name, ms,
+               0.0 == ms ? 0.0 : (double) _bytes / 1048576.0 / (ms / 1000.0));
+        fflush(stdout);
+    }
 }
 
 #endif

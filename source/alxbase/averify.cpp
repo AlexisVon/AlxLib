@@ -42,6 +42,10 @@ typedef factory<verify> verify_factory;
 template <typename T>
 using verify_product = product<T, verify>;
 
+typedef factory<hmac> hmac_factory;
+template <typename T>
+using hmac_product = product<T, hmac>;
+
 namespace {
     // SSE4.2 CRC32 is CPUID leaf 1, ECX bit 20; false whenever TRY_CRC_HARD is off
     bool is_crc32_supported() {
@@ -81,6 +85,16 @@ namespace {
 #endif
     }
     static const bool is_sha_ni_supported_v = is_sha_ni_supported();
+
+    // the standard big-endian octet string of eight digest words
+    void words_to_be(const uint_32* _words, uint_8 _out[32]) {
+        for (int i = 0; i < 8; ++i) {
+            _out[i << 2] = (uint_8) (_words[i] >> 24);
+            _out[(i << 2) + 1] = (uint_8) (_words[i] >> 16);
+            _out[(i << 2) + 2] = (uint_8) (_words[i] >> 8);
+            _out[(i << 2) + 3] = (uint_8) _words[i];
+        }
+    }
 }
 
 class sha_1
@@ -408,6 +422,24 @@ public:
     }
 
 private:
+    friend class hmac_sha_256;
+
+    // the state after one whole 64-byte block: the cache is empty and the length is 512 bits
+    struct preset {
+        uint_32 m_word[8];
+    };
+    void save_preset(preset& _preset) const { memcpy(_preset.m_word, m_state, sizeof(m_state)); }
+    void load_preset(const preset& _preset) {
+        memcpy(m_state, _preset.m_word, sizeof(m_state));
+        m_count = 512;
+        m_cache_index = 0;
+    }
+    void finish_words(uint_32 _out[8]) {
+        finalize();
+        memcpy(_out, m_state, sizeof(m_state));
+    }
+
+private:
     void finalize() {
         // 72 = the longest pad run (64 bytes, when exactly 56 are cached) plus the 8-byte length
         uint_8 padding[72] = {0};
@@ -696,6 +728,66 @@ private:
     static const uint_32 s_state[8];
 };
 
+// HMAC (RFC 2104) over the SHA-256 above: init() precomputes the two padded states, each message
+// starts from a copy of one of them, and the key never enters the per-message path
+class hmac_sha_256 : public hmac_product<hmac_sha_256> {
+public:
+    hmac_sha_256() {}
+    virtual void init(const uint_8* _key, uint_64 _len) override {
+        uint_8 block[64] = {0};
+        if (_len > sizeof(block)) {
+            uint_32 words[8];
+            sha_256 long_key;
+            long_key.update(_key, _len);
+            long_key.finish_words(words);
+            words_to_be(words, block);
+        } else if (_len != 0) {
+            memcpy(block, _key, _len);
+        }
+        uint_8 pad[64];
+        for (int i = 0; i < 64; ++i) pad[i] = block[i] ^ 0x36;
+        m_work.clear();
+        m_work.update(pad, sizeof(pad));
+        m_work.save_preset(m_inner);
+        for (int i = 0; i < 64; ++i) pad[i] = block[i] ^ 0x5C;
+        m_work.clear();
+        m_work.update(pad, sizeof(pad));
+        m_work.save_preset(m_outer);
+        m_work.load_preset(m_inner);
+    }
+    virtual void update(const uint_8* _data, uint_64 _len) override { m_work.update(_data, _len); }
+    virtual std::string hexdigest() override {
+        uint_32 words[8];
+        mac_words(words);
+        std::stringstream ss;
+        for (int i = 0; i < 8; ++i) ss << std::hex << std::setfill('0') << std::setw(8) << words[i];
+        return ss.str();
+    }
+    virtual bytes bytedigest() override {
+        uint_32 words[8];
+        mac_words(words);
+        return bytes(words, sizeof(words));
+    }
+    virtual bool hardcal() override { return is_sha_ni_supported_v; }
+    virtual void clear() override { m_work.load_preset(m_inner); }
+
+private:
+    void mac_words(uint_32 _tag[8]) {
+        uint_32 inner_words[8];
+        uint_8 inner[32];
+        m_work.finish_words(inner_words);
+        words_to_be(inner_words, inner);
+        m_work.load_preset(m_outer);
+        m_work.update(inner, sizeof(inner));
+        m_work.finish_words(_tag);
+    }
+
+private:
+    sha_256 m_work;
+    sha_256::preset m_inner;
+    sha_256::preset m_outer;
+};
+
 template <typename CRC, CRC POLY>
 class crc_state {
 protected:
@@ -851,6 +943,21 @@ std::string alx::verify::exec(const std::string& _type, const uint_8* _data, uin
     result = v->hexdigest();
     delete v;
     return result;
+}
+
+std::vector<std::string> alx::hmac::list() {
+    std::vector<std::string> result;
+    for (auto it : hmac_factory::type_map()) result.push_back(it.first);
+    return result;
+}
+
+hmac* alx::hmac::create(const std::string& _type) { return hmac_factory::create(_type); }
+
+hmac* alx::hmac::create(const COMMON_TYPE _type) {
+    switch (_type) {
+    case SHA_256: return new hmac_sha_256();
+    default: return nullptr;
+    }
 }
 
 const uint_32 sha_1::s_state[5]{0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0};

@@ -12,9 +12,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\include\alxbase\aalgo.h">
-    <ClInclude Include="..\..\include\alxbase\aaes.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\include\alxbase\aaes.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\include\alxbase\aanyptr.h">
@@ -27,6 +27,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\include\alxbase\afactory.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\include\alxbase\acsv.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\include\alxbase\adatetime.h">
@@ -63,9 +66,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\include\alxbase\avarsolid.h">
-    <ClInclude Include="..\..\include\alxbase\averify.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\include\alxbase\averify.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\include\alxbase\axml.h">
@@ -77,12 +80,15 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\source\alxbase\aalgo.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\source\alxbase\aaes.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\source\alxbase\abytes.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\source\alxbase\abytes.cpp">
+    <ClCompile Include="..\..\source\alxbase\acsv.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\source\alxbase\adatetime.cpp">
@@ -98,9 +104,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\source\alxbase\avarsolid.cpp">
-    <ClCompile Include="..\..\source\alxbase\averify.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\source\alxbase\averify.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\source\alxbase\axml.cpp">

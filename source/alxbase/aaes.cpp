@@ -18,6 +18,16 @@
 using namespace alx;
 
 namespace {
+    // the two halves of a counter block, big-endian on both sides; the copying read keeps an
+    // unaligned _iv safe, and byte_reverse makes each half a bswap
+    inline uint_64 read_be64(const uint_8* _p) {
+        return byte_reverse(m_interpret<uint_64>(_p));
+    }
+
+    inline void write_be64(uint_8* _p, uint_64 _value) {
+        m_interpret(_p, byte_reverse(_value));
+    }
+
     static const uint_8 sbox[256]{
         0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
         0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0, 0xad, 0xd4, 0xa2, 0xaf, 0x9c, 0xa4, 0x72, 0xc0,
@@ -141,6 +151,33 @@ void aes_base::cipher(uint_8* _state, const uint_8* _round_key, const uint_8 _ro
 
 void aes_base::inv_cipher(uint_8* _state, const uint_8* _round_key, const uint_8 _round_num) {
     is_aes_supported_v ? inv_cipher_impl_hard(_state, _round_key, _round_num) : inv_cipher_impl_soft(_state, _round_key, _round_num);
+}
+
+void aes_base::cipher_blocks(uint_8* _states, const uint_8* _round_key, const uint_8 _round_num) {
+    is_aes_supported_v ? cipher_blocks_impl_hard(_states, _round_key, _round_num) : cipher_blocks_impl_soft(_states, _round_key, _round_num);
+}
+
+void aes_base::cipher_counter_blocks(uint_8* _keys, uint_8* _iv, const uint_8* _round_key, const uint_8 _round_num) {
+    uint_64 high = read_be64(_iv);
+    uint_64 low = read_be64(_iv + sizeof(uint_64));
+
+    // the eight successors of a 128-bit big-endian counter, as two 64-bit halves
+    for (uint_8 i = 0; i < 8; ++i) {
+        const uint_64 value = low + i;
+        write_be64(_keys + i * block_len, high + (value < low));
+        write_be64(_keys + i * block_len + sizeof(uint_64), value);
+    }
+
+    low += 8;
+    if (low < 8) ++high;
+    write_be64(_iv, high);
+    write_be64(_iv + sizeof(uint_64), low);
+
+    cipher_blocks(_keys, _round_key, _round_num);
+}
+
+void aes_base::inv_cipher_blocks(uint_8* _states, const uint_8* _round_key, const uint_8 _round_num) {
+    is_aes_supported_v ? inv_cipher_blocks_impl_hard(_states, _round_key, _round_num) : inv_cipher_blocks_impl_soft(_states, _round_key, _round_num);
 }
 
 // SSE2 is used here unconditionally, unlike the _hard entries: this one has no TRY_AES_HARD guard
@@ -274,6 +311,26 @@ void aes_base::cipher_impl_hard(uint_8* _state, const uint_8* _round_key, const 
 #endif
 }
 
+void aes_base::cipher_blocks_impl_soft(uint_8* _states, const uint_8* _round_key, const uint_8 _round_num) {
+    for (uint_8 i = 0; i < 8; ++i) cipher_impl_soft(_states + i * block_len, _round_key, _round_num);
+}
+
+void aes_base::cipher_blocks_impl_hard(uint_8* _states, const uint_8* _round_key, const uint_8 _round_num) {
+#if TRY_AES_HARD
+    const __m128i* round_key = (const __m128i*) _round_key;
+    __m128i state[8];
+    for (uint_8 i = 0; i < 8; ++i) state[i] = _mm_loadu_si128((const __m128i*) (_states + i * block_len));
+    for (uint_8 i = 0; i < 8; ++i) state[i] = _mm_xor_si128(state[i], round_key[0]);
+    for (uint_8 round = 1; round < _round_num; ++round) {
+        const __m128i key = round_key[round];
+        for (uint_8 i = 0; i < 8; ++i) state[i] = _mm_aesenc_si128(state[i], key);
+    }
+    const __m128i last = round_key[_round_num];
+    for (uint_8 i = 0; i < 8; ++i)
+        _mm_storeu_si128((__m128i*) (_states + i * block_len), _mm_aesenclast_si128(state[i], last));
+#endif
+}
+
 void aes_base::inv_cipher_impl_soft(uint_8* _state, const uint_8* _round_key, const uint_8 _round_num) {
     add_round_key(_state, _round_num, _round_key);
     for (uint_8 round = _round_num - 1;; --round) {
@@ -295,6 +352,32 @@ void aes_base::inv_cipher_impl_hard(uint_8* _state, const uint_8* _round_key, co
     }
     data = _mm_aesdeclast_si128(data, round_key[0]);
     _mm_storeu_si128((__m128i*) _state, data);
+#endif
+}
+
+void aes_base::inv_cipher_blocks_impl_soft(uint_8* _states, const uint_8* _round_key, const uint_8 _round_num) {
+    for (uint_8 i = 0; i < 8; ++i) inv_cipher_impl_soft(_states + i * block_len, _round_key, _round_num);
+}
+
+void aes_base::inv_cipher_blocks_impl_hard(uint_8* _states, const uint_8* _round_key, const uint_8 _round_num) {
+#if TRY_AES_HARD
+    const __m128i* round_key = (const __m128i*) _round_key;
+
+    // the inverse round keys do not change per block: aesimc once a batch, not once a block
+    __m128i inv_key[15];
+    inv_key[0] = round_key[0];
+    inv_key[_round_num] = round_key[_round_num];
+    for (uint_8 i = 1; i < _round_num; ++i) inv_key[i] = _mm_aesimc_si128(round_key[i]);
+
+    __m128i state[8];
+    for (uint_8 i = 0; i < 8; ++i) state[i] = _mm_loadu_si128((const __m128i*) (_states + i * block_len));
+    for (uint_8 i = 0; i < 8; ++i) state[i] = _mm_xor_si128(state[i], inv_key[_round_num]);
+    for (uint_8 round = _round_num - 1; round > 0; --round) {
+        const __m128i key = inv_key[round];
+        for (uint_8 i = 0; i < 8; ++i) state[i] = _mm_aesdec_si128(state[i], key);
+    }
+    for (uint_8 i = 0; i < 8; ++i)
+        _mm_storeu_si128((__m128i*) (_states + i * block_len), _mm_aesdeclast_si128(state[i], inv_key[0]));
 #endif
 }
 
@@ -408,6 +491,55 @@ void alx::aes_base::ghash(uint_8* _s, const uint_8* _h, const uint_8* _d) {
 void aes_base::increment_counter(uint_8* _counter) {
     for (int i = block_len - 1; i >= 0; --i)
         if (++_counter[i]) break;
+}
+
+void alx::aes_base::ghash_powers(uint_8* _powers, const uint_8* _h) {
+#if TRY_AES_HARD
+    if (is_pclmulqdq_supported_v) {
+        const __m128i h = ghash_reverse_bits(_mm_loadu_si128((const __m128i*) _h));
+        const __m128i h2 = ghash_mul_reflected(h, h);
+        const __m128i h3 = ghash_mul_reflected(h2, h);
+        const __m128i h4 = ghash_mul_reflected(h3, h);
+        _mm_storeu_si128((__m128i*) (_powers), h2);
+        _mm_storeu_si128((__m128i*) (_powers + block_len), h3);
+        _mm_storeu_si128((__m128i*) (_powers + 2 * block_len), h4);
+    }
+#endif
+}
+
+void alx::aes_base::ghash_blocks(uint_8* _s, const uint_8* _h, const uint_8* _powers, const uint_8* _d, const uint_32 _num) {
+#if TRY_AES_HARD
+    // the reflected domain is linear and the subkey is the same for every step, so both the
+    // running state and _h cross over once per call instead of once per block
+    if (is_pclmulqdq_supported_v) {
+        const __m128i h = ghash_reverse_bits(_mm_loadu_si128((const __m128i*) _h));
+        const __m128i h2 = _mm_loadu_si128((const __m128i*) (_powers));
+        const __m128i h3 = _mm_loadu_si128((const __m128i*) (_powers + block_len));
+        const __m128i h4 = _mm_loadu_si128((const __m128i*) (_powers + 2 * block_len));
+        __m128i s = ghash_reverse_bits(_mm_loadu_si128((const __m128i*) _s));
+
+        // four steps unfold to (s ^ d0) * H^4 ^ d1 * H^3 ^ d2 * H^2 ^ d3 * H: independent
+        // multiplies instead of a chain, so the fold's latencies overlap
+        uint_32 i = 0;
+        for (; i + 4 <= _num; i += 4) {
+            const __m128i d0 = ghash_reverse_bits(_mm_loadu_si128((const __m128i*) (_d + (i + 0) * block_len)));
+            const __m128i d1 = ghash_reverse_bits(_mm_loadu_si128((const __m128i*) (_d + (i + 1) * block_len)));
+            const __m128i d2 = ghash_reverse_bits(_mm_loadu_si128((const __m128i*) (_d + (i + 2) * block_len)));
+            const __m128i d3 = ghash_reverse_bits(_mm_loadu_si128((const __m128i*) (_d + (i + 3) * block_len)));
+            s = _mm_xor_si128(ghash_mul_reflected(_mm_xor_si128(s, d0), h4),
+                              _mm_xor_si128(_mm_xor_si128(ghash_mul_reflected(d1, h3),
+                                                          ghash_mul_reflected(d2, h2)),
+                                            ghash_mul_reflected(d3, h)));
+        }
+        for (; i < _num; ++i) {
+            s = _mm_xor_si128(s, ghash_reverse_bits(_mm_loadu_si128((const __m128i*) (_d + i * block_len))));
+            s = ghash_mul_reflected(s, h);
+        }
+        _mm_storeu_si128((__m128i*) _s, ghash_reverse_bits(s));
+        return;
+    }
+#endif
+    for (uint_32 i = 0; i < _num; ++i) ghash_soft(_s, _h, _d + i * block_len);
 }
 
 void alx::aes_base::ghash_soft(uint_8* _s, const uint_8* _h, const uint_8* _d) {

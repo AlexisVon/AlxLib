@@ -9,8 +9,14 @@
  *********************************************************************/
 
 #include "aalgo.h"
+
+#include "abytes.h"
+#include "averify.h"
+#include <chrono>
 #include <climits>
 #include <cstring>
+#include <functional>
+#include <thread>
 
 using namespace alx;
 
@@ -149,6 +155,105 @@ std::pair<uint_64, uint_64> alx::rfind_enum(
         --_crt_t;
     }
     return {uint_64_npos, uint_64_npos};
+}
+
+namespace alx {
+    namespace rand_func {
+
+        inline uint_64 step(uint_64& _state) {
+            uint_64 z = (_state += 0X9E3779B97F4A7C15ULL);
+            z = (z ^ (z >> 30)) * 0XBF58476D1CE4E5B9ULL;
+            z = (z ^ (z >> 27)) * 0X94D049BB133111EBULL;
+            return z ^ (z >> 31);
+        }
+
+        inline uint_64 nanos() {
+            return (uint_64) std::chrono::steady_clock::now().time_since_epoch().count();
+        }
+
+        inline void feed(verify& _hash, uint_64 _value) {
+            // one full 512-bit block per call, so every update costs exactly one compression
+            uint_8 block[64];
+            const uint_8* raw = (const uint_8*) &_value;
+            for (int i = 0; i < 64; ++i) {
+                const int j = (i >> 1) & 0X07;
+                block[i] = raw[(i & 0X01) ? (7 - j) : j];
+            }
+            _hash.update(block, sizeof(block));
+        }
+    }
+}
+
+uint_64 alx::rand() {
+    verify* hash = verify::create(verify::SHA_256);
+    if (nullptr == hash) return 0;
+
+    uint_64 state = rand_func::nanos();
+    rand_func::feed(*hash, state);
+    rand_func::feed(*hash, (uint_64) std::hash<std::thread::id>{}(std::this_thread::get_id()));
+
+    // one sample per block: the gap between two samples is that block's execution jitter
+    for (int i = 0; i < 16; ++i) {
+        const uint_64 sample = rand_func::nanos();
+        state ^= sample;
+        state = rand_func::step(state);
+        rand_func::feed(*hash, state);
+    }
+
+    const bytes digest = hash->bytedigest();
+    delete hash;
+    if (digest.size() < sizeof(uint_64) * 4) return 0;
+
+    return m_interpret<uint_64>(digest.data()) ^ m_interpret<uint_64>(digest.data() + 8) ^
+           m_interpret<uint_64>(digest.data() + 16) ^ m_interpret<uint_64>(digest.data() + 24);
+}
+
+namespace alx {
+    namespace pbkdf2_func {
+
+        // bytedigest() carries the MAC words in machine order; PBKDF2 needs the standard octet string
+        void mac_to_be(const bytes& _mac, uint_8 _out[32]) {
+            for (int i = 0; i < 8; ++i) {
+                uint_32 word;
+                memcpy(&word, _mac.data() + i * sizeof(word), sizeof(word));
+                _out[i << 2] = (uint_8) (word >> 24);
+                _out[(i << 2) + 1] = (uint_8) (word >> 16);
+                _out[(i << 2) + 2] = (uint_8) (word >> 8);
+                _out[(i << 2) + 3] = (uint_8) word;
+            }
+        }
+    }
+}
+
+void alx::pbkdf2_hmac_sha256(const uint_8* _pswd, uint_64 _pswd_len, const uint_8* _salt, uint_64 _salt_len, uint_32 _iterations, uint_8* _out, uint_32 _dklen) {
+    if (0 == _iterations || 0 == _dklen || nullptr == _out) return;
+
+    auto_delete<hmac> mac(hmac::create(hmac::SHA_256));
+    hmac* prf = mac.get();
+    if (nullptr == prf) return;
+    prf->init(_pswd, _pswd_len);
+    uint_8* dst = _out;
+    uint_64 left = _dklen;
+    for (uint_32 index = 1; left != 0; ++index) {
+        // U1 = PRF(P, S || INT(i)), Uj = PRF(P, U(j-1)), T = U1 xor ... xor Uc
+        uint_8 index_bytes[4] = {(uint_8) (index >> 24), (uint_8) (index >> 16), (uint_8) (index >> 8), (uint_8) index};
+        uint_8 u[32], t[32];
+        if (_salt_len != 0) prf->update(_salt, _salt_len);
+        prf->update(index_bytes, sizeof(index_bytes));
+        pbkdf2_func::mac_to_be(prf->bytedigest(), u);
+        memcpy(t, u, sizeof(t));
+        for (uint_32 round = 1; round < _iterations; ++round) {
+            prf->clear();
+            prf->update(u, sizeof(u));
+            pbkdf2_func::mac_to_be(prf->bytedigest(), u);
+            for (int i = 0; i < 32; ++i) t[i] ^= u[i];
+        }
+        prf->clear();
+        const uint_64 take = left < sizeof(t) ? left : sizeof(t);
+        memcpy(dst, t, take);
+        dst += take;
+        left -= take;
+    }
 }
 
 uint_64 alx::find_func::find_by_kmp(const void* _dst, const void* _val, uint_64 _len, uint_64 _beg, uint_64 _end) {

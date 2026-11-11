@@ -34,7 +34,7 @@
 
 ## Maintenance rules (Claude executes these)
 
-1. **After every bench run**, transcribe the emitted CSV line into one row of the results table; the primary key is date + version — the version the CSV line's commit carried, read from `CMakeLists.txt` at that commit
+1. **After every bench run**, transcribe the emitted CSV line into one row of the results table; the primary key is the version the CSV line's commit carried, read from `CMakeLists.txt` at that commit
 2. CSV line format: `date,commit,GEOMEAN,<per-case S/N>` — the GEOMEAN (the combined ratio) comes right after the primary key; each cell holds the two raw `script/native` values (us), the ratio is not recorded
 3. An old row is **never deleted or modified** — history is history; new data is appended only
 4. The results table holds **results only**, one run per row; analysis and conclusions do not go into it
@@ -45,14 +45,14 @@
 
 **Units**: each cell is `script/native` (us); the GEOMEAN is `full-workload weight/pure-script weight` (the a/b format, dimensionless).
 
-**The table starts with the library-wide numbering** (2026-09-24): the earlier per-module numbering is retired, so its measurements are not carried over.
+**The table starts with the library-wide numbering**: the earlier per-module numbering is retired, so its measurements are not carried over.
 
-| Date | version | GEOMEAN(a/b) | ex_call0 | ex_echo | func_call | int_loop | fib(28) | fib_tail | while_count | float_arith | vec_access | foreach | map_access | string_concat |
-|------|--------|--------------|----------|---------|-----------|----------|---------|----------|-------------|-------------|-----------|---------|------------|---------------|
-| 2026-10-17 | 1.3.1 (-O1 lib) | 255/391 | 11671/90 | 21939/93 | 32207/93 | 16353/53 | 381542/814 | 39092/31 | 15516/12 | 17653/86 | 4885/4 | 3859/3 | 2203/67 | 1102/10 |
-| 2026-10-17 | 1.2.3 | 211/322 | 9944/92 | 18558/95 | 27174/99 | 13948/54 | 312094/845 | 34920/31 | 12065/13 | 14531/88 | 4215/4 | 3297/3 | 1854/68 | 1001/10 |
-| 2026-10-17 | 1.2.3 (frames ptr) | 207/316 | 9824/90 | 18186/95 | 26981/98 | 13945/54 | 306140/828 | 33995/31 | 11769/13 | 14578/89 | 4156/5 | 3240/3 | 1849/72 | 984/10 |
-| 2026-10-17 | 1.3.1 | 213/325 | 10093/94 | 18648/94 | 27676/96 | 13971/53 | 313674/830 | 34315/32 | 11842/13 | 14389/89 | 4197/4 | 3252/3 | 2025/69 | 1058/10 |
-| 2026-11-01 | 1.3.2 | 219/338 | 10405/96 | 18634/95 | 27666/95 | 14374/52 | 316696/844 | 35184/32 | 12181/13 | 15197/89 | 4356/4 | 3350/3 | 2242/68 | 1081/10 |
-| 2026-11-02 | 1.3.2 | 206/311 | 9729/92 | 18462/91 | 27210/94 | 13864/51 | 266274/829 | 34086/31 | 11851/13 | 14446/89 | 4238/4 | 3235/3 | 2161/109 | 1044/10 |
-| 2026-11-03 | 1.4.1 | 206/311 | 9948/92 | 18673/93 | 27518/95 | 13856/54 | 268905/835 | 34535/31 | 11973/13 | 15160/88 | 4263/4 | 3283/3 | 2097/108 | 1041/11 |
+| version | GEOMEAN(a/b) | ex_call0 | ex_echo | func_call | int_loop | fib(28) | fib_tail | while_count | float_arith | vec_access | foreach | map_access | string_concat |
+|--------|--------------|----------|---------|-----------|----------|---------|----------|-------------|-------------|-----------|---------|------------|---------------|
+| 1.3.1 (-O1 lib) | 255/391 | 11671/90 | 21939/93 | 32207/93 | 16353/53 | 381542/814 | 39092/31 | 15516/12 | 17653/86 | 4885/4 | 3859/3 | 2203/67 | 1102/10 |
+| 1.2.3 | 211/322 | 9944/92 | 18558/95 | 27174/99 | 13948/54 | 312094/845 | 34920/31 | 12065/13 | 14531/88 | 4215/4 | 3297/3 | 1854/68 | 1001/10 |
+| 1.2.3 (frames ptr) | 207/316 | 9824/90 | 18186/95 | 26981/98 | 13945/54 | 306140/828 | 33995/31 | 11769/13 | 14578/89 | 4156/5 | 3240/3 | 1849/72 | 984/10 |
+| 1.3.1 | 213/325 | 10093/94 | 18648/94 | 27676/96 | 13971/53 | 313674/830 | 34315/32 | 11842/13 | 14389/89 | 4197/4 | 3252/3 | 2025/69 | 1058/10 |
+| 1.3.2 | 219/338 | 10405/96 | 18634/95 | 27666/95 | 14374/52 | 316696/844 | 35184/32 | 12181/13 | 15197/89 | 4356/4 | 3350/3 | 2242/68 | 1081/10 |
+| 1.3.2 | 206/311 | 9729/92 | 18462/91 | 27210/94 | 13864/51 | 266274/829 | 34086/31 | 11851/13 | 14446/89 | 4238/4 | 3235/3 | 2161/109 | 1044/10 |
+| 1.4.1 | 206/311 | 9948/92 | 18673/93 | 27518/95 | 13856/54 | 268905/835 | 34535/31 | 11973/13 | 15160/88 | 4263/4 | 3283/3 | 2097/108 | 1041/11 |

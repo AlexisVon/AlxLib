@@ -126,39 +126,47 @@ Failure always shows up as an **empty `bytes`** (`null()` true) or `false`; noth
 
 ## 4. Encryption and digest
 
-**Moved (2026-10-09)**: AES and the digest/checksum family now live in `alxbase` — see
-`doc/base/api.md` §11 and §12.
+**AES and the digest/checksum family live in `alxbase`** — see `doc/base/api.md` §11 and §12.
 
 ## 5. Archive packing (`afpacker.h`, namespace `alx::fpacker`)
 
-Packs a directory tree into one self-describing archive: an fsys index plus the data in blocks, each block optionally LZ4-compressed and AES-encrypted.
+Packs a directory tree into one self-describing archive: an fsys index plus the data in blocks, each block optionally LZ4-compressed and encrypted. An encoder comes from `create()` (plain v1), `create_encrypt_v1()` (encrypted v1) or `create_encrypt_v2()` (authenticated v2) and is owned by the caller; the decoder's `create()` takes the stream over. The factories never throw: a bad parameter returns null with the reason in the optional `_err`, which sits before every optional parameter. **Every encryption profile here shares one premise: the initial secret is strong and does not leak. The format can salt, stretch and authenticate; it cannot add entropy.**
 
 ```cpp
 // pack
 alx::bytes out;
-alx::ostream_buff ostm(out);
-alx::fpacker::encoder enc(/*cmps=*/true, /*password=*/"pwd", /*block=*/0x04000000U);
-enc.start(&ostm);
-enc.append(alx::file_info("/data/dir"), "root");       // a directory or a file; the second argument is the root name inside the archive
-enc.finish();
+alx::fpacker::encoder* enc = alx::fpacker::encoder::create(/*cmps=*/true);
+// authenticated variant: alx::fpacker::encoder::create_encrypt_v2("pwd", true)
+enc->start(new alx::ostream_buff(out));                 // takes ownership of the stream
+enc->archive().insert("app", alx::variant(std::string("demo")));  // caller metadata; v1 ignores it, v2 stores it; valid between start() and finish()
+enc->append(alx::file_info("/data/dir"), "root");       // a directory or a file; the second argument is the root name inside the archive
+enc->finish();                                         // the stream is deleted on success
+delete enc;                                            // the destructor deletes the stream if finish() failed
 
 // unpack
-alx::istream_buff istm(alx::bytes_view(out));
-alx::fpacker::decoder dec(&istm, "pwd");               // takes ownership of istm and deletes it in the destructor
-dec.valid();                                           // whether the fsys parsed
-dec.fsystem();                                         // the file tree inside the archive (varmap)
+uint_8 err = 0;
+alx::fpacker::decoder* dec = alx::fpacker::decoder::create(
+    new alx::istream_buff(alx::bytes_view(out)), "", &err);  // takes ownership of the stream; null on failure
+dec->fsystem();                                        // the file tree inside the archive (varmap)
+dec->archive();                                        // caller metadata; empty for v1
 
 alx::bytes content;
-dec.get("root", {"a.txt"}, content);                   // pull one file into memory
-dec.get("root", {"a.txt"}, ostm);                      // or write it into an output stream
-dec.save("root", {}, alx::file_info("/tmp/dst"));      // onto disk; with _root empty or "*" the whole archive is extracted
+dec->get("root", {"a.txt"}, content);                  // pull one file into memory
+alx::bytes part;
+alx::ostream_buff pastm(part);
+dec->get("root", {"a.txt"}, pastm);                    // or write it into an output stream
+dec->save("root", {}, alx::file_info("/tmp/dst"));     // onto disk; with _root empty or "*" the whole archive is extracted
+delete dec;                                            // also deletes the stream
 ```
 
-- The result codes are `uint_8`: `success` / `notexist` / `notfile` / `badfsys` / `badblock` / `dcmpsfail` / `forceabort` …, and `error_message(code)` gives their text.
-- Progress and error callback: `set_print_rtmsg(MesgFunc)`, signature `(path, v1, v2)`: when `v1 == -1`, `v2` is the error code; otherwise `v1` is the total size of the entry being processed and `v2` how much of it is done.
+- **Opening is the only failure gate**: `create()` returns null when the stream is not a readable archive, and the optional `_err` receives `badversion` (unknown head), `badparams` (a v2 head parameter: kdf id or iteration count), `badauth` (a failed tag), `readfail`, `dcmpsfail` or `badfsys`. There is no separate `valid()`.
+- The result codes are `uint_8`: `success` / `notexist` / `notfile` / `badfsys` / `badblock` / `badauth` / `dcmpsfail` / `forceabort` …, and `error_message(code)` gives their text. The encoder adds `badparams` for a factory argument and reports `randfallback` / `randfail` for the entropy-source policy.
+- Progress and error callback: `set_print_rtmsg(MesgFunc)`, signature `(path, v1, v2)`: when `v1 == -1`, `v2` is the error code; otherwise `v1` is the total size of the entry being processed and `v2` how much of it is done. `randfallback` is a warning -- packing continues -- while every other code in that slot is a failure.
 - Interrupt: `set_abort_flag(&flag)`; raising the flag from outside returns `forceabort` as soon as possible.
-- Silent ignore: `set_igerr_notexist` / `set_igerr_linkfile` control whether "the file does not exist / is a symbolic link" counts as an error.
-- **Keeping the key unique is the caller's job**: do not pack two archives with one `password` (CTR's uniqueness requirement is on the key, not on a single archive), and salting and key stretching are the caller's job too. The full security model and its boundaries are in `design.md` §4.4.
+- Silent ignore: `set_igerr_notexist` / `set_igerr_linkfile` control whether "the file does not exist / is a symbolic link" counts as an error; `set_igerr_randfallback` controls whether a failed OS entropy source may fall back to the local mix (see below).
+- An archive holding no entry at all is refused by `finish()`: the index format cannot represent one.
+- **v1 is the fast, legacy-strength profile**: the key is a single `SHA-256(password)`, with no salt and no key stretching, so the encryption is deterministic and unauthenticated. **Scope: obfuscation and packaging** -- data that should not be read casually; it is not a security boundary for distribution over an untrusted channel. There is no MAC (tamper detection rests on structure and CRC, not on cryptography), one password across archives repeats the key stream (known plaintext in one archive exposes the same slot in the other), and everything rests on the strength of the key the caller supplies -- so do not pack two archives with one `password`, and do the salting and stretching yourself. With a unique key per archive the key-stream reuse is closed, but authentication is not: CTR is malleable and the CRC is not a MAC. A caller who needs confidentiality only can generate a random per-archive key with the library's `sys_rand`/KDF and keep it; tamper detection then has to come from a keyed hash over the whole archive (head and trailer included), which is a coarse all-or-nothing check rather than v2's per-block and index authentication. Even then the manual route is less convenient and slower than v2 -- key storage plus a separate whole-archive pass -- which is why v2 exists. The full security model and its boundaries are in `design.md` §4.4.
+- **v2 is the authenticated profile**: one key per archive, derived from the password and a fresh random salt (`PBKDF2-HMAC-SHA256`, default 4 Mi rounds, maximum 16 Mi), with every block and the index sealed by `AES-256-GCM`. A wrong password or any edit fails `badauth` -- at `create()` for the index, at `get()` for a block. `create_encrypt_v2(pswd, cmps, err, blck_size, iterations)` refuses an empty password, a block size below 64 KiB or 4 GiB and above, and an iteration count outside 1..16 Mi. When the OS entropy source fails, `set_igerr_randfallback(true)` lets the archive continue on the local mix and reports `randfallback`; the default (false) stops `start()` with `randfail`. The profile is self-contained: the archive supplies the salt, the stretching, the per-slot nonces and the authentication, so the caller need not manage a unique key per archive; a weak or leaked password is still the failure mode (PBKDF2 adds cost per guess, not entropy). The format and its premises are in `design.md` §4.5.
 
 ---
 

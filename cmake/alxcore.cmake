@@ -7,6 +7,9 @@ set(ALXCORE_SOURCES
     ${CMAKE_SOURCE_DIR}/source/alxcore/afiber.cpp
     ${CMAKE_SOURCE_DIR}/source/alxcore/astream_ex.cpp
     ${CMAKE_SOURCE_DIR}/source/alxcore/afpacker.cpp
+    ${CMAKE_SOURCE_DIR}/source/alxcore/fpacker/afpacker_base.cpp
+    ${CMAKE_SOURCE_DIR}/source/alxcore/fpacker/afpacker_v1.cpp
+    ${CMAKE_SOURCE_DIR}/source/alxcore/fpacker/afpacker_v2.cpp
     ${CMAKE_SOURCE_DIR}/source/alxcore/asqlite.cpp
     ${CMAKE_SOURCE_DIR}/source/alxcore/acache.cpp
     ${CMAKE_SOURCE_DIR}/source/alxcore/aplatform.cpp

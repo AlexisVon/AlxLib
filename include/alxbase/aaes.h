@@ -21,10 +21,12 @@ namespace alx {
     /**
      * \brief AES round core: key expansion, the round functions, GHASH and the padding helpers
      *
-     * Stateless: every member is a pure function over caller-owned 16-byte blocks, so the class
-     * holds no data of its own and its members exist for the mode classes below to build on. The
-     * _hard and _soft variants of a primitive are picked at runtime by hardcal(); with
-     * TRY_AES_HARD off the probe can only answer false and only the software code is called.
+     * Stateless: every member is a pure function over caller-owned memory -- a 16-byte block, an
+     * eight-block range, a counter stream or a GHASH power table -- so the class holds no data of
+     * its own and its members exist for the mode classes below to build on. The _soft and _hard
+     * variants are picked at runtime by the CPU probes (AES-NI for the round functions,
+     * PCLMULQDQ for GHASH); with TRY_AES_HARD off they can only answer false and only the
+     * software code is called.
      */
     class ALXBASE_API aes_base : public noncopyable {
     public:
@@ -66,6 +68,13 @@ namespace alx {
         static void cipher(uint_8* _state, const uint_8* _round_key, const uint_8 _round_num);
         /// Inverse of cipher(): decrypt one 16-byte block in place with the expanded _round_key
         static void inv_cipher(uint_8* _state, const uint_8* _round_key, const uint_8 _round_num);
+        /// Encrypt eight consecutive 16-byte blocks in place
+        static void cipher_blocks(uint_8* _states, const uint_8* _round_key, const uint_8 _round_num);
+        /// Fill eight 16-byte key-stream blocks from the counter _iv -- each takes the current
+        /// value, then _iv advances -- and encipher all eight
+        static void cipher_counter_blocks(uint_8* _keys, uint_8* _iv, const uint_8* _round_key, const uint_8 _round_num);
+        /// Inverse of cipher_blocks(): decrypt eight consecutive blocks in place
+        static void inv_cipher_blocks(uint_8* _states, const uint_8* _round_key, const uint_8 _round_num);
         /// XOR one 16-byte block with a 16-byte _iv, in place: the CBC chaining step
         static void xor_with_iv(uint_8* _state, const uint_8* _iv);
         /**
@@ -95,8 +104,12 @@ namespace alx {
     private:
         static void cipher_impl_soft(uint_8* _state, const uint_8* _round_key, const uint_8 _round_num);
         static void cipher_impl_hard(uint_8* _state, const uint_8* _round_key, const uint_8 _round_num);
+        static void cipher_blocks_impl_soft(uint_8* _states, const uint_8* _round_key, const uint_8 _round_num);
+        static void cipher_blocks_impl_hard(uint_8* _states, const uint_8* _round_key, const uint_8 _round_num);
         static void inv_cipher_impl_soft(uint_8* _state, const uint_8* _round_key, const uint_8 _round_num);
         static void inv_cipher_impl_hard(uint_8* _state, const uint_8* _round_key, const uint_8 _round_num);
+        static void inv_cipher_blocks_impl_soft(uint_8* _states, const uint_8* _round_key, const uint_8 _round_num);
+        static void inv_cipher_blocks_impl_hard(uint_8* _states, const uint_8* _round_key, const uint_8 _round_num);
         static void add_round_key(uint_8* _state, uint_8 _round, const uint_8* _key);
         static void sub_bytes(uint_8* _state);
         static void inv_sub_bytes(uint_8* _state);
@@ -112,6 +125,11 @@ namespace alx {
         static void ghash(uint_8* _s, const uint_8* _h, const uint_8* _d);
         /// Add 1 to a 16-byte counter, big-endian: the carry walks from the last byte backwards
         static void increment_counter(uint_8* _counter);
+        /// Fill _powers with H^2, H^3 and H^4 for ghash_blocks(); the software path leaves it untouched
+        static void ghash_powers(uint_8* _powers, const uint_8* _h);
+        /// _num GHASH steps over the _num blocks at _d, four at a time with the table that
+        /// ghash_powers() filled; the software path ignores the table
+        static void ghash_blocks(uint_8* _s, const uint_8* _h, const uint_8* _powers, const uint_8* _d, const uint_32 _num);
 
     public:
         /// One GHASH step in portable code; _s is the running state, _h the subkey, _d the block
@@ -172,9 +190,10 @@ namespace alx {
          *
          * \param _buf Buffer to transform; untouched when the call returns false
          * \param _len Byte count; each mode accepts what its construction allows -- the block
-         *             modes reject 0 and anything that is not a multiple of 16, CTR and GCM take
-         *             any length
-         * \return false when _len is not usable for this mode
+         *             modes reject 0 and anything that is not a multiple of 16, CTR takes any
+         *             length, and GCM any length per message but refuses data once a piece has
+         *             ended mid-block
+         * \return false when _len is not usable for this mode, or when a GCM message was closed
          */
         virtual bool encrypt(uint_8* _buf, uint_64 _len) = 0;
         /// Inverse of encrypt(); accepts exactly the same lengths
@@ -227,18 +246,32 @@ namespace alx {
         virtual bool encrypt(uint_8* _buf, uint_64 _len) override {
             if (0 == _len || _len & base::block_len_msk) return false;
 
-            uint_64 end = _len - base::block_len;
-            for (uint_64 i = 0; i <= end; i += base::block_len)
-                base::cipher(_buf + i);
+            while (_len >= 8 * base::block_len) {
+                aes_base::cipher_blocks(_buf, this->round_key, base::round_num);
+                _buf += 8 * base::block_len;
+                _len -= 8 * base::block_len;
+            }
+            while (0 != _len) {
+                base::cipher(_buf);
+                _buf += base::block_len;
+                _len -= base::block_len;
+            }
             return true;
         }
         /// Inverse of encrypt(): in place, and under the same _len requirement
         virtual bool decrypt(uint_8* _buf, uint_64 _len) override {
             if (0 == _len || _len & base::block_len_msk) return false;
 
-            uint_64 end = _len - base::block_len;
-            for (uint_64 i = 0; i <= end; i += base::block_len)
-                base::inv_cipher(_buf + i);
+            while (_len >= 8 * base::block_len) {
+                aes_base::inv_cipher_blocks(_buf, this->round_key, base::round_num);
+                _buf += 8 * base::block_len;
+                _len -= 8 * base::block_len;
+            }
+            while (0 != _len) {
+                base::inv_cipher(_buf);
+                _buf += base::block_len;
+                _len -= base::block_len;
+            }
             return true;
         }
         /// No-op: ECB carries nothing from one block or one call to the next
@@ -323,14 +356,27 @@ namespace alx {
         virtual bool decrypt(uint_8* _buf, uint_64 _len) override {
             if (0 == _len || _len & base::block_len_msk) return false;
 
+            // eight blocks at a time: save [iv, ct x 8], decrypt all eight, then XOR each block
+            // with the ciphertext block before it
+            while (_len >= 8 * base::block_len) {
+                uint_8 chain[9 * base::block_len];
+                memcpy(chain, iv, base::block_len);
+                memcpy(chain + base::block_len, _buf, 8 * base::block_len);
+                aes_base::inv_cipher_blocks(_buf, this->round_key, base::round_num);
+                for (uint_64 i = 0; i < 8 * base::block_len; ++i) _buf[i] ^= chain[i];
+                memcpy(iv, chain + 8 * base::block_len, base::block_len);
+                _buf += 8 * base::block_len;
+                _len -= 8 * base::block_len;
+            }
+
             uint_8 ptr[base::block_len];
-            uint_64 end = _len - base::block_len;
-            for (uint_64 i = 0; i <= end; i += base::block_len) {
+            while (0 != _len) {
                 memcpy(ptr, _buf, base::block_len);
                 base::inv_cipher(_buf);
                 base::xor_with_iv(_buf, iv);
                 memcpy(iv, ptr, base::block_len);
                 _buf += base::block_len;
+                _len -= base::block_len;
             }
             return true;
         }
@@ -357,21 +403,27 @@ namespace alx {
         using base::encrypt;
         /// XOR _len bytes with the key stream; the primitive that encrypt() and decrypt() call
         inline void xcrypt(uint_8* _buf, uint_64 _len) {
-            for (uint_64 i = 0; i < _len; ++i, ++iv_index) {
-                if (iv_index == base::block_len) {
+            // finish the key-stream block a previous call left half-used
+            while (0 != _len && base::block_len != iv_index) {
+                *_buf++ ^= iv_buffer[iv_index++];
+                --_len;
+            }
+            while (_len >= 8 * base::block_len) {
+                alignas(16) uint_8 keys[8 * base::block_len];
+                aes_base::cipher_counter_blocks(keys, iv, this->round_key, base::round_num);
+                for (uint_64 i = 0; i < 8 * base::block_len; ++i) _buf[i] ^= keys[i];
+                _buf += 8 * base::block_len;
+                _len -= 8 * base::block_len;
+            }
+            while (0 != _len) {
+                if (base::block_len == iv_index) {
                     memcpy(iv_buffer, iv, base::block_len);
                     base::cipher(iv_buffer);
-                    for (; iv_index != 0; --iv_index) {
-                        if (iv[iv_index - 1] == 255) {
-                            iv[iv_index - 1] = 0;
-                            continue;
-                        }
-                        iv[iv_index - 1] += 1;
-                        break;
-                    }
+                    base::increment_counter(iv);
                     iv_index = 0;
                 }
-                _buf[i] = (_buf[i] ^ iv_buffer[iv_index]);
+                *_buf++ ^= iv_buffer[iv_index++];
+                --_len;
             }
         }
         /// Same as xcrypt(), and always true: CTR takes any _len, including 0
@@ -430,10 +482,13 @@ namespace alx {
         aes_gcm(const uint_8 _key[base::key_len], const uint_8 _iv[iv_len])
             : base(_key) {
             base::cipher(gcm_h);
+            aes_base::ghash_powers(gcm_pow, gcm_h);
             memcpy(gcm_j0, _iv, iv_len);
             gcm_j0[15] = 0X01;
             memcpy(gcm_y0, gcm_j0, base::block_len);
             memcpy(gcm_cnt, gcm_y0, base::block_len);
+            // at rest the counter is the next unused one; the first block takes J0 + 1
+            base::increment_counter(gcm_cnt);
         }
         /// Start a message with a bytes_view of AAD; see the pointer overload for the contract
         bool start(const bytes_view& _aad) { return start(_aad.data(), _aad.size()); }
@@ -495,52 +550,79 @@ namespace alx {
          * \brief Encrypt in place, folding the ciphertext into the tag
          *
          * Any _len is accepted and the output has the same length as the input; the counter and
-         * the tag state carry over, so a message may be fed in several pieces.
+         * the tag state carry over, so a message may be fed in several pieces. Every piece but
+         * the last has to end on a 16-byte boundary: a trailing partial block is padded and
+         * folded into the tag right away, which closes the block stream, so only finish() may
+         * follow -- any further call returns false.
          */
         virtual bool encrypt(uint_8* _buf, uint_64 _len) override {
-            const uint_64 block_num = _len >> base::block_len_shift;
+            // the low nibble of gcm_proc_len is non-zero exactly when a piece ended mid-block
+            if (0 != (gcm_proc_len & base::block_len_msk)) return false;
+            if (0 == _len) return true;
             const uint_64 block_rem = _len & base::block_len_msk;
+            uint_64 block_num = _len >> base::block_len_shift;
 
-            for (uint_64 i = 0; i < block_num; i++) {
+            while (block_num >= 8) {
+                alignas(16) uint_8 keys[8 * base::block_len];
+                aes_base::cipher_counter_blocks(keys, gcm_cnt, this->round_key, base::round_num);
+                for (uint_64 i = 0; i < 8 * base::block_len; ++i) _buf[i] ^= keys[i];
+                aes_base::ghash_blocks(gcm_s, gcm_h, gcm_pow, _buf, 8);
+                gcm_proc_len += 8 * base::block_len;
+                _buf += 8 * base::block_len;
+                block_num -= 8;
+            }
+            while (block_num-- != 0) {
+                process_block(_buf);
                 base::increment_counter(gcm_cnt);
-                uint_8* current_block = _buf + (i * base::block_len);
-                process_block(current_block);
-                aes_base::ghash(gcm_s, gcm_h, current_block);
+                aes_base::ghash(gcm_s, gcm_h, _buf);
                 gcm_proc_len += base::block_len;
+                _buf += base::block_len;
             }
             if (block_rem != 0) {
-                base::increment_counter(gcm_cnt);
                 uint_8 temp_block[base::block_len]{0};
-                memcpy(temp_block, _buf + _len - block_rem, block_rem);
+                memcpy(temp_block, _buf, block_rem);
                 process_block(temp_block);
-                memcpy(_buf + _len - block_rem, temp_block, block_rem);
+                memcpy(_buf, temp_block, block_rem);
                 memset(temp_block + block_rem, 0, base::block_len - block_rem);
                 aes_base::ghash(gcm_s, gcm_h, temp_block);
                 gcm_proc_len += block_rem;
+                base::increment_counter(gcm_cnt);
             }
 
             return true;
         }
-        /// Inverse of encrypt(), with the same free _len; the tag is computed but not checked
+        /// Inverse of encrypt(), with the same free _len and the same piece rule; the tag is
+        /// computed but not checked
         virtual bool decrypt(uint_8* _buf, uint_64 _len) override {
-            const uint_64 block_num = _len >> base::block_len_shift;
+            if (0 != (gcm_proc_len & base::block_len_msk)) return false;
+            if (0 == _len) return true;
             const uint_64 block_rem = _len & base::block_len_msk;
+            uint_64 block_num = _len >> base::block_len_shift;
 
-            for (uint_64 i = 0; i < block_num; i++) {
+            while (block_num >= 8) {
+                alignas(16) uint_8 keys[8 * base::block_len];
+                aes_base::cipher_counter_blocks(keys, gcm_cnt, this->round_key, base::round_num);
+                aes_base::ghash_blocks(gcm_s, gcm_h, gcm_pow, _buf, 8);
+                for (uint_64 i = 0; i < 8 * base::block_len; ++i) _buf[i] ^= keys[i];
+                gcm_proc_len += 8 * base::block_len;
+                _buf += 8 * base::block_len;
+                block_num -= 8;
+            }
+            while (block_num-- != 0) {
+                aes_base::ghash(gcm_s, gcm_h, _buf);
+                process_block(_buf);
                 base::increment_counter(gcm_cnt);
-                uint_8* current_block = _buf + (i * base::block_len);
-                aes_base::ghash(gcm_s, gcm_h, current_block);
-                process_block(current_block);
                 gcm_proc_len += base::block_len;
+                _buf += base::block_len;
             }
             if (block_rem != 0) {
-                base::increment_counter(gcm_cnt);
                 uint_8 temp_block[base::block_len]{0};
-                memcpy(temp_block, _buf + _len - block_rem, block_rem);
+                memcpy(temp_block, _buf, block_rem);
                 aes_base::ghash(gcm_s, gcm_h, temp_block);
                 process_block(temp_block);
-                memcpy(_buf + _len - block_rem, temp_block, block_rem);
+                memcpy(_buf, temp_block, block_rem);
                 gcm_proc_len += block_rem;
+                base::increment_counter(gcm_cnt);
             }
 
             return true;
@@ -549,6 +631,7 @@ namespace alx {
         /// both lengths cleared -- finish() calls this on its way out
         virtual void reset() override {
             memcpy(gcm_cnt, gcm_y0, base::block_len);
+            base::increment_counter(gcm_cnt);
             memset(gcm_s, 0, base::block_len);
             gcm_aad_len = max_uint_64;
             gcm_proc_len = 0;
@@ -570,6 +653,11 @@ namespace alx {
 #endif
         uint_64 gcm_aad_len{max_uint_64};
         uint_64 gcm_proc_len{0};
+#if TRY_AES_HARD
+        alignas(16) uint_8 gcm_pow[3 * base::block_len]{0};
+#else
+        uint_8 gcm_pow[3 * base::block_len]{0};
+#endif
     };
 }
 

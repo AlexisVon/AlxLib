@@ -73,7 +73,7 @@ The third codec pair, **identical in shape to gzip** -- the caller picks the cod
 - **Level**: `uint_16`, the same type as gzip's -- no signed type is introduced and the negative level steps stay out of the interface. Valid 1..`ZSTD_maxCLevel()` (22 in 1.5.7), default 3 (zstd's own `ZSTD_CLEVEL_DEFAULT`), anything above the maximum is clamped by zstd itself, and `0` is accepted too (zstd reads it as the default level) -- the library does no validation. **Level values are not comparable across codecs**: gzip's 6 and zstd's 6 are not the same step.
 - **The one behavioural difference**: zstd sets `_level` from the argument on every `exec` (zstd allows changing the level part-way), while gzip reads it once, when the context is initialized. The interfaces have the same shape, and this corner follows each library's own capability rather than being flattened away in the interface.
 - **The decode buffer**: starts at `min(compressed size * 4, 1 GiB)`, grows 2-fold when full, and failing at the 1 GiB cap (the gzip policy of §2.2); `sexec` allocates once at the declared size when the frame header declares a content size, untouched by the growth, and a streaming frame (declaring unknown) goes through it.
-- **No content checksum** (the library default `ZSTD_c_checksumFlag = 0`): structural damage is detectable, a change in the payload is not guaranteed to be -- the same property as lz4, with integrity the outer layer's job (`afpacker`'s CRC / the caller's hash). The boundaries are in `notice.md`.
+- **No content checksum** (the library default `ZSTD_c_checksumFlag = 0`): structural damage is detectable, a change in the payload is not guaranteed to be -- the same property as lz4, with integrity the outer layer's job (`afpacker`'s v2 tag, or the caller's hash -- v1's CRC only catches accidents, §4.4). The boundaries are in `notice.md`.
 - **The compress side has no absolute 1 GiB cap**: the 1 GiB in §2.2 is the **decode** bomb baffle. The input on the encode side is the caller's own data, `exec` sizes its buffer at twice that block's `compressBound` (leaving room for the flush) and `sexec` sizes once at `compressBound` -- neither side fails because "the output happened to pass 1 GiB".
 - **Source**: `3rdpty/zstd` (1.5.7, BSD-3-Clause), a single-threaded static archive with no pthread dependency.
 
@@ -93,23 +93,23 @@ The same judgement has a precedent in the `regex` pair (`doc/core/design.md` §1
 
 ## 3. Encryption and digest
 
-**Moved (2026-10-09)**: AES and the digest/checksum family have no dependency on the OS or on any
-third-party code, so they were demoted to `alxbase` — see `doc/base/design.md` §10 and §11 (AES,
-digest). What stays here is `fpacker`, the archive that builds on them.
+**AES and the digest/checksum family live in `alxbase`**: they have no dependency on the OS or on any
+third-party code — see `doc/base/design.md` §10 and §11 (AES, digest). What stays here is
+`fpacker`, the archive that builds on them.
 
 ## 4. Archive format (fpacker)
 
-### 4.1 Layout
+### 4.1 v1 layout
 
 ```
-[FILE_HEAD:4][cmps_flag:4][aes_flag:4]   fixed header (three magic / flag slots)
-[data blocks] * N                        per block: compressed length, original length, offset + data
-[fsys index]                             the archive's file tree as a varmap (serialized with varsolid)
-[index size:8][stored size:8][FILE_TAIL:4]   trailer (20 bytes: the index's original size, stored size, tail magic)
+[V1_HEAD:4][cmps_flag:4][aes_flag:4]   fixed header (three magic / flag slots)
+[data blocks] * N                        per block: the stored bytes (compressed and/or encrypted)
+[fsys index]                             the tree; each file is [original, stored, offset] slots + CRC-32C, then the total
+[index size:8][stored size:8][V1_TAIL:4]   trailer (20 bytes: the index's original size, stored size, tail magic)
 ```
 
-- Magics: `FILE_HEAD = 0x5F415A4C`, `FILE_TAIL = 0x5F455942`; the flag slots take `FILE_CMPS` (compressed) / `FILE_AESC` (encrypted) / `FILE_NONE`.
-- **The flags sit in dedicated header slots**, so "is it encrypted / compressed" is decided before the fsys is parsed (`decoder::is_encrypt` / `is_compress` read the first 8 bytes directly), without decoding the whole archive.
+- Magics: `V1_HEAD = 0x5F415A4C`, `V1_TAIL = 0x5F455942`; the flag slots take `V1_CMPS` (compressed) / `V1_AESC` (encrypted) / `V1_NONE` (all private to `source/alxcore/fpacker/afpacker_v1.h`).
+- **The flags sit in dedicated header slots**, so "is it encrypted / compressed" is decided before the fsys is parsed: `decoder::probe` reads the common head and asks each version for the cipher word, without decoding the archive.
 - **The encryption parameters**: AES-CTR, with the key derived from the password by a single SHA-256 and the IV the pair (compressed length, offset in the archive). The properties, premises and boundaries are in §4.4.
 - **The fsys index uses varsolid**: the file tree is itself a `varmap` and the serialization rules reuse base's framework, so `decoder::fsystem()` hands out a navigable `varmap` directly.
 
@@ -119,33 +119,106 @@ Every block boundary of packing and unpacking checks the `abort_` flag (an exter
 
 ### 4.3 Defensive parsing
 
-The decode side treats an archive as **untrusted input** and validates its structure: parsing a block index requires at least 3 slots both at the outer and at the inner level (`badblock` otherwise), a data segment's length is checked against the length claimed, and the tail magic is checked. Historically the block index was only tested with `empty()`, which let `block_mesgs[2]` run out of bounds. The security properties and premises are in §4.4.
+The decode side treats an archive as **untrusted input** and validates its structure: a file entry needs at least one block record plus the trailing total (the zero-block `[0]` form is an empty file), each version checks its own record shape (at least the three numbers), a data segment's length is checked against the length claimed, and the tail magic is checked. Historically the block index was only tested with `empty()`, which let `block_mesgs[2]` run out of bounds. The security properties and premises are in §4.4.
 
-### 4.4 Security model
+### 4.4 v1 security model
 
 **Scope**: this section applies only with **compression and encryption both on**. The other settings (compression only / encryption only / neither) are file-archiving features with no security claim -- with encryption off there is no confidentiality to speak of, and with compression off a blind edit faces the CRC as its only check, the decompression filter being gone.
 
-Threat model: **the adversary has no key but can obtain and modify the archive** (in storage and in transit). Every property below rests on **the key not leaking** -- once it does, confidentiality and integrity fail together: a holder can decrypt everything, and can also pack any self-consistent archive with the same key. The properties below all hold inside this model.
+Threat model: **the adversary has no key but can obtain and modify the archive** (in storage and in transit). Every property below rests on **the key being strong and not leaking** -- a leaked or guessable key breaks confidentiality and integrity together: a holder can decrypt everything, and can also pack any self-consistent archive with the same key. No layer below adds entropy. The properties below all hold inside this model.
 
 **Premises** (supplied by the caller; fpacker does not guarantee them)
 
-- **The key**: `pswd` is normalized by the layer above and fpacker does one `SHA-256` to get 32 bytes (`source/alxcore/afpacker.cpp:42` / `:184`); salting and a slow hash belong to the shell. CTR's uniqueness requirement is on the **key** rather than on a single archive -- under one key, a (compressed length, offset) pair must not repeat across archives.
+- **The key**: `pswd` is normalized by the layer above and fpacker does one `SHA-256` to get 32 bytes (`source/alxcore/fpacker/afpacker_v1.cpp:27`); salting and a slow hash belong to the shell, and the password itself must carry the entropy -- fpacker cannot add any. CTR's uniqueness requirement is on the **key** rather than on a single archive -- under one key, a (compressed length, offset) pair must not repeat across archives.
 - **The entry names**: they come from `file_info` and are always a single-segment base name (`source/alxcore/afile.cpp:43` / `:65`; `get_child` filters out `.` / `..`, `:93` / `:104`), so no separator can enter the index and `save`'s `dir + "/" + key` cannot build an escaping path.
 
 **Properties**
 
 | Property | Basis |
 |---|---|
-| Confidentiality: without the key nothing readable | the payload and the index are encrypted in full; the IV is unique inside an archive -- the offset strictly increases there (`:154`) and the index follows all the data blocks, so no two slots repeat |
-| Integrity: a blind edit is uncontrollable ⇒ forgery is out of reach, the worst case being a DoS | **editing a data block** (measured, 16 positions swept): it is either detected (decoding fails / the CRC disagrees) or decodes to a result **byte-for-byte identical to the original** -- LZ4 is not unique, and an edit landing in that freedom space changes the ciphertext rather than the content; every check happens before the write-out (`:307`–`:308`). **Editing the index** (measured, all 1403 bytes of a 40-file archive swept): 409 positions fail to parse outright and the rest land in `notexist` / `badblock` / `dcmpsfail` -- either way the attacker cannot produce the content it chose |
-| Replay / splicing resistance | it takes the same (compressed length, offset) slot **and** a CRC hit, which is equivalent to "the content was the same to begin with"; block boundaries exist only inside the encrypted index, so without the key even the boundaries cannot be located |
+| Confidentiality: without the key nothing readable | the payload and the index are encrypted in full; the IV is unique inside an archive -- the offset strictly increases there (`source/alxcore/fpacker/afpacker_base.cpp:139`) and the index follows all the data blocks, so no two slots repeat |
+| Integrity (blind edits): an edit made without the plaintext is uncontrollable -- detected, or the content comes out byte-identical; the worst case is a DoS | **editing a data block** (measured, 16 positions swept): it is either detected (decoding fails / the CRC disagrees) or decodes to a result **byte-for-byte identical to the original** -- LZ4 is not unique, and an edit landing in that freedom space changes the ciphertext rather than the content; every check happens before the write-out (`source/alxcore/fpacker/afpacker_base.cpp:300`–`:302`). **Editing the index** (measured, all 1403 bytes of a 40-file archive swept): 409 positions fail to parse outright and the rest land in `notexist` / `badblock` / `dcmpsfail` -- either way the attacker cannot produce the content it chose |
+| Replay / splicing resistance | it takes the same (compressed length, offset) slot **and** a CRC hit, which without the plaintext means "the content was the same to begin with" (the known-plaintext hole is a boundary below); block boundaries exist only inside the encrypted index, so without the key even the boundaries cannot be located |
 | Compression couples the IV tightly to the content | the compressed length is a function of the content. Within one file the blocks continue one stream (the dictionary spans blocks, `source/alxcore/acompress.cpp:85` / `:106`); between files `clear()` cuts the dictionary (`source/alxcore/acompress.cpp:98`), and measured: compressing "a copy of f1's tail" inside one stream gives 25 B while after `clear()` it gives 4114 B, the same as compressing it on its own -- so **a file's compressed length is decided by that file alone, and only the offset is a prefix accumulation** |
 
 **Boundaries** (not counted as defects)
 
-- **Availability is not protected**: the 12-byte header and the 20-byte trailer are in the clear with no check, so 4 changed bytes can ruin the whole archive (setting `aes_flag` to `FILE_NONE`, say, makes `:239` drop the password), and no key is needed for that.
-- **Per-block checking ⇒ a failure leaves half a file**: `get_impl` checks one block and writes it (`:307`), so when a later block fails the target file already holds part of it, and that part is not reclaimed.
-- **The price of deterministic encryption**: two archives under one key have byte-for-byte identical ciphertext in the same (compressed length, offset) slot -- a byte-by-byte comparison locates "which ranges of the two agree", but yields no content, fields or block boundaries (compression does not change that reasoning: the same content ⇒ the same compressed stream ⇒ the same ciphertext; and conversely an XOR of the ciphertexts tells nothing, the index in ciphertext form being a compressed stream whose edits shift the literal/match split as a whole). The root cause is a key that is not unique, which is the first premise above, not the way the IV is chosen.
+- **Availability is not protected**: the 12-byte header and the 20-byte trailer are in the clear with no check, so 4 changed bytes can ruin the whole archive (setting `aes_flag` to `V1_NONE`, say, makes `source/alxcore/fpacker/afpacker_v1.cpp:99` drop the password), and no key is needed for that.
+- **Per-block checking ⇒ a failure leaves half a file**: `get_impl` checks one block and writes it (`source/alxcore/fpacker/afpacker_base.cpp:300`–`:302`), so when a later block fails the target file already holds part of it, and that part is not reclaimed.
+- **The price of deterministic encryption**: two archives under one key have byte-for-byte identical ciphertext in the same (compressed length, offset) slot, and the same slot also means the same key stream. A byte-by-byte comparison locates "which ranges of the two agree"; an XOR of the two ciphertexts is the XOR of their (compressed) plaintexts, so a slot whose plaintext is known -- a standard file, a known prefix -- reveals the other archive's content at that slot. The root cause is a key that is not unique, which is the first premise above, not the way the IV is chosen.
+- **Known-plaintext forgery: CRC is error detection, not authentication**: CRC-32C is keyless and affine over GF(2) -- `CRC(m ⊕ e) = CRC(m) ⊕ (e·x^32 mod g)`, so `g | e` leaves it unchanged. LZ4 literals map byte-for-byte, so an 8-byte literal window with `e = g·q` (`deg q ≤ 31`) changes the output while the stream stays valid and the length unchanged. The attacker needs the compressed plaintext: public content can be reproduced locally, and the deterministic-encryption boundary above leaks known slots.
+- **Replay is not detected**: the format carries no freshness, sequence or reader-side state, so an older archive (or an older copy of it) replays as valid; this boundary is shared with v2 (§4.6 limits).
+
+### 4.5 v2: the authenticated format
+
+**The layout** (`iterations` is LE32; the magic, the cipher word and the trailer's two sizes are read and written in host order, as in v1 -- the raw bytes feed the AAD, so the byte order is part of the AAD contract):
+
+```
+[LZA_:4][CPS_/NONE:4]                      common head, written by base and shared with v1
+[AESG:4][kdf id:1][iterations:4][salt:16]  v2 head: cipher word, PBKDF2 id, rounds, random salt
+[blocks] * N                               per block: compressed bytes || GCM tag (16)
+[index]                                    {fsys, info} serialized with varsolid, compressed, sealed
+[index plain:8][index stored:8][BYE_:4]    trailer, ARC_TAIL shared with v1
+```
+
+- **Markers**: `AESG = 0x47534541`; kdf id 1 = PBKDF2-HMAC-SHA256, 0 and unknown ids are `badparams`. There is no separate version field -- the third word is the marker (v1 uses `AES_` / `NONE`; v1 readers and v2 readers each accept only their own).
+- **Key**: one key per archive, `PBKDF2-HMAC-SHA256(password, salt, iterations, 32)`, derived in `write_head` -- the fresh salt is drawn per `start()`, so a second archive from the same encoder gets a new key. The default is 4 Mi rounds; the reader accepts 1..16 Mi and refuses above that (`badparams`) before running the KDF, which bounds a malicious head.
+- **Nonce**: 12 bytes `LE32(kind) || LE64(offset)`, kind 1 a data block and 2 the index; `offset` is the stored region's first byte. Offsets are unique by the writer's append order, the index follows all data, and the per-archive salt makes the key unique -- together they rule out a repeated (key, nonce) pair.
+- **AAD**: `header[0..33) || LE64(plain) || LE64(stored) || LE64(offset)`, the same three numbers the index record carries. The index's AAD is **load-bearing**: its `plain` / `stored` live in the unauthenticated trailer, and a forged `plain` would otherwise drive the decompressor; `stored` is also covered by the nonce because the index offset derives from it. The data block's AAD is defense in depth -- its numbers already come from the sealed index, and the offset is in the nonce.
+- **Block record**: one slot per block, `[plain, stored, offset]`; `stored` counts the ciphertext plus its 16-byte tag. A file entry is those slots followed by the plain total. A zero-block entry whose total is 0 is an empty file; base accepts that shape for v1 and v2 alike, and the writer has always produced it.
+- **Block size**: the factories refuse 4 GiB and above (`badparams`) -- the compressed path carries a block's plain size through 32 bits (`source/alxcore/fpacker/afpacker_base.cpp:226`). With compression on, LZ4's own single-block limit (`0x7E000000`) is lower; a block above it fails loudly at write.
+- **Index**: one sealed map with two reserved keys, `fsys` (the packed tree) and `info` (the caller's metadata). v1 writers ignore `archive()` and v1 readers return an empty map.
+- **Verification order**: the index tag is checked before `varsolid` parses it, and a block's tag before the LZ4 pass; the plaintext of a failed tag is discarded. The tag is 16 bytes, compared over the whole width.
+- **Entropy**: the salt comes from `sys_rand()`; when that returns 0 the encoder either falls back to `alx::rand()` and reports `randfallback` (allowed by `set_igerr_randfallback(true)`), or stops `start()` with `randfail`. The fallback weakens the bound to "the host is not under the adversary's control"; the flag is off by default, and a half that is still 0 after the fallback stops the archive with `randfail`.
+- **Error surface**: the factories never throw; `badparams` covers an empty password, a block size below 64 KiB or 4 GiB and above, and an out-of-range iteration count. The v2 reader reports `badversion` for a head or trailer that does not check out, `badparams` for an unrecognized kdf id or iteration count, `badauth` for a failed tag, and `readfail` / `dcmpsfail` / `badfsys` beyond that.
+- **v1 is untouched**: its layout, record shape and deterministic CTR profile stay as they are; v2 is written only when the caller asks for it with a password.
+
+### 4.6 v2 security argument
+
+**Assumptions**
+
+1. AES-256 is a PRP, and its GCM use follows NIST SP 800-38D: a 96-bit nonce, J0 as the counter origin, GHASH over AAD || ciphertext, a 128-bit tag, never truncated.
+2. PBKDF2-HMAC-SHA256 follows RFC 8018. With a fixed password, distinct salts yield computationally independent 256-bit keys (HMAC-SHA256 as a PRF).
+3. The 128-bit salt comes from an OS CSPRNG. With `set_igerr_randfallback(true)` it may come from the local mix instead; the bound below then degrades to "the host is not under the adversary's control" (§4.5).
+4. The adversary holds no key, but can read and modify the archive; the password is normalized by the layer above and does not leak, and it has enough entropy -- the KDF adds cost per guess, never entropy.
+
+**Keys.** n archives under one password: the salts are independent 128-bit values, so the probability that any two collide is at most n(n−1)/2 · 2^−128 = n²/2^129. A collision is the only way two archives can share K, because the KDF is deterministic given the password, salt and iteration count; with distinct salts the keys are independent under assumption 2.
+
+**Nonces.** Inside one archive the writer appends blocks in increasing offsets and appends the index after all of them, so every stored region has a distinct offset. The nonce also carries a kind (1 block, 2 index), so the two domains cannot collide even at equal offsets. Under one K, every (K, nonce) pair is therefore used once, and GCM's per-message limit (2^39 − 256 bits) sits above the 64 MiB block default; the index is the only message that grows with the file count.
+
+**Confidentiality.** With one message per (K, nonce), GCM's privacy advantage is at most (σ + q + 1)² / 2^128 in the SP 800-38D accounting, where σ is the total number of 128-bit blocks under the key and q the number of encryption queries (one per sealed region: the block count plus the index). The archive plaintext is exactly that message; sizes, the salt and the format markers are public by design.
+
+**Integrity.** A blind edit must produce a valid 128-bit tag under a key it does not hold; each attempt succeeds with probability at most 2^−128, so q attempts give at most q·2^−128, plus the GHASH collision term (σ + q + 1)² / 2^128, which the same per-archive bounds keep negligible. The index tag is checked before `varsolid` parses it, and a block tag before the LZ4 pass; a failed tag is `badauth` and its plaintext is discarded, so the parser and the decompressor only ever see authenticated bytes.
+
+**What the AAD binds.** Data blocks: plain/stored/offset come from the sealed index, and the offset is in the nonce, so the AAD adds no guarantee against a keyless attacker -- it is defense in depth and it keeps the byte contract uniform across regions. The index: its plain/stored sizes live in the trailer, which has no tag of its own; the index AAD binds them, without which a changed `plain` would still pass the tag and then drive `decompress_block`, while `stored` is nonce-covered because the index offset derives from it.
+
+**Immutability of the block set.** Deleting, reordering or splicing blocks either changes the offsets recorded in the index (the index tag fails) or the bytes at a recorded offset (the block tag fails because the nonce and the AAD carry that offset). A block lifted from another archive sits under a different K. The record list and the trailing plain total are inside the sealed index, so a truncated or padded list fails before any block is read.
+
+**The KDF's promise.** PBKDF2 adds no password entropy: one offline guess costs one full derivation, i.e. `iterations` HMAC-SHA256 calls (≈ 115 ns per iteration on the reference machine, `doc/base/design.md` §11). The cost of a guess is linear in the iteration count; there is no memory hardness, so a GPU/ASIC advantage over a CPU persists. The format promises exactly that linear factor, no more.
+
+**Limits and non-goals.** The tag is 128 bits, never truncated; every nonce is an offset < 2^64; the number of messages per key is one index plus the block count, and the byte volume stays below GCM's per-message limit. Out of scope: rollback detection without reader-side state, size / timing / access-pattern side channels, a compromised host, key leakage and quantum adversaries. v1's deterministic and unauthenticated profile keeps its own boundaries (§4.4).
+
+### 4.7 Measured throughput
+
+Machine: Intel Core i3-1315U (8 logical CPUs), 15 GiB RAM, Linux 7.2.14, `-O3`, one archive thread. Each figure is the interquartile mean of 3 runs; the archive goes to a counting stream, so no disk write is counted, and `blck_size` is 64 MiB. The driver is the encoder API (the local `bench_fpacker.cpp`, kept out of the repository); the v2 figures subtract the fixed PBKDF2 cost of 4 Mi rounds (0.476 s per archive).
+
+| Workload | Data | Archive | Ratio | Time | Throughput |
+|---|---|---|---|---|---|
+| compress only (v1 + LZ4)¹ | Linux 6.18.62 source, 91,170 files, 1,546,861,903 B | 478,055,902 B | 0.3090 | 4.257 s | 346.6 MiB/s |
+| encrypt only (v1 CTR) | Windows 10 22H2 media tree, 907 files, 4,977,746,047 B | 4,977,860,349 B | 1.0000 | 2.811 s | 1688.8 MiB/s |
+| encrypt only (v2 GCM) | same | 4,977,855,535 B | 1.0000 | 3.334 s | 1424.0 MiB/s |
+| encrypt + compress (v1 CTR + LZ4) | Linux source | 478,055,902 B | 0.3090 | 3.914 s | 376.9 MiB/s |
+| encrypt + compress (v2 GCM + LZ4) | Linux source | 478,598,522 B | 0.3094 | 3.766 s | 391.8 MiB/s |
+| reference: 7-Zip 26.06 `-mx=0 -mmt=1` store | Windows media tree | 4,977,759,004 B | 1.0000 | 2.204 s | 2,153.6 MiB/s |
+| reference: 7-Zip 26.06 store + password | same | 4,977,782,401 B | 1.0000 | 6.339 s | 748.8 MiB/s |
+
+¹ Measured before the AES batching with `lza-cli` (8 runs, archive on `/dev/shm`). The workload has no cipher, so the value is unchanged by the batching; the other rows are the encoder-API re-measurement.
+
+Sources (not distributed with the library): Windows 10 22H2 media, image build 19041.3803 (`vb_release`, 2023-12 servicing), ISO SHA-256 `70a9327465420f2271e669cb37cf63e432f38980c1353c7ea45eff1ccfa1ce45`; Linux 6.18.62 from kernel.org, tarball SHA-256 `490a7aedf1b355c565d3a6c05333ccccb5da82064eca46b590448a7099d7d651`. The Windows tree is 94.4% already-compressed containers (`install.esd`, `boot.wim`), so its compression ratio is 1.0; the Linux source is the meaningful compression sample.
+
+The 7-Zip rows are an encryption-layer reference only: `-mx=0` stores without compression, and the store-to-store+password delta is 4.135 s over 4.98 GB, about 1.15 GiB/s of AES-256-CBC (unauthenticated, 7-Zip's KDF at ~5 ms). v2 is AES-256-GCM and v1 is CTR, so neither matches CBC one-for-one; the rows above count the encoder's work without a disk write while the 7-Zip figures include their `/dev/shm` write, so the two are not subtracted directly. What the batching below changed is that the cipher is no longer the largest stage of the encrypt-only path: the remaining bound is the archive pipeline (read, copy, CRC-32C and the library's file buffers).
+
+> **Revision note.** The first version of this table (`lza-cli`, 8 runs, `/dev/shm`) attributed the gap to the pipeline; a direct stage probe showed the opposite for the encrypt-only rows -- the pre-batching ciphers were 835 MiB/s (CTR) and 467 MiB/s (GCM), slower than 7-Zip's CBC increment -- and the batching in `doc/base/design.md` §10.2 raised them to ~4339 and ~2223 MiB/s (`tools/aes_bench.cpp`). The rows above are the encoder-API re-measurement; the 7-Zip rows are unchanged.
 
 ---
 
@@ -349,7 +422,9 @@ One measured number along the way: were it changed to "build a fresh match block
 | `threadpool` | `_threads == 0` clamped to 1 | the original ran zero workers and tasks never executed |
 | `fiber` (POSIX) | 1 MB default stack, `mmap` + a guard page | the original defaulted to 8 KB; a guard page cannot be built on a malloc'ed block |
 | `fpacker` block index (inner) | requires at least 3 slots | the original only tested `empty()`, so `[2]` ran out of bounds |
-| `fpacker` block index (outer) | requires at least 3 slots, consistent with the inner one | the original only tested the parity: an entry with 1 slot left the read loop spinning, `total` took its default 0, and the final `0 != 0` passed → a silent success with empty content |
+| `fpacker` block index (outer) | requires at least one record plus the trailing total; the zero-block `[0]` form is an empty file | the original only tested the parity: an entry with 1 slot left the read loop spinning, `total` took its default 0, and the final `0 != 0` passed → a silent success with empty content |
+| `fpacker` empty files | an entry `[0]` extracts as an empty file (v1 and v2) | the reader used to reject it with `badblock`, so an archive holding an empty file could be written but not read back |
+| `fpacker` v2 | AES-256-GCM blocks and a sealed `{fsys, info}` index, one PBKDF2 key per archive from a fresh salt, factories that never throw (null + `_err`) | v1 stays byte-identical and readable; v2 is a separate factory, so existing callers keep the v1 behaviour |
 | `image::load_image_bmp` | checks the offset, the data segment's length and the row-copy bounds | the original read and wrote out of bounds in several places, driven by header fields |
 | the size check at a codec entry point | unified to `_size <= 0` (it was `0 == _size`) | a negative size reaches `deflateBound` and wraps the result into a small buffer, after which zlib writes out of bounds at the size it was lied about: a heap overflow write under ASan and a SIGSEGV in release (reproduced). The lz4 encode side was caught by `LZ4_COMPRESSBOUND <= 0`, safe behaviour but an inconsistent check |
 | `decoder_gzip`'s `_size * 4` | widened to `uint_64` before clamping to the 1 GiB cap, and the growth path is capped too | with a claimed compressed length ≥ 512 MiB the multiplication wraps into a negative number inside `int`, and once widened to `uint_64` an allocation that wraps in `bytes` leaves "a small buffer with a large size claimed", so zlib writes out of bounds (measured under ASan as `heap-buffer-overflow`; in release it silently allocates 4 GiB) |

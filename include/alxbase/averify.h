@@ -28,7 +28,6 @@ namespace alx {
      */
     class ALXBASE_API verify : public noncopyable {
     public:
-
         /**
          * \brief Fixed ids for the enum overloads of create() and exec(); 0 means no algorithm
          *
@@ -151,6 +150,56 @@ namespace alx {
 
         /// Back to the initial state, ready for the next message
         virtual void clear() = 0;
+    };
+
+    /**
+     * \brief Keyed hash: a verify type that also takes a key
+     *
+     * Everything verify promises -- update(), hexdigest(), bytedigest(), hardcal(), clear() --
+     * means the same here; init() is the one addition. It folds the key into the hash's padded
+     * states, so a message costs its own bytes plus the finalization blocks: the padding is paid
+     * once per key, not once per message, which is what makes PBKDF2's rounds affordable.
+     *
+     * A digest is taken once, as with any hash: clear() before feeding the next message (the key
+     * stays set). An instance is not synchronized: one per thread.
+     */
+    class ALXBASE_API hmac : public verify {
+    public:
+        /**
+         * \brief Fixed ids for the enum overload of create(); 0 means no algorithm
+         *
+         * The values are verify's for the same hash. NO_CHECK is that 0: create() returns null
+         * for it, as it does for any value not listed here.
+         */
+        enum COMMON_TYPE : uint_8 { NO_CHECK = 0x00,
+                                    /// HMAC-SHA256; 32-byte MAC
+                                    SHA_256 = 0xCC };
+
+        /// Every name the string overload of create() accepts; the order is unspecified
+        static std::vector<std::string> list();
+
+        /// New instance owned by the caller, to be deleted; null when _type names no algorithm
+        static hmac* create(const COMMON_TYPE _type);
+        /// Instance owned by the caller; null when _type is not one of list()
+        static hmac* create(const std::string& _type);
+
+        /// Virtual, so the pointer create() returned is enough to delete a product
+        virtual ~hmac() = default;
+
+        /**
+         * \brief Set the key, replacing any key set before
+         *
+         * Keys longer than the hash's 64-byte block are hashed down to 32 bytes first, as RFC 2104
+         * prescribes; an empty key is a key like any other. Call it before the first message.
+         *
+         * \param _key First byte of the key; read during the call, not retained
+         * \param _len Key length in bytes
+         */
+        virtual void init(const uint_8* _key, uint_64 _len) = 0;
+        /// Set the key from a byte window
+        inline void init(const bytes_view& _key) { init(_key.data(), _key.size()); }
+        /// Set the key from a string's bytes; its terminating null is not part of the key
+        inline void init(const std::string& _key) { init((const uint_8*) (_key.data()), _key.length()); }
     };
 }
 

@@ -92,6 +92,34 @@ TEST(gt_aaes, ecb_256_encrypt) {
     EXPECT_EQ(pt, expected);
 }
 
+// The eight-block batch must not change ECB's output: one call over ten blocks equals ten
+// per-block calls, in both directions
+TEST(gt_aaes, ecb_256_batched_blocks) {
+    uint_8 key[32];
+    memset(key, 0x3d, sizeof(key));
+
+    bytes orig(160, 0);
+    for (uint_64 i = 0; i < orig.size(); ++i) orig[i] = (uint_8) (i * 13 + 7);
+
+    bytes one(orig);
+    aes_ecb<256> whole(key);
+    ASSERT_TRUE(whole.encrypt(one));
+    EXPECT_NE(one, orig);
+
+    bytes pieces(orig);
+    aes_ecb<256> block(key);
+    for (uint_64 off = 0; off < pieces.size(); off += 16) ASSERT_TRUE(block.encrypt(pieces.data() + off, 16));
+    EXPECT_EQ(pieces, one);
+
+    bytes back(one);
+    ASSERT_TRUE(block.decrypt(back));
+    EXPECT_EQ(back, orig);
+
+    bytes dec_pieces(one);
+    for (uint_64 off = 0; off < dec_pieces.size(); off += 16) ASSERT_TRUE(block.decrypt(dec_pieces.data() + off, 16));
+    EXPECT_EQ(dec_pieces, orig);
+}
+
 TEST(gt_aaes, ecb_256_roundtrip) {
     uint_8 key[32];
     from_hex("603deb1015ca71be2b73aef0857d7781"
@@ -187,6 +215,30 @@ TEST(gt_aaes, cbc_256_roundtrip) {
     EXPECT_EQ(buf, orig);
 }
 
+// CBC decryption batches eight blocks at a time; the chain must match per-block calls
+TEST(gt_aaes, cbc_256_batched_decrypt) {
+    uint_8 key[32], iv[16];
+    memset(key, 0x6a, sizeof(key));
+    memset(iv, 0x9c, sizeof(iv));
+
+    bytes orig(160, 0);
+    for (uint_64 i = 0; i < orig.size(); ++i) orig[i] = (uint_8) (i * 17 + 3);
+
+    bytes ct(orig);
+    aes_cbc<256> enc(key, iv);
+    ASSERT_TRUE(enc.encrypt(ct));
+
+    bytes one(ct);
+    aes_cbc<256> whole(key, iv);
+    ASSERT_TRUE(whole.decrypt(one));
+    EXPECT_EQ(one, orig);
+
+    bytes pieces(ct);
+    aes_cbc<256> block(key, iv);
+    for (uint_64 off = 0; off < pieces.size(); off += 16) ASSERT_TRUE(block.decrypt(pieces.data() + off, 16));
+    EXPECT_EQ(pieces, one);
+}
+
 TEST(gt_aaes, ctr_128_xcrypt) {
     uint_8 key[16], iv[16];
     from_hex("2b7e151628aed2a6abf7158809cf4f3c", key);
@@ -238,6 +290,39 @@ TEST(gt_aaes, ctr_256_roundtrip) {
     ctr.reset();
     ASSERT_TRUE(ctr.decrypt(buf));
     EXPECT_EQ(buf, orig);
+}
+
+// The counter state carries across calls: a message fed in pieces must give the same bytes
+// as one call, including across the eight-block batch boundary and mid-block starts
+TEST(gt_aaes, ctr_256_fed_in_pieces) {
+    uint_8 key[32], iv[16];
+    memset(key, 0x5a, sizeof(key));
+    memset(iv, 0xa5, sizeof(iv));
+
+    bytes orig(200, 0);
+    for (uint_64 i = 0; i < orig.size(); ++i) orig[i] = (uint_8) (i * 7 + 1);
+
+    bytes one(orig);
+    aes_ctr<256> whole(key, iv);
+    ASSERT_TRUE(whole.encrypt(one));
+    EXPECT_NE(one, orig);
+
+    // the 155-byte piece crosses the batch boundary; the 1-byte and 0-byte pieces pin the
+    // mid-block continuation and the empty call
+    const uint_64 cuts[]{1, 13, 2, 16, 155, 0, 13};
+    bytes pieces(orig);
+    aes_ctr<256> fed(key, iv);
+    uint_64 done = 0;
+    for (uint_64 cut : cuts) {
+        ASSERT_TRUE(fed.encrypt(pieces.data() + done, cut));
+        done += cut;
+    }
+    ASSERT_EQ(done, orig.size());
+    EXPECT_EQ(pieces, one);
+
+    fed.reset();
+    ASSERT_TRUE(fed.decrypt(pieces));
+    EXPECT_EQ(pieces, orig);
 }
 
 TEST(gt_aaes, gcm_128_empty_pt_empty_aad) {
@@ -443,6 +528,44 @@ TEST(gt_aaes, gcm_256_public_vectors) {
     EXPECT_EQ(memcmp(tag, short_tag.data(), 16), 0);
 }
 
+// 256 bytes: the eight-block CTR / four-way GHASH path; the vector comes from Python cryptography
+// (OpenSSL), pinned here as ciphertext and tag
+TEST(gt_aaes, gcm_256_batched_blocks) {
+    uint_8 key[32], iv[12], tag[16];
+    from_hex("feffe9928665731c6d6a8f9467308308"
+             "feffe9928665731c6d6a8f9467308308",
+             key);
+    from_hex("cafebabefacedbaddecaf888", iv);
+
+    bytes aad = bytes::from_hex("feedfacedeadbeeffeedfacedeadbeefabaddad2");
+    bytes pt = bytes::from_hex(
+        "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+        "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f"
+        "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f"
+        "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f"
+        "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f"
+        "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf"
+        "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf"
+        "e0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
+    bytes expected_ct = bytes::from_hex(
+        "8b1df1d665d77de5592f346d897c6ae8f28c379cbec4210443cd889bb37945c7"
+        "b0ada0fee8409449a056af1f3309133244adc1a50d82aa6a3e93b760af12f9c7"
+        "24ee3915a4a83b0d00dcc456bab5aea08ccfbce7bf43ff5e032e478d049947aa"
+        "079af6eb7e11f5143d36b7161c5aa3c2f0ff1bcc1abe72b8d64a51d469f49a2c"
+        "3c18b3626061aba40267453583a5c2d0dac05bf17b416ca2cf8fea3aa56510e6"
+        "5c50d9373ca33d90f9bc09db6a51d324fdeeabe11aefcba64855a71ec040796d"
+        "18dde7d762c2ca6565bb417b2a4c248a471f0a3e8cd6f0209277676d12aea445"
+        "551ff7074723af1edd0496221201b4be171dc98dea776b7978952f04b848cab2");
+    bytes expected_tag = bytes::from_hex("b3abcab93457ae9e68f3e21814ec9241");
+
+    aes_gcm<256> gcm(key, iv);
+    ASSERT_TRUE(gcm.start(aad));
+    ASSERT_TRUE(gcm.encrypt(pt.data(), pt.size()));
+    EXPECT_EQ(pt, expected_ct);
+    ASSERT_TRUE(gcm.finish(tag));
+    EXPECT_EQ(memcmp(tag, expected_tag.data(), 16), 0);
+}
+
 TEST(gt_aaes, gcm_256_roundtrip) {
     uint_8 key[32], iv[12];
     from_hex("603deb1015ca71be2b73aef0857d7781"
@@ -468,6 +591,93 @@ TEST(gt_aaes, gcm_256_roundtrip) {
 
     EXPECT_EQ(memcmp(enc_tag, dec_tag, 16), 0);
     EXPECT_EQ(buf, orig);
+}
+
+// The counter and the tag state carry across calls: every piece but the last ends on a block
+// boundary, the 144-byte piece crosses the eight-block batch boundary, and the same cuts decrypt
+// back to the plaintext
+TEST(gt_aaes, gcm_256_fed_in_pieces) {
+    uint_8 key[32], iv[12];
+    memset(key, 0x11, sizeof(key));
+    memset(iv, 0x22, sizeof(iv));
+
+    bytes aad(37, 0);
+    for (uint_64 i = 0; i < aad.size(); ++i) aad[i] = (uint_8) (i * 3 + 2);
+    bytes orig(205, 0);
+    for (uint_64 i = 0; i < orig.size(); ++i) orig[i] = (uint_8) (i * 11 + 5);
+
+    bytes one(orig);
+    aes_gcm<256> whole(key, iv);
+    ASSERT_TRUE(whole.start(aad));
+    ASSERT_TRUE(whole.encrypt(one.data(), one.size()));
+    uint_8 tag_one[16];
+    ASSERT_TRUE(whole.finish(tag_one));
+
+    const uint_64 cuts[]{16, 144, 0, 45};
+    bytes pieces(orig);
+    aes_gcm<256> fed(key, iv);
+    ASSERT_TRUE(fed.start(aad));
+    uint_64 done = 0;
+    for (uint_64 cut : cuts) {
+        ASSERT_TRUE(fed.encrypt(pieces.data() + done, cut));
+        done += cut;
+    }
+    ASSERT_EQ(done, orig.size());
+    uint_8 tag_pieces[16];
+    ASSERT_TRUE(fed.finish(tag_pieces));
+    EXPECT_EQ(pieces, one);
+    EXPECT_EQ(memcmp(tag_one, tag_pieces, 16), 0);
+
+    aes_gcm<256> back(key, iv);
+    ASSERT_TRUE(back.start(aad));
+    done = 0;
+    for (uint_64 cut : cuts) {
+        ASSERT_TRUE(back.decrypt(pieces.data() + done, cut));
+        done += cut;
+    }
+    uint_8 tag_back[16];
+    ASSERT_TRUE(back.finish(tag_back));
+    EXPECT_EQ(memcmp(tag_one, tag_back, 16), 0);
+    EXPECT_EQ(pieces, orig);
+}
+
+// A piece that ends mid-block closes the block stream: only finish() may follow, and the tag
+// is the one for the partial message
+TEST(gt_aaes, gcm_256_refuses_data_after_partial) {
+    uint_8 key[32], iv[12];
+    memset(key, 0x11, sizeof(key));
+    memset(iv, 0x22, sizeof(iv));
+
+    bytes orig(21, 0x5e);
+    bytes buf(orig);
+    aes_gcm<256> gcm(key, iv);
+    ASSERT_TRUE(gcm.start(nullptr, 0));
+    ASSERT_TRUE(gcm.encrypt(buf.data(), 5)); // 5 bytes close the block stream
+    EXPECT_FALSE(gcm.encrypt(buf.data() + 5, 16));
+    EXPECT_FALSE(gcm.encrypt(buf.data() + 5, 0));
+    uint_8 tag[16];
+    ASSERT_TRUE(gcm.finish(tag));
+
+    // the 5-byte message is the one fed in a single call
+    bytes five = orig.mid(0, 5);
+    bytes five_ct = buf.mid(0, 5);
+    aes_gcm<256> ref(key, iv);
+    ASSERT_TRUE(ref.start(nullptr, 0));
+    ASSERT_TRUE(ref.encrypt(five.data(), five.size()));
+    uint_8 ref_tag[16];
+    ASSERT_TRUE(ref.finish(ref_tag));
+    EXPECT_EQ(five, five_ct);
+    EXPECT_EQ(memcmp(tag, ref_tag, 16), 0);
+
+    // decrypt refuses the same way
+    aes_gcm<256> dec(key, iv);
+    ASSERT_TRUE(dec.start(nullptr, 0));
+    ASSERT_TRUE(dec.decrypt(five_ct.data(), five_ct.size()));
+    EXPECT_FALSE(dec.decrypt(orig.data() + 5, 16));
+    uint_8 dec_tag[16];
+    ASSERT_TRUE(dec.finish(dec_tag));
+    EXPECT_EQ(five_ct, orig.mid(0, 5));
+    EXPECT_EQ(memcmp(tag, dec_tag, 16), 0);
 }
 
 TEST(gt_aaes, padding_pkcs7) {

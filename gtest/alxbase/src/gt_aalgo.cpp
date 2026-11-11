@@ -1,6 +1,6 @@
 /*****************************************************************/ /**
  * \file   gt_aalgo.cpp
- * \brief  Unit tests for search algorithms (find / rfind / find_enum)
+ * \brief  Unit tests for search algorithms and PBKDF2
  *
  * \author alexis
  *
@@ -11,6 +11,8 @@
 #include "aalgo.h"
 #include "abytes.h"
 #include <gtest/gtest.h>
+#include <set>
+#include <vector>
 
 static const char* kTestData = "01234567898765432100123456789876543210";
 static const alx::uint_64 kTestLen = 38;
@@ -189,4 +191,43 @@ TEST(gt_aalgo, bytes_rfind) {
     EXPECT_EQ(b.rfind("0", 1), 37U);
     EXPECT_EQ(b.rfind("0", 1, 17), 0U);
     EXPECT_EQ(b.rfind("210", 3, alx::uint_64_npos), 35U);
+}
+
+TEST(gt_aalgo, rand_distinct) {
+    EXPECT_NE(alx::rand(), alx::rand());
+}
+
+TEST(gt_aalgo, rand_no_repeats) {
+    std::set<alx::uint_64> seen;
+    for (int i = 0; i < 256; ++i) seen.insert(alx::rand());
+    EXPECT_EQ(256U, seen.size());
+}
+
+// PBKDF2-HMAC-SHA256 (RFC 8018); the published password/salt rows, c = 1, 2 and 4096
+static std::string pbkdf2_hex(const std::string& _pswd, const std::string& _salt, alx::uint_32 _iterations, alx::uint_32 _dklen = 32) {
+    if (0 == _iterations || 0 == _dklen) return std::string();
+    const alx::bytes pswd(_pswd), salt(_salt);
+    std::vector<alx::uint_8> out(_dklen);
+    alx::pbkdf2_hmac_sha256(pswd.data(), pswd.size(), salt.data(), salt.size(), _iterations, out.data(), _dklen);
+    return alx::bytes(out.data(), out.size()).to_hex();
+}
+
+TEST(gt_aalgo, pbkdf2_known_answers) {
+    EXPECT_EQ(pbkdf2_hex("password", "salt", 1), "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b");
+    EXPECT_EQ(pbkdf2_hex("password", "salt", 2), "ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43");
+    EXPECT_EQ(pbkdf2_hex("password", "salt", 4096), "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a");
+    EXPECT_EQ(pbkdf2_hex("passwordPASSWORDpassword", "saltSALTsaltSALTsaltSALTsaltSALTsalt", 4096, 40),
+              "348c89dbcbd32b2f32d814b8116e84cf2b17347ebc1800181c4e2a1fb8dd53e1c635518c7dac47e9");
+}
+
+TEST(gt_aalgo, pbkdf2_short_and_long_output) {
+    EXPECT_EQ(pbkdf2_hex("password", "salt", 2, 16), "ae4d0c95af6b46d32d0adff928f06dd0");
+    EXPECT_EQ(pbkdf2_hex("password", "salt", 2, 64),
+              "ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43830651afcb5c862f0b249bd031f7a67520d136470f5ec271ece91c07773253d9");
+    EXPECT_EQ(pbkdf2_hex("", "", 1), "f7ce0b653d2d72a4108cf5abe912ffdd777616dbbb27a70e8204f3ae2d0f6fad");
+}
+
+TEST(gt_aalgo, pbkdf2_zero_parameters) {
+    EXPECT_TRUE(pbkdf2_hex("password", "salt", 0).empty());
+    EXPECT_TRUE(pbkdf2_hex("password", "salt", 1, 0).empty());
 }

@@ -105,6 +105,19 @@ ref.is_shared();           // count > 1
 
 > **Not implemented yet**: `aobject.h` ships declarations only, there is no implementation file for it in the repository (the `.cmake` list does not carry one), and instantiating it fails to link. For now it is only reserved in the design.
 
+### 1.8 PBKDF2 (`aalgo.h`)
+
+PBKDF2-HMAC-SHA256 (RFC 8018) derives a key from a password into a caller-owned buffer:
+
+```cpp
+alx::bytes pswd_buf(pswd), salt_buf(salt);
+alx::uint_8 key[32];
+alx::pbkdf2_hmac_sha256(pswd_buf.data(), pswd_buf.size(), salt_buf.data(), salt_buf.size(),
+                        4194304, key, sizeof(key));
+```
+
+`_iterations` counts the rounds per block; the key lands in `_out`, `_dklen` bytes of it. Nothing is written when either count is 0 or `_out` is null. The offline cost of a guess is iterations × the password's entropy -- the function adds none of its own, so a weak password stays weak. The published password/salt rows are pinned in `gtest/alxbase/src/gt_aalgo.cpp`.
+
 ---
 
 ## 2. `bytes` / `bytes_view` -- byte buffers (`abytes.h`)
@@ -669,6 +682,7 @@ gcm.finish(tag);          // a 16-byte authentication tag; finish resets on its 
 
 `aes_gcm` inherits `protected` -- it exposes only `encrypt` / `decrypt` / `start` / `finish` / `reset`.
 
+
 ---
 
 ## 12. Digest and checksum (`averify.h`)
@@ -694,6 +708,24 @@ The two exits have different jobs, and each has a reason to exist:
 The two describe one digest, and the conversion between them is pinned by `bytedigest_matches_hexdigest_word_order` (22 algorithms checked one by one against the published vectors, both exits verified).
 
 Built-in types: `NO_CHECK`, `CRC_32`, `CRC_32C`, `SHA_1`, `SHA_256` (created by enum or by name).
+
+### 12.1 HMAC (the keyed part of `averify.h`)
+
+HMAC is a `verify` type that also takes a key: `update()` / `hexdigest()` / `bytedigest()` / `hardcal()` / `clear()` keep their meaning, and `init()` is the one addition.
+
+```cpp
+alx::hmac* mac = alx::hmac::create(alx::hmac::SHA_256);   // or create("hmac_sha_256")
+mac->init("key");                                         // once per key; init() again to change it
+mac->update(chunk1);  mac->update(chunk2);
+std::string hex = mac->hexdigest();                       // the standard 32-byte MAC as 64 hex chars
+mac->clear();                                             // ready for the next message, key unchanged
+delete mac;
+```
+
+- The two exits are verify's, unchanged: `hexdigest()` is the standard big-endian octet string (the RFC 4231 vectors pin it), `bytedigest()` is the word dump in machine order.
+- Keys longer than the hash's 64-byte block are hashed down to 32 bytes first, as RFC 2104 prescribes; an empty key is a key like any other.
+- The model is `hmac_sha_256`; `hmac::list()` gives the registered names.
+- The RFC 4231 vectors are pinned in `gtest/alxbase/src/gt_averify.cpp`.
 
 ---
 

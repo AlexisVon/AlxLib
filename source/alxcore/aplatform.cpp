@@ -14,6 +14,13 @@
 #include <cstdlib>
 #include <fcntl.h>
 
+#ifdef _WIN32
+#    include <bcrypt.h>
+#    pragma comment(lib, "bcrypt.lib")
+#elif defined(__linux__)
+#    include <sys/random.h>
+#endif
+
 using namespace std;
 using namespace alx;
 
@@ -469,6 +476,31 @@ void alx::high_precision_sleep(uint_64 _ms) {
     req.tv_sec = _ms / 1000;
     req.tv_nsec = (_ms % 1000) * 1000000;
     while (nanosleep(&req, &rem) == -1 && errno == EINTR) req = rem;
+#endif
+}
+
+uint_64 alx::sys_rand() {
+#ifdef _WIN32
+    uint_64 value{0};
+    return BCRYPT_SUCCESS(BCryptGenRandom(nullptr, (PUCHAR) &value, (ULONG) sizeof(value),
+                                          BCRYPT_USE_SYSTEM_PREFERRED_RNG))
+               ? value
+               : 0;
+#else
+    uint_64 value{0};
+#    if defined(__linux__)
+    for (;;) {
+        const ssize_t got = getrandom(&value, sizeof(value), 0);
+        if ((ssize_t) sizeof(value) == got) return value;
+        if (got < 0 && EINTR == errno) continue;
+        break;
+    }
+#    endif
+    const int fd = ::open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    const ssize_t got = ::read(fd, &value, sizeof(value));
+    ::close(fd);
+    return (ssize_t) sizeof(value) == got ? value : 0;
 #endif
 }
 

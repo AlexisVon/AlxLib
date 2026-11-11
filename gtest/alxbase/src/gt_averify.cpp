@@ -9,10 +9,14 @@
  *********************************************************************/
 
 #include "averify.h"
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <gtest/gtest.h>
+#include <iomanip>
 #include <memory>
+#include <sstream>
 
 using namespace alx;
 
@@ -278,4 +282,88 @@ TEST(gt_averify, large_input) {
         auto r = verify::exec(verify::CRC_32, (const uint_8*) msg.data(), msg.size());
         EXPECT_FALSE(r.empty());
     }
+}
+
+// HMAC (the keyed part of averify.h); RFC 4231 sections 4.2 to 4.8 are the public vectors
+static std::string hmac_hex(const std::string& _key, const std::string& _msg) {
+    std::unique_ptr<hmac> mac(hmac::create(hmac::SHA_256));
+    mac->init(_key);
+    mac->update(_msg);
+    return mac->hexdigest();
+}
+
+TEST(gt_averify, hmac_rfc4231) {
+    EXPECT_EQ(hmac_hex(std::string(20, '\x0b'), "Hi There"), "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7");
+    EXPECT_EQ(hmac_hex("Jefe", "what do ya want for nothing?"), "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843");
+    EXPECT_EQ(hmac_hex(std::string(20, '\xaa'), std::string(50, '\xdd')), "773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe");
+    EXPECT_EQ(hmac_hex(std::string("\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19", 25), std::string(50, '\xcd')),
+              "82558a389a443c0ea4cc819899f2083a85f0faa3e578f8077a2e3ff46729665b");
+    EXPECT_EQ(hmac_hex(std::string(20, '\x0c'), "Test With Truncation"), "a3b6167473100ee06e0c796c2955552bfa6f7c0a6a8aef8b93f860aab0cd20c5");
+    EXPECT_EQ(hmac_hex(std::string(131, '\xaa'), "Test Using Larger Than Block-Size Key - Hash Key First"),
+              "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54");
+    EXPECT_EQ(hmac_hex(std::string(131, '\xaa'),
+                       "This is a test using a larger than block-size key and a larger than block-size data. The key needs to be hashed before being used by the HMAC "
+                       "algorithm."),
+              "9b09ffa71b942fcb27635fbcd5b0e944bfdc63644f0713938a7f51535c3a35e2");
+}
+
+TEST(gt_averify, hmac_empty_key_and_message) {
+    EXPECT_EQ(hmac_hex("", ""), "b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad");
+    EXPECT_EQ(hmac_hex("key", ""), "5d5d139563c95b5967b9bd9a8c9b233a9dedb45072794cd232dc1b74832607d0");
+}
+
+TEST(gt_averify, hmac_incremental_equals_oneshot) {
+    const std::string msg = "the quick brown fox jumps over the lazy dog, twice over";
+    const std::string one_shot = hmac_hex("key", msg);
+
+    std::unique_ptr<hmac> mac(hmac::create(hmac::SHA_256));
+    mac->init("key");
+    for (size_t pos = 0; pos < msg.size(); pos += 7) mac->update(msg.substr(pos, 7));
+    EXPECT_EQ(mac->hexdigest(), one_shot);
+}
+
+TEST(gt_averify, hmac_key_survives_clear) {
+    std::unique_ptr<hmac> mac(hmac::create(hmac::SHA_256));
+    mac->init("key");
+    mac->update("first message");
+    EXPECT_EQ(mac->hexdigest(), hmac_hex("key", "first message"));
+
+    mac->clear();
+    mac->update("second message");
+    EXPECT_EQ(mac->hexdigest(), hmac_hex("key", "second message"));
+
+    mac->init("another key");
+    mac->update("first message");
+    EXPECT_EQ(mac->hexdigest(), hmac_hex("another key", "first message"));
+}
+
+// bytedigest() is verify's word dump: the same MAC as hexdigest(), words in machine order
+TEST(gt_averify, hmac_bytedigest_is_word_dump) {
+    std::unique_ptr<hmac> mac(hmac::create(hmac::SHA_256));
+    mac->init("key");
+    mac->update("abc");
+    bytes raw = mac->bytedigest();
+    ASSERT_EQ(raw.size(), 32U);
+
+    std::stringstream ss;
+    for (int i = 0; i < 8; ++i) {
+        uint_32 word;
+        memcpy(&word, raw.data() + i * sizeof(word), sizeof(word));
+        ss << std::hex << std::setfill('0') << std::setw(8) << word;
+    }
+    EXPECT_EQ(ss.str(), hmac_hex("key", "abc"));
+}
+
+TEST(gt_averify, hmac_factory_and_models) {
+    const std::vector<std::string> names = hmac::list();
+    EXPECT_NE(std::find(names.begin(), names.end(), "hmac_sha_256"), names.end());
+
+    std::unique_ptr<hmac> by_name(hmac::create("hmac_sha_256"));
+    ASSERT_NE(by_name, nullptr);
+    by_name->init("Jefe");
+    by_name->update("what do ya want for nothing?");
+    EXPECT_EQ(by_name->hexdigest(), "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843");
+
+    EXPECT_EQ(hmac::create(hmac::NO_CHECK), nullptr);
+    EXPECT_EQ(hmac::create("sha_256"), nullptr);
 }

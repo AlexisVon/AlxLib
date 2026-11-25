@@ -2479,12 +2479,12 @@ namespace alx {
 
         /// Allocate a fresh table of _cap slots and replay every entry into it
         void rehash(size_t _cap) {
-            uint_8* tags = new uint_8[_cap]();
-            value_type* slots = nullptr;
+            uint_8* ptags = new uint_8[_cap]();
+            value_type* pslots = nullptr;
             try {
-                slots = new value_type[_cap];
+                pslots = new value_type[_cap];
             } catch (...) {
-                delete[] tags;
+                delete[] ptags;
                 throw;
             }
             const size_t mask = _cap - 1;
@@ -2492,14 +2492,14 @@ namespace alx {
                 if (!live(m_tag[i])) continue;
                 const uint_8 t = m_tag[i];
                 size_t j = (size_t) key_hash(m_slot[i].first) & mask;
-                while (SLOT_EMPTY != tags[j]) j = (j + 1) & mask;
-                slots[j] = std::move(m_slot[i]);
-                tags[j] = t;
+                while (SLOT_EMPTY != ptags[j]) j = (j + 1) & mask;
+                pslots[j] = std::move(m_slot[i]);
+                ptags[j] = t;
             }
             delete[] m_tag;
             delete[] m_slot;
-            m_tag = tags;
-            m_slot = slots;
+            m_tag = ptags;
+            m_slot = pslots;
             m_cap = _cap;
             m_tomb = 0;
         }

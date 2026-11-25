@@ -25,16 +25,17 @@ namespace alx {
     /// Forward declaration of the JSON value defined below
     class json_value;
 
-    /// The map template a json_object keeps its entries in; iteration follows the key order
+    /// The ordered map template a json_object keeps its entries in; it owns the stored pointers
     template <typename Key, typename Value>
-    using json_base_map = std::map<Key, Value>;
+    using json_base_map = map_btree<Key, Value, true>;
 
     /**
      * \brief JSON object: an ordered map of key to json_value
      *
-     * std::map sits behind it, so entries iterate in key order and not in the order the document
+     * An ordered map sits behind it, so entries iterate in key order and not in the order the document
      * listed them: a parse and write round trip reorders the keys. The values are owned and a
-     * copy is deep; inserting a key that is already there keeps the value stored first.
+     * copy is deep; inserting a key that is already there replaces the stored value, so a
+     * duplicate key in the text keeps its last occurrence.
      */
     class ALXBASE_API json_object
         : public __varmap_impl<json_base_map, json_value> {
@@ -46,7 +47,6 @@ namespace alx {
         using __varmap_impl::end;
 
     public:
-
         /// Deep-convert to the variant-based varmap, one entry per key
         varmap to_varmap() const;
 
@@ -92,7 +92,6 @@ namespace alx {
         ~json_array();
 
     public:
-
         /// Delete every element and empty the array
         void clear();
         /// Append _value as a node of its own, leaving _value null
@@ -114,7 +113,6 @@ namespace alx {
         inline const json_value& operator[](int _index) const { return *vector::operator[](_index); }
 
     public:
-
         /// Deep-convert to the variant-based varvec, one element per entry
         varvec to_varvec() const;
 
@@ -228,7 +226,6 @@ namespace alx {
         json_value(const bytes&& _v) : __variant_impl(_v.to_base64()) {}
 
     public:
-
         /// Mutable read of the stored long long; a mismatch returns _def by reference to write into
         long long& to_intg(long long& _def, bool* _ok = nullptr);
 
@@ -248,7 +245,6 @@ namespace alx {
         json_object& to_object(json_object& _def, bool* _ok = nullptr);
 
     public:
-
         /// Read of the stored long long; a mismatch gives _def, by value
         long long to_intg(const long long& _def = 0, bool* _ok = nullptr) const;
 
@@ -325,7 +321,6 @@ namespace alx {
      */
     class ALXBASE_API json_doc {
     public:
-
         /**
          * \brief Write a json_object as JSON text
          *
@@ -465,7 +460,6 @@ namespace alx {
         inline static json_value lex_json_number(const char* _data, size_t _size, size_t _index, size_t& _next);
 
     public:
-
         /**
          * \brief Escape _src as the inside of a JSON string
          *

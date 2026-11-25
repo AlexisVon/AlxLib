@@ -43,8 +43,8 @@ namespace alx {
                        const std::string& _file_path,
                        const std::list<std::string>& _search_paths,
                        size_t _max_nest,
-                       const std::unordered_map<std::string, native_func>* _ext_table,
-                       const std::unordered_map<std::string, variant>* _def_table,
+                       const map_read<std::string, native_func>* _ext_table,
+                       const map_read<std::string, variant>* _def_table,
                        compile_result* _embed_out,
                        const std::string& _embed_etype,
                        uint_64 _embed_vtype,
@@ -232,8 +232,8 @@ namespace alx {
 
         varvec parser::parse(const bytes_view& _source, const std::string& _file_path,
                              const std::list<std::string>& _search_paths,
-                             const std::unordered_map<std::string, native_func>* _ext_table,
-                             const std::unordered_map<std::string, variant>* _def_table,
+                             const map_read<std::string, native_func>* _ext_table,
+                             const map_read<std::string, variant>* _def_table,
                              const size_t _max_nest, bool _debug,
                              const alx::signal<const compile_error&>* _on_error) {
             token_list tl;
@@ -245,8 +245,8 @@ namespace alx {
 
         varvec parser::parse_body(const bytes_view& _source, const std::string& _file_path,
                                   const std::list<std::string>& _search_paths,
-                                  const std::unordered_map<std::string, native_func>* _ext_table,
-                                  const std::unordered_map<std::string, variant>* _def_table,
+                                  const map_read<std::string, native_func>* _ext_table,
+                                  const map_read<std::string, variant>* _def_table,
                                   bool _debug) {
             token_list tl;
             tl.tokenize(_source, nullptr, _file_path);
@@ -1916,13 +1916,13 @@ namespace alx {
 
                 if (!check(T_LP)) {
                     if (m_def_table) {
-                        auto it = m_def_table->find(func_name);
-                        if (it != m_def_table->end()) {
+                        const variant* def = m_def_table->peek(func_name);
+                        if (def) {
                             varvec node;
-                            node.push_back(it->second);
+                            node.push_back(*def);
                             return node;
                         }
-                        if (m_ext_table && m_ext_table->find(func_name) != m_ext_table->end()) {
+                        if (m_ext_table && m_ext_table->peek(func_name)) {
                             error("extension function cannot be read as value: $" + func_name);
                             synchronize();
                             return varvec();
@@ -1939,7 +1939,7 @@ namespace alx {
                     return node;
                 }
 
-                if (m_ext_table && m_ext_table->find(func_name) == m_ext_table->end()) {
+                if (m_ext_table && !m_ext_table->peek(func_name)) {
                     error("undefined extension function: $" + func_name);
                     synchronize();
                     return varvec();

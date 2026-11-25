@@ -32,6 +32,7 @@ ostream_file::~ostream_file() {
 }
 
 bool ostream_file::append(const void* _ptr, uint_64 _size) {
+    if (0 == _size) return true;
     bool ret = true;
     const uint_64 new_size = dat_ofst_ + _size;
     if (new_size > buf_size_) {

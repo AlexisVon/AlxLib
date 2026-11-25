@@ -106,6 +106,7 @@
       <AdditionalIncludeDirectories>$(SolutionDir)..\..\3rdpty\openssl\include-msvc;$(SolutionDir)..\..\3rdpty\openssl\include;$(SolutionDir)..\..\include\alxbase;$(SolutionDir)..\..\include\alxcore;$(SolutionDir)..\..\include\alxcomm;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DisableSpecificWarnings>4251;4819</DisableSpecificWarnings>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>

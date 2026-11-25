@@ -269,7 +269,7 @@ namespace alx {
 
             bool set_extend(const std::string& _name, native_func _handler) override {
                 if (alx::script::is_reserved_name(_name)) return false;
-                if (m_define.find(_name) != m_define.end()) return false;
+                if (m_define.peek(_name)) return false;
                 m_extend[_name] = _handler;
                 return true;
             }
@@ -277,16 +277,16 @@ namespace alx {
                 m_extend.erase(_name);
             }
             native_func get_extend(const std::string& _name) const override {
-                auto it = m_extend.find(_name);
-                return it != m_extend.end() ? it->second : nullptr;
+                const native_func* handler = m_extend.peek(_name);
+                return handler ? *handler : nullptr;
             }
             bool fid_extend(const std::string& _name) const override {
-                return m_extend.find(_name) != m_extend.end();
+                return nullptr != m_extend.peek(_name);
             }
 
             bool set_define(const std::string& _name, const variant& _value) override {
                 if (alx::script::is_reserved_name(_name)) return false;
-                if (m_extend.find(_name) != m_extend.end()) return false;
+                if (m_extend.peek(_name)) return false;
                 m_define[_name] = _value;
                 return true;
             }
@@ -294,11 +294,11 @@ namespace alx {
                 m_define.erase(_name);
             }
             variant get_define(const std::string& _name) const override {
-                auto it = m_define.find(_name);
-                return it != m_define.end() ? it->second : variant();
+                const variant* value = m_define.peek(_name);
+                return value ? *value : variant();
             }
             bool fid_define(const std::string& _name) const override {
-                return m_define.find(_name) != m_define.end();
+                return nullptr != m_define.peek(_name);
             }
 
             const engine_config& config() const override { return m_cfg; }
@@ -386,8 +386,8 @@ namespace alx {
             walker m_w;
             varmap m_compiled_vm;
 
-            std::unordered_map<std::string, native_func> m_extend;
-            std::unordered_map<std::string, variant> m_define;
+            map_read<std::string, native_func> m_extend;
+            map_read<std::string, variant> m_define;
 
             std::atomic<bool> m_running{false};
 

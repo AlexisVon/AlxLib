@@ -32,6 +32,9 @@
     <ClInclude Include="..\..\include\alxbase\avarsolid.h" />
     <ClInclude Include="..\..\include\alxbase\averify.h" />
     <ClInclude Include="..\..\include\alxbase\axml.h" />
+    <ClInclude Include="..\..\include\alxbase\ahash.h" />
+    <ClInclude Include="..\..\include\alxbase\amap.h" />
+    <ClInclude Include="..\..\include\alxbase\amap_std.h" />
     <ClInclude Include="resource.h" />
   </ItemGroup>
   <ItemGroup>
@@ -46,6 +49,7 @@
     <ClCompile Include="..\..\source\alxbase\avarsolid.cpp" />
     <ClCompile Include="..\..\source\alxbase\averify.cpp" />
     <ClCompile Include="..\..\source\alxbase\axml.cpp" />
+    <ClCompile Include="..\..\source\alxbase\ahash.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="AlxBase.rc" />
@@ -135,6 +139,7 @@
       <AdditionalIncludeDirectories>$(SolutionDir)..\..\include\alxbase\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DisableSpecificWarnings>4251;4819</DisableSpecificWarnings>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>

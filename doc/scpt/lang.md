@@ -963,8 +963,8 @@ def fib_tail(n, a, b) {
 Constraints:
 - mutual-recursion TCO is not supported
 - a tail call in a loop body is optimised as well: `return f(args)` inside `while`/`for` emits a tail-call node, frame reuse targets the function frame (nested block frames do not interfere), and the return exits the loop
-- when the tail call sits inside a nested statement (`if`/`while` branch): the **function frame** is reused, not the top frame (it once bound to the top frame and looped forever)
-- when the function name is locally shadowed (`var f` / a parameter `f`) it is not a self tail call: `return f(args)` resolves through the current binding — if it binds to something callable it is called, if not the error is `NameError` (the same as a statement-form `f(args)`). It once ignored the shadowing, re-entered the function body in place, and became a silent infinite loop
+- when the tail call sits inside a nested statement (`if`/`while` branch): the **function frame** is reused, not the top frame
+- when the function name is locally shadowed (`var f` / a parameter `f`) it is not a self tail call: `return f(args)` resolves through the current binding — if it binds to something callable it is called, if not the error is `NameError` (the same as a statement-form `f(args)`)
 
 ### 9.2.2 Argument expansion `expr[]`
 
@@ -1043,7 +1043,7 @@ trap(cond_expr, args_expr);  // two arguments: a falsy cond_expr skips it (args_
 
 ## 9.4 yield — the service point
 
-`yield()` **is yield** — the same concept as a coroutine language's yield, with one difference: what it yields to is the **C++ layer (the host)**, not a scheduler. At the yield point the script pauses, the host gets a bounded window to run the calls it queued (`engine::yield` / an `fwrap::currying` handle, `api.md` §3.2b), and control then returns to the next statement. Before this, host code could only run after a whole `exec()`/`call()` had finished — with a yield point the script voluntarily lends out its execution for a while. It is the **only** place a delivery can run: between two `yield()` calls the script is ordinary sequential code and nothing can be inserted into it.
+`yield()` **is yield** — the same concept as a coroutine language's yield, with one difference: what it yields to is the **C++ layer (the host)**, not a scheduler. At the yield point the script pauses, the host gets a bounded window to run the calls it queued (`engine::yield` / an `fwrap::currying` handle, `api.md` §3.2b), and control then returns to the next statement. Host code can otherwise only run after a whole `exec()`/`call()` has finished — with a yield point the script voluntarily lends out its execution for a while. It is the **only** place a delivery can run: between two `yield()` calls the script is ordinary sequential code and nothing can be inserted into it.
 
 What runs in that window is **script, not arbitrary C++**: every delivery is a call to a root-scope `def`, executed exactly like a normal call. The mechanism serves the interaction in the other direction — the C++ layer's other native threads hand calls to the script's timeline: their requests are held in a queue, and they run only when the script itself yields.
 
@@ -1280,7 +1280,6 @@ Usage constraints (in embed mode violating one is a compile error):
 - **env() is forbidden** (embedding has nothing to do with env; env is a run-time mechanism)
 - **circular imports are forbidden** (A→B→A is a compile error; the same module reached by several paths inside the DAG is legal and is embedded once)
 - **importing an already compiled .axp**: its `imports`/`links` dependency lists must be empty (otherwise it is an error) — only a self-contained .axp produced by an embed compile can itself be embedded
-- an **old .axc** whose module top level calls env()/link cannot be embed-compiled and has to be reworked first
 
 ```js
 // project: main.axc + mods/a.axc + mods/b.axc (a imports b)
@@ -1324,7 +1323,7 @@ link "mylib" as mylib;     // dlopen → dlsym("alexis_script_load"), the engine
 | `base.so` | **mt**: `abs` `sqrt` `pow` `min` `max` `ceil` `floor` `round` `sin` `cos` `tan` `log` `log2` `log10` `exp` `pi` `e`<br>**ex**: `find` `keys` `values` `has` `size` (read-only); `insert` `remove` `sort` `reverse` `merge` (modify in place, arguments are passed as views)<br>**st**: `trim` `upper` `lower` `replace` `startswith` `endswith` `repeat` `split` `join`<br>**sys**: `exec` `sleep`<br>**fs**: `mkdir` `rmfile` `rmdir` `mvfile` (static); `open(name, path, mode)` `info(name, path)` (factories, they create an area instance) |
 |  `test_store.so` | `set` `get` `has` `del` `read_parent` `call_script` `raise_error` `throw_native` `write_arg` (writable view) — area: `sub.echo()` |
 
-> **Merge principle**: pure-function modules (math, algo) can be merged into a single .so. A stateful module can be mixed into the same .so through the area object-binding pattern (`wrap<T>/unwrap<T>`) — the C++ object's lifetime is managed by `anyptr`, so a separate .so is no longer needed.
+> **Merge principle**: pure-function modules (math, algo) can be merged into a single .so. A stateful module can be mixed into the same .so through the area object-binding pattern (`wrap<T>/unwrap<T>`) — the C++ object's lifetime is managed by `anyptr`, so a separate .so is not needed.
 
 ### 12.2.1 Sub-scope (area)
 
@@ -1797,7 +1796,7 @@ Scpt -c --embed f.axc       # self-contained compile (§11.5): link/env are erro
 The extension mechanism gives scripts superset capabilities of the engine platform. The base engine is **zero extensions** — any `$xxx` call is a compile error in the normal compile path (§2.1). The host registers extension functions and predefined constants as needed through `engine::set_extend()` and `engine::set_define()`.
 
 Two motivations:
-1. **System/IO interaction**: script functions cannot do file reads and writes, command execution and so on, which until now all depended on `link "base"`. Extension functions lift that class of capability to engine-level builtins, with no link needed.
+1. **System/IO interaction**: script functions cannot do file reads and writes, command execution and so on — in a base engine all of that depends on `link "base"`. Extension functions lift that class of capability to engine-level builtins, with no link needed.
 2. **Compiler-specific extensions**: capabilities specific to the script language itself (metaprogramming, compile-time tools, debugging interfaces and so on) are not suited to being exposed under an ordinary function name, and the `$` prefix namespace gives them a clear semantic boundary.
 
 ### 14.2 Syntax

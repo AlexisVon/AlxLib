@@ -124,6 +124,7 @@
       <AdditionalIncludeDirectories>$(SolutionDir)..\..\include\alxbase;$(SolutionDir)..\..\include\alxcore;$(SolutionDir)..\..\3rdpty\lz4\include;$(SolutionDir)..\..\3rdpty\zstd\include;$(SolutionDir)..\..\3rdpty\zlib\include;$(SolutionDir)..\..\3rdpty\sqlite3\include;$(SolutionDir)..\..\3rdpty\libjpeg-turbo64\include;$(SolutionDir)..\..\3rdpty\pcre2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DisableSpecificWarnings>4251;4819</DisableSpecificWarnings>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>

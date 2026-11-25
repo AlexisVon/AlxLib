@@ -13,6 +13,7 @@
 #include "ascript.h"
 #include "ascript_compile.h"
 #include "ascript_lex.h"
+#include "amap.h"
 #include "avariant.h"
 #include <functional>
 #include <list>
@@ -35,8 +36,8 @@ namespace alx {
                    const std::string& _file_path = std::string(),
                    const std::list<std::string>& _search_paths = {},
                    size_t _max_nest = 1024,
-                   const std::unordered_map<std::string, native_func>* _ext_table = nullptr,
-                   const std::unordered_map<std::string, variant>* _def_table = nullptr,
+                   const map_read<std::string, native_func>* _ext_table = nullptr,
+                   const map_read<std::string, variant>* _def_table = nullptr,
                    compile_result* _embed_out = nullptr,
                    const std::string& _embed_etype = std::string(),
                    uint_64 _embed_vtype = 0,
@@ -51,16 +52,16 @@ namespace alx {
 
             static varvec parse(const bytes_view& _source, const std::string& _file_path = std::string(),
                                 const std::list<std::string>& _search_paths = {},
-                                const std::unordered_map<std::string, native_func>* _ext_table = nullptr,
-                                const std::unordered_map<std::string, variant>* _def_table = nullptr,
+                                const map_read<std::string, native_func>* _ext_table = nullptr,
+                                const map_read<std::string, variant>* _def_table = nullptr,
                                 size_t _max_nest = 1024,
                                 bool _debug = false,
                                 const alx::signal<const compile_error&>* _on_error = nullptr);
 
             static varvec parse_body(const bytes_view& _source, const std::string& _file_path = std::string(),
                                      const std::list<std::string>& _search_paths = {},
-                                     const std::unordered_map<std::string, native_func>* _ext_table = nullptr,
-                                     const std::unordered_map<std::string, variant>* _def_table = nullptr,
+                                     const map_read<std::string, native_func>* _ext_table = nullptr,
+                                     const map_read<std::string, variant>* _def_table = nullptr,
                                      bool _debug = false);
 
             bool has_error() const { return m_has_error; }
@@ -83,8 +84,8 @@ namespace alx {
 
             // Enclosing def names; parse_return_stmt turns "return <this def>(...)" into O_TCALL (TCO).
             std::vector<std::string> m_func_stack;
-            const std::unordered_map<std::string, native_func>* m_ext_table = nullptr;
-            const std::unordered_map<std::string, variant>* m_def_table = nullptr;
+            const map_read<std::string, native_func>* m_ext_table = nullptr;
+            const map_read<std::string, variant>* m_def_table = nullptr;
             compile_result* m_embed_out = nullptr;
             // Circular-import chain: null on the root parser, shared by the nested parsers it spawns.
             std::vector<std::string>* m_embed_stack = nullptr;

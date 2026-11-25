@@ -97,7 +97,7 @@ alx::script::engine::result call(const std::string& _name, varvec&& _args);   //
 
 Calls the `def` of that name in the **root scope** (no module path is resolved), passes the arguments as values, and returns the same shape as `exec`. The rvalue overload takes the arguments over only once the name resolves to a def — both refusal paths (`function not found`, `not a def function`) leave the caller's vector untouched.
 
-Unlike `exec()`, `call()` has **no result gate** — a value holding an object handle comes back whole: the unrestricted channel for complex C++ & script work (dynamic object construction and the like). Its contract flips: such a value references the engine's world and must be dropped before the engine dies — and before an explicit `reset()`, which rebuilds the world the handle's instance lives in (a failed run no longer drops it). The same holds for handles read back through `load()`, whose pointer is additionally invalidated by any root-variable addition and by any reset.
+Unlike `exec()`, `call()` has **no result gate** — a value holding an object handle comes back whole: the unrestricted channel for complex C++ & script work (dynamic object construction and the like). Its contract flips: such a value references the engine's world and must be dropped before the engine dies — and before an explicit `reset()`, which rebuilds the world the handle's instance lives in (a failed run does not drop it). The same holds for handles read back through `load()`, whose pointer is additionally invalidated by any root-variable addition and by any reset.
 
 ### 3.2b Delivery into a run — `engine::yield`
 
@@ -111,7 +111,7 @@ std::future<alx::script::result> yield(const std::string& _name, varvec&& _args,
 void set_yield_limit(size_t _n);   // writes engine_config::yield_limit
 ```
 
-Queues a call to run at the script's next `yield()` (`lang.md` §9.4) — `call()` serialized onto the running timeline. Before this interface, host code could only call into a script between runs; a delivery lets it run *inside* one, in the window the script itself opens. What runs there is **script**: the delivery names a root-scope def and the engine calls it like any other def — no arbitrary C++ is injected. The point is the reverse channel — the C++ layer's native threads hand calls to the script's timeline, the requests wait in the queue, and they execute only when the script yields; a script in a `yield(ms)` window is not blocking them, it is servicing them as they arrive. Callable from any thread; the thread that runs the script must never block on a future it queued itself (its synchronous tool is `fwrap::call`).
+Queues a call to run at the script's next `yield()` (`lang.md` §9.4) — `call()` serialized onto the running timeline. Host code can otherwise only call into a script between runs; a delivery lets it run *inside* one, in the window the script itself opens. What runs there is **script**: the delivery names a root-scope def and the engine calls it like any other def — no arbitrary C++ is injected. The point is the reverse channel — the C++ layer's native threads hand calls to the script's timeline, the requests wait in the queue, and they execute only when the script yields; a script in a `yield(ms)` window is not blocking them, it is servicing them as they arrive. Callable from any thread; the thread that runs the script must never block on a future it queued itself (its synchronous tool is `fwrap::call`).
 
 - **accepted only while a run is in progress and the queue is below `yield_limit`**; otherwise the future comes back already fulfilled with `YieldError` (`no main fiber`, `yield full`) and nothing was moved — the rvalue overload hands the arguments over only on acceptance
 - the name is resolved when the delivery is serviced, in the root scope like `call()`: a delivery may name a def defined later, and a miss comes back as `NameError` inside the future
@@ -343,7 +343,7 @@ void set_debug_enable(bool _on);      // false by default; after set_interrupt i
 - When an uncaught error is brought out through `on_cerr`, each trace line is `[file] func:row:col` (the suffix is omitted when the row is unknown); the per-layer positions are what `wkdt_fpos()` returns.
 - `row = 0` means **unknown** (and is normal): that is what an AST without markers gives (an `.axp` someone else compiled, or one from the shared cache).
 - The granularity is the **statement**: no marker goes inside an expression, and the row at a call site is **the start of the statement the call sits in** (a stable anchor); a one-line `if (c) f();` is fully accurate, a multi-line bare body (the single-statement body of an `if`/`while`) falls back to the `if` line — the row of the carrying statement **itself** and of the **condition evaluation** is still accurate.
-- With it off the behaviour is exactly the old build's with no position markers (instruction budget included: a marker consumes no checkpoint).
+- With it off the behaviour is exactly that of a build with no position markers (instruction budget included: a marker consumes no checkpoint).
 
 ---
 
@@ -507,5 +507,5 @@ A script-side `throw`, a host-side `raise` and an engine-internal failure all la
 - A script-side `try/catch` catches only what is catchable; the engine's `InterruptedError` (a hook returning `false` in §8, or `set_interrupt()`), **passes through the script's catch**. A native that raises `InterruptedError` itself through `fwrap::raise` without the interrupt flag is just an ordinary failed call — that one is catchable.
 - For a string, use `error_type_name(type)`.
 - A compile error goes through `compile_error` instead (`msg` / `loc.row` / `loc.col` / `loc.index`), reported through `on_cmpl`.
-- An **uncaught error** is reported through `on_cerr`: the first line is `Uncaught: [type] msg`, and after it the folded call stack (one `[file] func:row:col` per line, a recursion folded into `(Nx)`). The row and col come from the position markers of §8.2 — **with the switch off or an AST without markers there is no row/col** (the trace keeps its old shape).
+- An **uncaught error** is reported through `on_cerr`: the first line is `Uncaught: [type] msg`, and after it the folded call stack (one `[file] func:row:col` per line, a recursion folded into `(Nx)`). The row and col come from the position markers of §8.2 — **with the switch off or an AST without markers there is no row/col** (the rest of the trace is unchanged).
 - **A module init failure**: `info` = `in module <path>: <type>: <msg>` plus that module's **internal** folded trace (its row numbers are readable).

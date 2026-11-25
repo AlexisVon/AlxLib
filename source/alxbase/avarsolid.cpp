@@ -9,6 +9,8 @@
  *********************************************************************/
 
 #include "avarsolid.h"
+#include "amap.h"
+#include "amap_std.h"
 #include "aserial.h"
 #include <vector>
 
@@ -102,7 +104,7 @@ namespace alx {
         }
         BIT64 reader_variant_size(
             uint_64 _nsize, const variant* _var,
-            std::unordered_map<const variant*, BIT64>& _dsize_map) {
+            map_read<const variant*, BIT64>& _dsize_map) {
 #define INSTALL_BASE_TYPE(VTYPE, RTYPE) \
     case variant::id<VTYPE>(): data_size = RTYPE::sdata_size(_var->to<VTYPE>()); break;
 #define INSTALL_TYPE(VTYPE, RTYPE)                          \
@@ -300,7 +302,7 @@ namespace alx {
         }
         bool reader_variant_read(
             ostream& _ostm, const char* _name, const uint_64 _nsize, const variant* _var,
-            const std::unordered_map<const variant*, BIT64>& _dsize_map) {
+            const map_read<const variant*, BIT64>& _dsize_map) {
 #define INSTALL_BASE_TYPE(VTYPE, RTYPE)                            \
     case variant::id<VTYPE>():                                     \
         return RTYPE::swrite_head(_ostm, _name, _nsize, _dsize) && \
@@ -320,7 +322,7 @@ namespace alx {
     }
 
             // the size pass cached this node's payload: an append-only stream cannot be patched later
-            BIT64 _dsize = map_value(_dsize_map, _var);
+            const BIT64 _dsize = _dsize_map.value(_var);
             switch (_var->type()) {
                 INSTALL_TYPE(bool, s_bool);
                 INSTALL_TYPE(int_8, s_int_8);
@@ -406,13 +408,13 @@ namespace alx {
             static void deserer_var_base_bytes(const deserer_var::METADAT& _dat, variant& _rst) {
                 bytes& result = _rst.as<bytes>();
                 result.resize(_dat.size);
-                memcpy(result.data(), _dat.ptr, result.size());
+                if (result.size() > 0) memcpy(result.data(), _dat.ptr, result.size());
             }
             static void deserer_var_vec_bytes(const deserer_var::METADAT& _dat, variant& _rst) {
                 std::vector<bytes>& result = _rst.as<std::vector<bytes>>();
                 for_each_meta(_dat.ptr, _dat.ptr + _dat.size, [&](const METADAT& meta) {
                     bytes temp(meta.size);
-                    memcpy(temp.data(), meta.ptr, temp.size());
+                    if (meta.size > 0) memcpy(temp.data(), meta.ptr, temp.size());
                     result.push_back(temp);
                     return true;
                 });
@@ -421,7 +423,7 @@ namespace alx {
                 std::list<bytes>& result = _rst.as<std::list<bytes>>();
                 for_each_meta(_dat.ptr, _dat.ptr + _dat.size, [&](const METADAT& meta) {
                     bytes temp(meta.size);
-                    memcpy(temp.data(), meta.ptr, temp.size());
+                    if (meta.size > 0) memcpy(temp.data(), meta.ptr, temp.size());
                     result.push_back(temp);
                     return true;
                 });
@@ -460,7 +462,7 @@ namespace alx {
             }
             static bool init_core() {
                 static bool is_init = []() {
-                    CORE_BASE = std::unordered_map<BIT16, deserer_var::COREFUNC>{
+                    CORE_BASE = conver<map_read<BIT16, deserer_var::COREFUNC>>(std::unordered_map<BIT16, deserer_var::COREFUNC>{
                         {_bool_, &deserer_var::deserer_var_base_ordinary<bool>},
                         {_int8_, &deserer_var::deserer_var_base_ordinary<int_8>},
                         {_int16_, &deserer_var::deserer_var_base_ordinary<int_16>},
@@ -474,8 +476,8 @@ namespace alx {
                         {_real64_, &deserer_var::deserer_var_base_ordinary<real_64>},
                         {_bytes_, &deserer_var::deserer_var_base_bytes},
                         {_string_, &deserer_var::deserer_var_base_string},
-                    };
-                    CORE__VEC = std::unordered_map<BIT16, deserer_var::COREFUNC>{
+                    });
+                    CORE__VEC = conver<map_read<BIT16, deserer_var::COREFUNC>>(std::unordered_map<BIT16, deserer_var::COREFUNC>{
                         {_bool_, &deserer_var::deserer_var_vec_ordinary<bool>},
                         {_int8_, &deserer_var::deserer_var_vec_ordinary<int_8>},
                         {_int16_, &deserer_var::deserer_var_vec_ordinary<int_16>},
@@ -490,8 +492,8 @@ namespace alx {
                         {_bytes_, &deserer_var::deserer_var_vec_bytes},
                         {_string_, &deserer_var::deserer_var_vec_string},
                         {_any_, &deserer_var::deserer_var_vec_any},
-                    };
-                    CORE_LIST = std::unordered_map<BIT16, deserer_var::COREFUNC>{
+                    });
+                    CORE_LIST = conver<map_read<BIT16, deserer_var::COREFUNC>>(std::unordered_map<BIT16, deserer_var::COREFUNC>{
                         {_bool_, &deserer_var::deserer_var_list_ordinary<bool>},
                         {_int8_, &deserer_var::deserer_var_list_ordinary<int_8>},
                         {_int16_, &deserer_var::deserer_var_list_ordinary<int_16>},
@@ -506,7 +508,7 @@ namespace alx {
                         {_bytes_, &deserer_var::deserer_var_list_bytes},
                         {_string_, &deserer_var::deserer_var_list_string},
                         {_any_, &deserer_var::deserer_var_list_any},
-                    };
+                    });
                     return true;
                 }();
                 return is_init;
@@ -551,7 +553,13 @@ bool alx::varsolid::to_bytes(const varmap& _vmap, ostream& _ostm, variant** _err
 
     BIT64 dsize{0}, tsize;
     const uint_64 bsize{_ostm.total()};
-    std::unordered_map<const variant*, BIT64> dsize_map;
+    map_read<const variant*, BIT64> dsize_map;
+    // the visited-variant count is at least the root size; the headroom halves the load and skips growth.
+    // map_read reserves four slots per entry, so the cap keeps the transient table near the old bound
+    size_t hint = _vmap.size() * 2;
+    if (hint < (4u << 10)) hint = 4u << 10;
+    if (hint > (2u << 20)) hint = 2u << 20;
+    dsize_map.reserve(hint);
     for (const auto& it : _vmap) {
         tsize = reader_variant_size(it.first.size(), it.second, dsize_map);
         if (0 == tsize) RETURN_FALSE();

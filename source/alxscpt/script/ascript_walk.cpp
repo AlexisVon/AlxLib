@@ -3472,9 +3472,9 @@ namespace alx {
                     }
 
                     if (auto* area = anyptr_ex<link_area>::as(ap)) {
-                        auto ni = area->m_natives.find(func_name);
-                        if (ni != area->m_natives.end() && ni->second.is<anyptr>()) {
-                            auto* ca = anyptr_ex<call_able>::as(ni->second.to<anyptr>());
+                        variant* native = area->m_natives.peek(func_name);
+                        if (native && native->is<anyptr>()) {
+                            auto* ca = anyptr_ex<call_able>::as(native->to<anyptr>());
                             if (ca && ca->is_native()) {
                                 variant ret_slot;
                                 data_store* store = r.link_owner ? &r.link_owner->m_store : &_w.state.current->m_store;

@@ -26,7 +26,7 @@ alx::file_info info("/tmp/a.txt");
 info.is_exist();  info.is_dir();  info.is_link();  info.is_valid();
 info.path();  info.name();  info.suffix();  info.size();
 info.time_ct();  info.time_la();  info.time_lw();
-alx::file_info::conver_file_time(info.time_lw());     // → datetime (now in alxbase, see doc/base/api.md §13)
+alx::file_info::conver_file_time(info.time_lw());     // → datetime (in alxbase, see doc/base/api.md §13)
 
 info.get_parent();                                     // the containing directory's file_info
 info.get_child("*.txt");                               // entry list (wildcards accepted)
@@ -408,7 +408,7 @@ Cross-process exclusion uses a named semaphore (POSIX) / a named mutex (Windows)
 - **Destruction**: the creator goes through `destroy()`, an attacher through `close()`; a creator that already
   called `close()` explicitly stays as it is, and the name is left for the next session.
   **The lifetime of the creator object = the lifetime of the name**, so do not put it in a short-lived scope.
-- An attacher's `_size` above the block that is already there ⇒ `open()` returns `false` (the old behaviour was success, with a SIGBUS only on reaching the end).
+- An attacher's `_size` above the block that is already there ⇒ `open()` returns `false` (accepting it would SIGBUS only on reaching the end).
 - **Crash debris**: a SIGKILL does not run the destructor. A fixed-name user clears the ground at the start of a session with `destroy(); open(size, true);`.
 - Windows difference: a named kernel object has no unlink, so `destroy()` is just `close()` and the name goes
   only when the last handle closes ⇒ with the creator gone first the name is still there (on Linux it
@@ -483,7 +483,7 @@ A regex on the PCRE2 backend: **a single match has a ceiling, and the host can s
 
 The library **adds no lock and does no runtime detection**: a concurrent call is not stopped, it simply is a data race, and **the caller guarantees** this constraint. The stance matches `process_ctrl`: one instance does not run concurrently, across instances concurrency is free.
 
-**Why not copyable, and why the hook belongs to the instance**: one instance is one matcher -- the match block (which PCRE2 requires to be "one per thread"), `status_` / `last_err_` (written during a match), and the callout hook with its `ud` are all its own. Two copy semantics were tried and neither was clean: **inheriting the hook** → two matchers share one stop signal (A's "stop" aborts B's match in flight too, and the callback cannot tell whose it is); **not inheriting it** → one more invisible difference between the original and the copy. So it was settled on no copying: for parallel work, one instance per thread with its own hook. (Were same-object concurrency really wanted, the hook would have to become a per-call argument, and the object-level hook would have to go with it -- two channels amount to the ownership question left unsolved.)
+**Why not copyable, and why the hook belongs to the instance**: one instance is one matcher -- the match block (which PCRE2 requires to be "one per thread"), `status_` / `last_err_` (written during a match), and the callout hook with its `ud` are all its own. Two copy semantics were tried and neither was clean: **inheriting the hook** → two matchers share one stop signal (A's "stop" aborts B's match in flight too, and the callback cannot tell whose it is); **not inheriting it** → one more invisible difference between the original and the copy. So copying is forbidden: for parallel work, one instance per thread with its own hook. (Were same-object concurrency really wanted, the hook would have to become a per-call argument, and the object-level hook would have to go with it -- two channels amount to the ownership question left unsolved.)
 
 The check: **trustworthy input and a fixed pattern → `regex_ex`; a pattern or input that comes from outside → `regex_pcre2`**.
 

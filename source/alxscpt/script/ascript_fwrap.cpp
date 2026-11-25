@@ -152,7 +152,7 @@ namespace alx {
                 if (!area) return false;
             }
             if (area) {
-                if (area->m_natives.find(_name) != area->m_natives.end()) return false;
+                if (area->m_natives.peek(_name)) return false;
             } else {
                 area = new link_area();
                 m_store->store(_area, anyptr_ex<link_area>::make(area));

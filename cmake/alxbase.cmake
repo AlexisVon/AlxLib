@@ -6,6 +6,7 @@ set(ALXBASE_SOURCES
     ${CMAKE_SOURCE_DIR}/source/alxbase/abytes.cpp
     ${CMAKE_SOURCE_DIR}/source/alxbase/acsv.cpp
     ${CMAKE_SOURCE_DIR}/source/alxbase/adatetime.cpp
+    ${CMAKE_SOURCE_DIR}/source/alxbase/ahash.cpp
     ${CMAKE_SOURCE_DIR}/source/alxbase/ajson.cpp
     ${CMAKE_SOURCE_DIR}/source/alxbase/aregex_ex.cpp
     ${CMAKE_SOURCE_DIR}/source/alxbase/astring.cpp
@@ -29,6 +30,11 @@ if(ALXBASE_ENABLE OR ALXBASE_STATIC OR ALXLIB_STATIC)
     # SIMD support for crypto
     set_source_files_properties(${CMAKE_SOURCE_DIR}/source/alxbase/aaes.cpp PROPERTIES COMPILE_FLAGS "-maes -mpclmul -msse4.1")
     set_source_files_properties(${CMAKE_SOURCE_DIR}/source/alxbase/averify.cpp PROPERTIES COMPILE_FLAGS "-msha -msse4.1 -mcrc32")
+    if(NOT ALXLIB_AHASH_NO_HW)
+        set_source_files_properties(${CMAKE_SOURCE_DIR}/source/alxbase/ahash.cpp PROPERTIES COMPILE_FLAGS "-maes -msse4.1")
+    else()
+        set_source_files_properties(${CMAKE_SOURCE_DIR}/source/alxbase/ahash.cpp PROPERTIES COMPILE_FLAGS "-DALX_AHASH_NO_HW")
+    endif()
 endif()
 
 # Shared library

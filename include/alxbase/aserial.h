@@ -14,6 +14,7 @@
 #include "abytes.h"
 #include "astream.h"
 #include "autility.h"
+#include "amap.h"
 #include "avariant.h"
 
 #include <algorithm>
@@ -22,8 +23,7 @@
 #include <vector>
 
 namespace alx {
-    namespace ser
-    {
+    namespace ser {
         /// Unsigned 8-bit integer; the byte is the unit the format is written in
         typedef uint_8 BIT8;
         /// Unsigned 16-bit integer; both block magics are made of these
@@ -131,8 +131,7 @@ namespace alx {
                                                                                  : _void_};
     }
 
-    namespace ser
-    {
+    namespace ser {
 
         /**
          * \brief One node of a block: a type id, a name, and a payload the derived class writes
@@ -160,7 +159,6 @@ namespace alx {
             virtual ~serable() {}
 
         public:
-
             /**
              * \brief Payload size of this node, computed and cached by the derived class
              *
@@ -190,7 +188,7 @@ namespace alx {
                 _ptr += __HEAD_SIZE__;
                 m_interpret(_ptr, type);
                 _ptr += sizeof(BIT32);
-                memcpy(_ptr, name.data(), head.NAME_SIZE);
+                if (head.NAME_SIZE > 0) memcpy(_ptr, name.data(), head.NAME_SIZE);
                 _ptr += head.NAME_SIZE;
                 _ptr = extend_read(_ptr);
                 if (nullptr == _ptr) return nullptr;
@@ -277,7 +275,6 @@ namespace alx {
             }
 
         protected:
-
             /// Payload size in bytes; called by size(), which caches the answer
             virtual BIT64 extend_size() const = 0;
 
@@ -293,7 +290,6 @@ namespace alx {
             mutable BIT64 data_size{0};
 
         public:
-
             /// Node header: magic, name length and payload length packed into 8 bytes
             struct HEAD {
                 /// _META__BEGIN_
@@ -454,7 +450,6 @@ namespace alx {
             }
 
         public:
-
             /// Block header: magic and the size of the node area, packed into 8 bytes
             struct HEAD {
                 /// _BLOCK_BEGIN_
@@ -535,14 +530,13 @@ namespace alx {
             /// Handler for one node: fills _rst from the node's metadata
             typedef void (*COREFUNC)(const METADAT&, _ELEM_&);
             /// Handlers for a scalar node, keyed by the id the block carries
-            static std::unordered_map<BIT16, COREFUNC> CORE_BASE;
+            static map_read<BIT16, COREFUNC> CORE_BASE;
             /// Handlers for a vector node, keyed by the element id, not the composite one
-            static std::unordered_map<BIT16, COREFUNC> CORE__VEC;
+            static map_read<BIT16, COREFUNC> CORE__VEC;
             /// Handlers for a list node, keyed by the element id, not the composite one
-            static std::unordered_map<BIT16, COREFUNC> CORE_LIST;
+            static map_read<BIT16, COREFUNC> CORE_LIST;
 
         public:
-
             /**
              * \brief Parse a whole block into a collection
              *
@@ -741,17 +735,17 @@ namespace alx {
                 if ((_dat.type & 0X0000FFFFU) == _dat.type) {
                     if (_varmap_ == (TYPE) _dat.type) read_map(_dat, _rst);
                     else {
-                        auto it = CORE_BASE.find(_dat.type);
-                        if (it != CORE_BASE.end()) it->second(_dat, _rst);
+                        const COREFUNC* fn = CORE_BASE.peek(_dat.type);
+                        if (fn) (*fn)(_dat, _rst);
                         else _rst = _ELEM_();
                     }
                 } else if ((_dat.type & 0X0000FFFFU) == _vector_) {
-                    auto it = CORE__VEC.find(_dat.type >> 16);
-                    if (it != CORE__VEC.end()) it->second(_dat, _rst);
+                    const COREFUNC* fn = CORE__VEC.peek(_dat.type >> 16);
+                    if (fn) (*fn)(_dat, _rst);
                     else _rst = _ELEM_();
                 } else if ((_dat.type & 0X0000FFFFU) == _list_) {
-                    auto it = CORE_LIST.find(_dat.type >> 16);
-                    if (it != CORE_LIST.end()) it->second(_dat, _rst);
+                    const COREFUNC* fn = CORE_LIST.peek(_dat.type >> 16);
+                    if (fn) (*fn)(_dat, _rst);
                     else _rst = _ELEM_();
                 } else _rst = _ELEM_();
             }
@@ -769,13 +763,13 @@ namespace alx {
 
         /// Storage of deserer::CORE_BASE, one map per instantiation of the template
         template <typename _COLLECT_, typename _ELEM_>
-        std::unordered_map<BIT16, typename deserer<_COLLECT_, _ELEM_>::COREFUNC> deserer<_COLLECT_, _ELEM_>::CORE_BASE;
+        map_read<BIT16, typename deserer<_COLLECT_, _ELEM_>::COREFUNC> deserer<_COLLECT_, _ELEM_>::CORE_BASE;
         /// Storage of deserer::CORE__VEC, one map per instantiation of the template
         template <typename _COLLECT_, typename _ELEM_>
-        std::unordered_map<BIT16, typename deserer<_COLLECT_, _ELEM_>::COREFUNC> deserer<_COLLECT_, _ELEM_>::CORE__VEC;
+        map_read<BIT16, typename deserer<_COLLECT_, _ELEM_>::COREFUNC> deserer<_COLLECT_, _ELEM_>::CORE__VEC;
         /// Storage of deserer::CORE_LIST, one map per instantiation of the template
         template <typename _COLLECT_, typename _ELEM_>
-        std::unordered_map<BIT16, typename deserer<_COLLECT_, _ELEM_>::COREFUNC> deserer<_COLLECT_, _ELEM_>::CORE_LIST;
+        map_read<BIT16, typename deserer<_COLLECT_, _ELEM_>::COREFUNC> deserer<_COLLECT_, _ELEM_>::CORE_LIST;
 
         /**
          * \brief Binds a payload class to serable, with the payload's operations passed in as
@@ -898,8 +892,7 @@ namespace alx {
         };
     }
 
-    namespace ser
-    {
+    namespace ser {
 
         /// Bind a trivially copyable T as a serable payload: sizeof(T) raw bytes, host layout
         template <typename T>
@@ -953,8 +946,7 @@ namespace alx {
         typedef s_stack_only_t<real_64> s_real_64;
     }
 
-    namespace ser
-    {
+    namespace ser {
 
         /// Bind a type with data()/size() as a serable payload: those data() bytes, nothing else
         template <typename T>
@@ -965,7 +957,7 @@ namespace alx {
                 return _data.size();
             }
             static BIT8* impl_memcpy(const T& _data, BIT8* _ptr) {
-                memcpy(_ptr, _data.data(), _data.size());
+                if (_data.size() > 0) memcpy(_ptr, _data.data(), _data.size());
                 return _ptr + _data.size();
             }
             static bool impl_stream(const T& _data, ostream& _stm) {
@@ -990,8 +982,7 @@ namespace alx {
         typedef s_data_size_t<bytes> s_bytes;
     }
 
-    namespace ser
-    {
+    namespace ser {
         /// std::vector<T> as a serable payload; which of the three element kinds T is decides
         /// how the vector is written
         template <class T>
@@ -1033,7 +1024,7 @@ namespace alx {
                 }
                 /// One memcpy for the whole run
                 static BIT8* impl_memcpy(const std::vector<_T>& _data, BIT8* _ptr) {
-                    memcpy(_ptr, _data.data(), _data.size() * sizeof(_T));
+                    if (!_data.empty()) memcpy(_ptr, _data.data(), _data.size() * sizeof(_T));
                     _ptr += _data.size() * sizeof(_T);
                     return _ptr;
                 }
@@ -1158,8 +1149,7 @@ namespace alx {
         typedef s_vector<serable*> s_varvec;
     }
 
-    namespace ser
-    {
+    namespace ser {
         template <class T>
         struct __s_list;
         template <class T>
@@ -1297,8 +1287,7 @@ namespace alx {
         typedef s_list<serable*> s_varlst;
     }
 
-    namespace ser
-    {
+    namespace ser {
         /// The map a s_varmap payload is made of; ordered, so the write order is the key order
         template <typename K, typename V>
         using __s_varmap_base = std::map<K, V>;

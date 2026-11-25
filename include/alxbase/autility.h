@@ -29,6 +29,7 @@
 
 #include <functional>
 #include <future>
+#include <type_traits>
 #include <utility>
 
 #if CPP_VERSION < CPP_17_ID
@@ -95,6 +96,18 @@ namespace alx {
                                       : is_uinteger<From>  ? (is_integer<To> && sizeof(To) > sizeof(From)) || (is_uinteger<To> && sizeof(To) >= sizeof(From)) || (is_realnum<To> && sizeof(To) > sizeof(From))
                                       : is_realnum<From>   ? is_realnum<To> && sizeof(To) >= sizeof(From)
                                                            : false;
+
+    /// True when the type has both data() and size(), as bytes and the other containers do
+    template <typename T>
+    struct has_data_size {
+        template <typename U>
+        static auto test(int) -> decltype((void) std::declval<const U&>().data(),
+                                          (void) std::declval<const U&>().size(), std::true_type());
+        template <typename U>
+        static std::false_type test(...);
+
+        static constexpr bool value = decltype(test<T>(0))::value;
+    };
 
     /// The signed or unsigned integer of exactly Size bytes; any other Size is void
     template <uint_8 Size, bool Sign>
@@ -167,7 +180,7 @@ namespace alx {
 
     /// Read bit _offset of the block, counted from its start, low bit of each byte first
     inline bool bit_get(const void* _obj, uint_64 _offset) {
-        return (((const uint_8*) (_obj))[_offset >> 3] & (0X01U << (_offset & 0X07U))) != 0;
+        return (((const uint_8*) (_obj))[_offset >> 3] & (0X01U << (_offset& 0X07U))) != 0;
     }
     /// Write bit _offset of the block as bit_get() reads it; _state false clears the bit
     inline void bit_set(void* _obj, uint_64 _offset, bool _state) {
@@ -266,21 +279,6 @@ namespace alx {
     inline tid_t this_tid() {
         std::thread::id tid = std::this_thread::get_id();
         return r_interpret<tid_t>(&tid);
-    }
-
-    /**
-     * \brief FNV-1a hash of a NUL-terminated string, usable at compile time
-     *
-     * The terminator is not hashed, and _h is the running hash, so a caller may hand a previous
-     * result back in to continue over the next string as if the two had been concatenated.
-     */
-    constexpr uint_32 fnv1a_32(const char* _s, uint_32 _h = 2166136261u) {
-        return *_s ? fnv1a_32(_s + 1, (_h ^ static_cast<uint_32>(*_s)) * 16777619u) : _h;
-    }
-
-    /// The 64-bit FNV-1a: the same contract over a wider hash
-    constexpr uint_64 fnv1a_64(const char* _s, uint_64 _h = 14695981039346656037ULL) {
-        return *_s ? fnv1a_64(_s + 1, (_h ^ static_cast<uint_64>(*_s)) * 1099511628211ULL) : _h;
     }
 
     /**

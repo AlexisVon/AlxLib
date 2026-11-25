@@ -151,16 +151,15 @@ namespace alx {
                 throw script_exception{error_type::TypeError,
                                        std::string("not an area context")};
 
-            auto ni = area->m_natives.find(key);
-            if (ni != area->m_natives.end()) {
-                if (ni->second.is<anyptr>() && anyptr_ex<call_able>::as(ni->second.to<anyptr>())) {
+            if (variant* native = area->m_natives.peek(key)) {
+                if (native->is<anyptr>() && anyptr_ex<call_able>::as(native->to<anyptr>())) {
                     r.kind = TerminalKind::T_Callable;
-                    r.parent = &ni->second;
+                    r.parent = native;
                     r.parent_kind = ParentKind::Area;
                     return;
                 }
                 r.kind = TerminalKind::T_Variant;
-                r.parent = &ni->second;
+                r.parent = native;
                 r.parent_kind = ParentKind::Area;
                 return;
             }
@@ -554,9 +553,7 @@ namespace alx {
                 if (parent_kind == ParentKind::Area && parent && parent->is<anyptr>() && key.is<std::string>()) {
                     auto* area = anyptr_ex<link_area>::as(parent->to<anyptr>());
                     if (area) {
-                        auto ni = area->m_natives.find(key.to<std::string>());
-                        if (ni != area->m_natives.end())
-                            return &ni->second;
+                        if (variant* native = area->m_natives.peek(key.to<std::string>())) return native;
                     }
                     return nullptr;
                 }

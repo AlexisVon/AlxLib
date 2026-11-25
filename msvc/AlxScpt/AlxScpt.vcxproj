@@ -118,6 +118,7 @@
       <AdditionalIncludeDirectories>$(SolutionDir)..\..\include\alxbase;$(SolutionDir)..\..\include\alxcore;$(SolutionDir)..\..\include\alxscpt;$(SolutionDir)..\..\source\alxscpt;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DisableSpecificWarnings>4251;4819</DisableSpecificWarnings>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>

@@ -1,11 +1,25 @@
 /*****************************************************************/ /**
  * \file   script_bench.cpp
- * \brief  Script engine benchmark: bridge cost (script<->native) + interpreter ratios
+ * \brief  Script engine benchmark: bridge cost (script<->native), interpreter ratios, and
+ *         routing/table-scale cases that mirror how modules are actually written
+ *
+ * Cases are built at startup: the fixed set covers the bridge and the interpreter hot paths,
+ * the generated set covers the table-scale dimension -- many $extend routes, many defs in one
+ * module, many locals in one frame, many root variables. Each generated case's native side
+ * mirrors the same work (a lookup-and-call loop, an arithmetic chain, an array), so the ratio
+ * answers "how much slower is the script engine at this shape". The two variable-heavy cases
+ * keep every variable in memory (`volatile`) on the native side: a plain arithmetic chain is
+ * folded into registers or SIMD by the optimizer, and the comparison would then contain none
+ * of the reads the script actually pays for.
+ *
+ * Methodology: IQR mean over the samples (tools/bench_common.h); setup (extend registration,
+ * native tables) runs before every timing block, compile and reset are excluded. Comparing two
+ * revisions means running this same binary against each build, alternating rounds.
  *
  * \author alexis
  * Copyright (c) 2026 AlexisVon
  * SPDX-License-Identifier: MIT
- *********************************************************************/
+ ******************************************************************************/
 
 #include "ascript.h"
 #include <algorithm>
@@ -15,6 +29,7 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <functional>
 #include <string>
 #include <tuple>
 #include <unistd.h>
@@ -63,14 +78,15 @@ static double iqr_mean(std::vector<double> v) {
 }
 
 struct BenchCase {
-    const char* name;
-    const char* script;
+    std::string name;
+    std::string script;
     double (*native)();
     int_64 expected;
     bool check;
     double tol;
     double weight;
-    double weight_s;
+    /// Runs before the compile and before every timed block: extend registration, native tables
+    std::function<void()> setup;
 };
 
 static volatile int_64 N_EX = 100000;
@@ -320,22 +336,246 @@ for (var i = 0; i < 2000; ++i) {
 s;
 )";
 
-static BenchCase benches[] = {
+// ---------------------------------------------------------------- table-scale cases
 
-    {"ex_call0", S_EX_CALL0, native_ex_call0, 0, false, 0.0, 10, 0},
-    {"ex_echo", S_EX_ECHO, native_ex_echo, 99999, true, 0.0, 30, 0},
-    {"func_call", S_FUNC_CALL, native_ex_echo, 99999, true, 0.0, 15, 20},
+static volatile int_64 N_ROUTE = 100000;
+static volatile int_64 N_LOCALS = 20000;
+static volatile int_64 N_ROOTS = 10000;
 
-    {"int_loop", S_INT_LOOP, native_int_loop, 0, true, 0.0, 5, 15},
-    {"fib(28)", S_FIB, native_fib, 317811, true, 0.0, 3, 8},
-    {"fib_tail", S_FIB_TAIL, native_fib_tail, 0, false, 0.0, 2, 7},
-    {"while_count", S_WHILE_COUNT, native_while_count, 0, true, 0.0, 5, 10},
-    {"float_arith", S_FLOAT_ARITH, native_float_arith, 0, true, 1e-9, 5, 8},
-    {"vec_access", S_VEC_ACCESS, native_vec_access, 49995000, true, 0.0, 5, 7},
-    {"foreach", S_FOREACH, native_foreach, 49995000, true, 0.0, 5, 10},
-    {"map_access", S_MAP_ACCESS, native_map_access, 495000, true, 0.0, 10, 10},
-    {"string_concat", S_STRING_CONCAT, native_string_concat, 4000, true, 0.0, 5, 5},
-};
+static script::engine* s_eng = nullptr;
+static std::vector<std::string> s_ext_names;
+
+static void ext_clear() {
+    if (!s_eng) return;
+    for (const auto& n : s_ext_names) s_eng->del_extend(n);
+    s_ext_names.clear();
+}
+
+static void ext_add(const std::string& _name, script::native_func _fn) {
+    s_eng->set_extend(_name, _fn);
+    s_ext_names.push_back(_name);
+}
+
+static void ext_base() {
+    ext_clear();
+    ext_add("ex_noop", ext_noop);
+    ext_add("ex_echo", ext_echo);
+}
+
+static std::string gen_ext_script(size_t _n) {
+    // registers xN_0..xN_(n-1) in setup; the call routes to the last one
+    return "var t = 0;\nfor (var i = 0; i < " + std::to_string((int_64) N_ROUTE) + "; ++i) { t = t + $x" +
+           std::to_string(_n) + "_" + std::to_string(_n - 1) + "(i); }\nt;";
+}
+
+static std::string gen_def_script(size_t _n) {
+    std::string s;
+    for (size_t i = 0; i < _n; ++i) {
+        s += "def f" + std::to_string(i) + "(x) { return x; }\n";
+    }
+    s += "var t = 0;\nfor (var i = 0; i < " + std::to_string((int_64) N_ROUTE) + "; ++i) { t = t + f" +
+         std::to_string(_n - 1) + "(i); }\nt;";
+    return s;
+}
+
+static std::string gen_roots_script(size_t _n) {
+    std::string s;
+    for (size_t i = 0; i < _n; ++i) s += "var v" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+    s += "var t = 0;\nfor (var i = 0; i < " + std::to_string((int_64) N_ROOTS) + "; ++i) {\n";
+    for (size_t i = 0; i < 8; ++i) s += "    v" + std::to_string(i) + " = v" + std::to_string(i) + " + " + std::to_string(i + 1) + ";\n";
+    s += "    t = t + v0 + v1 + v2 + v3 + v4 + v5 + v6 + v7;\n}\nt;";
+    return s;
+}
+
+static int_64 route_fn(int_64 _x) { return _x; }
+
+static std::unordered_map<std::string, int_64 (*)(int_64)> s_ext_tab;
+static std::unordered_map<std::string, int_64 (*)(int_64)> s_def_tab;
+static std::string s_ext_key;
+static std::string s_def_key;
+
+/// The native side of a routing case: one table lookup and one indirect call per iteration
+static double native_route(const std::unordered_map<std::string, int_64 (*)(int_64)>& _tab, const std::string& _key) {
+    int_64 s = 0;
+    for (int_64 i = 0; i < N_ROUTE; ++i) {
+        s += _tab.find(_key)->second(i);
+    }
+    sink = s;
+    return (double) s;
+}
+
+static double native_ext_route() { return native_route(s_ext_tab, s_ext_key); }
+static double native_def_route() { return native_route(s_def_tab, s_def_key); }
+
+/// 16 locals per activation, all of them feeding the answer
+static const char* S_LOCALS16 = R"(
+def work(n) {
+    var a = n + 1;
+    var b = a * 2;
+    var c = b - 3;
+    var d = c + 4;
+    var e = d * 2;
+    var f = e - 1;
+    var g = f + 2;
+    var h = g * 3;
+    var i = h + 5;
+    var j = i * 2;
+    var k = j - 7;
+    var l = k + 11;
+    var m = l * 2;
+    var n2 = m - 3;
+    var o = n2 + 2;
+    var p = o * 3;
+    return a + b + c + d + e + f + g + h + i + j + k + l + m + n2 + o + p;
+}
+var t = 0;
+for (var i = 0; i < 20000; ++i) { t = t + work(i); }
+t;
+)";
+
+// volatile keeps a load and a store on every access; without it the optimizer folds the
+// whole chain into a register expression and the comparison has no reads left
+__attribute__((noinline)) static int_64 work16(int_64 n) {
+    volatile int_64 a = n + 1;
+    volatile int_64 b = a * 2;
+    volatile int_64 c = b - 3;
+    volatile int_64 d = c + 4;
+    volatile int_64 e = d * 2;
+    volatile int_64 f = e - 1;
+    volatile int_64 g = f + 2;
+    volatile int_64 h = g * 3;
+    volatile int_64 i = h + 5;
+    volatile int_64 j = i * 2;
+    volatile int_64 k = j - 7;
+    volatile int_64 l = k + 11;
+    volatile int_64 m = l * 2;
+    volatile int_64 n2 = m - 3;
+    volatile int_64 o = n2 + 2;
+    volatile int_64 p = o * 3;
+    return a + b + c + d + e + f + g + h + i + j + k + l + m + n2 + o + p;
+}
+
+static double native_locals16() {
+    int_64 t = 0;
+    for (int_64 i = 0; i < N_LOCALS; ++i) t += work16(i);
+    sink = t;
+    return (double) t;
+}
+
+static double native_roots64() {
+    // volatile: the same eight counters live in memory, so every += and every sum term is a
+    // load (and a store), which is what the script pays for and the optimizer otherwise elides
+    volatile int_64 v[64];
+    for (int_64 k = 0; k < 64; ++k) v[k] = k;
+    int_64 t = 0;
+    for (int_64 i = 0; i < N_ROOTS; ++i) {
+        for (int_64 k = 0; k < 8; ++k) v[k] += k + 1;
+        t += v[0] + v[1] + v[2] + v[3] + v[4] + v[5] + v[6] + v[7];
+    }
+    sink = t;
+    return (double) t;
+}
+
+static std::vector<BenchCase> build_cases() {
+    std::vector<BenchCase> v = {
+
+        {"ex_call0", S_EX_CALL0, native_ex_call0, 0, false, 0.0, 10},
+        {"ex_echo", S_EX_ECHO, native_ex_echo, 99999, true, 0.0, 20},
+        {"func_call", S_FUNC_CALL, native_ex_echo, 99999, true, 0.0, 10},
+
+        {"int_loop", S_INT_LOOP, native_int_loop, 0, true, 0.0, 6},
+        {"fib(28)", S_FIB, native_fib, 317811, true, 0.0, 2},
+        {"fib_tail", S_FIB_TAIL, native_fib_tail, 0, false, 0.0, 2},
+        {"while_count", S_WHILE_COUNT, native_while_count, 0, true, 0.0, 4},
+        {"float_arith", S_FLOAT_ARITH, native_float_arith, 0, true, 1e-9, 4},
+        {"vec_access", S_VEC_ACCESS, native_vec_access, 49995000, true, 0.0, 4},
+        {"foreach", S_FOREACH, native_foreach, 49995000, true, 0.0, 4},
+        {"map_access", S_MAP_ACCESS, native_map_access, 495000, true, 0.0, 8},
+        {"string_concat", S_STRING_CONCAT, native_string_concat, 4000, true, 0.0, 4},
+    };
+
+    // $extend routing at two table sizes
+    for (const size_t n : {64, 256}) {
+        const std::string tag = "x" + std::to_string(n) + "_";
+        const std::string key = tag + std::to_string(n - 1);
+        BenchCase b;
+        b.name = "ext_route" + std::to_string(n);
+        b.script = gen_ext_script(n);
+        b.native = native_ext_route;
+        b.expected = 0;
+        b.check = true;
+        b.tol = 0.0;
+        b.weight = 6;
+        b.setup = [n, tag, key] {
+            ext_base();
+            for (size_t i = 0; i < n; ++i) ext_add(tag + std::to_string(i), ext_echo);
+            s_ext_tab.clear();
+            for (size_t i = 0; i < n; ++i) s_ext_tab[tag + std::to_string(i)] = route_fn;
+            s_ext_key = key;
+        };
+        v.push_back(std::move(b));
+    }
+
+    // def routing: one module, many callables
+    {
+        BenchCase b;
+        b.name = "def_route64";
+        b.script = gen_def_script(64);
+        b.native = native_def_route;
+        b.expected = 0;
+        b.check = true;
+        b.tol = 0.0;
+        b.weight = 6;
+        b.setup = [] {
+            ext_base();
+            s_def_tab.clear();
+            for (size_t i = 0; i < 64; ++i) s_def_tab["f" + std::to_string(i)] = route_fn;
+            s_def_key = "f63";
+        };
+        v.push_back(std::move(b));
+    }
+
+    // locals: 16 names per activation
+    {
+        BenchCase b;
+        b.name = "locals16";
+        b.script = S_LOCALS16;
+        b.native = native_locals16;
+        b.expected = 0;
+        b.check = true;
+        b.tol = 0.0;
+        b.weight = 2;
+        b.setup = ext_base;
+        v.push_back(std::move(b));
+    }
+
+    // root variables: 64 names at module level
+    {
+        BenchCase b;
+        b.name = "roots64";
+        b.script = gen_roots_script(64);
+        b.native = native_roots64;
+        b.expected = 0;
+        b.check = true;
+        b.tol = 0.0;
+        b.weight = 2;
+        b.setup = ext_base;
+        v.push_back(std::move(b));
+    }
+
+    // every case registers the two bridge extends; normalize both weight groups to 100
+    for (auto& b : v) {
+        auto own = b.setup;
+        b.setup = [own] {
+            ext_base();
+            if (own) own();
+        };
+    }
+    double wa = 0.0;
+    for (auto& b : v) wa += b.weight;
+    for (auto& b : v) b.weight = b.weight * 100.0 / wa;
+    return v;
+}
 
 static bool verify_case(const BenchCase& b, const variant& sv, double nv) {
     if (!b.check) return true;
@@ -363,15 +603,16 @@ int main(int argc, char** argv) {
     int rounds = 5;
     constexpr int N_PER = 5;
     std::vector<std::string> filter;
+    std::vector<BenchCase> benches = build_cases();
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--rounds" && i + 1 < argc) {
             rounds = atoi(argv[++i]);
             if (rounds < 3) rounds = 3;
         } else if (a == "--help") {
-            printf("usage: script_bench [case...] [--runs N]\n");
+            printf("usage: script_bench [case...] [--rounds N]\n");
             printf("cases: ");
-            for (auto& b : benches) printf("%s ", b.name);
+            for (auto& b : benches) printf("%s ", b.name.c_str());
             printf("\n");
             return 0;
         } else {
@@ -380,17 +621,10 @@ int main(int argc, char** argv) {
     }
 
     {
-        double wsum = 0.0, wsum_s = 0.0;
-        for (auto& b : benches) {
-            wsum += b.weight;
-            wsum_s += b.weight_s;
-        }
-        if (std::fabs(wsum - 100.0) > 1e-9 ||
-            std::fabs(wsum_s - 100.0) > 1e-9) {
-            fprintf(stderr,
-                    "FATAL: bench weights sum to %.1f (all) / %.1f (script), "
-                    "expected 100\n",
-                    wsum, wsum_s);
+        double wsum = 0.0;
+        for (auto& b : benches) wsum += b.weight;
+        if (std::fabs(wsum - 100.0) > 1e-9) {
+            fprintf(stderr, "FATAL: bench weights sum to %.1f, expected 100\n", wsum);
             return 1;
         }
     }
@@ -422,16 +656,14 @@ int main(int argc, char** argv) {
     appendf("%s", S.c_str());
 
     script::engine* eng = script::engine::create();
-
-    eng->set_extend("ex_noop", ext_noop);
-    eng->set_extend("ex_echo", ext_echo);
+    s_eng = eng;
 
     int passed = 0;
-    int total = (int) (sizeof(benches) / sizeof(benches[0]));
+    int total = 0;
 
-    std::vector<std::pair<double, double>> wr_all, wr_script;
+    std::vector<std::pair<double, double>> wr_all;
     bool has_geomean = false;
-    double ga_all = 0.0, gb_script = 0.0;
+    double ga_all = 0.0;
 
     std::vector<std::tuple<const char*, double, double>> csv;
 
@@ -444,10 +676,12 @@ int main(int argc, char** argv) {
         if (!filter.empty() &&
             std::find(filter.begin(), filter.end(), b.name) == filter.end())
             continue;
+        ++total;
+        if (b.setup) b.setup();
         bytes src(b.script);
         bytes bin = eng->compile(bytes_view(src), ".", false, false);
         if (bin.empty()) {
-            appendf(ERR, b.name, "COMPILE", "FAIL");
+            appendf(ERR, b.name.c_str(), "COMPILE", "FAIL", "-");
             continue;
         }
         cases.push_back({&b, std::move(bin)});
@@ -467,12 +701,13 @@ int main(int argc, char** argv) {
 
             std::vector<double> su;
             for (int k = 0; k < N_PER && ok[i]; ++k) {
+                if (b.setup) b.setup();
                 prep_run(eng);
                 double t0 = now_us();
                 last[i] = eng->exec(bytes_view(cases[i].bin), ".");
                 double t1 = now_us();
                 if (last[i].error != script::error_type::NoError) {
-                    appendf(ERR, b.name, "ERROR", "-");
+                    appendf(ERR, b.name.c_str(), "-", "ERROR", "-");
                     ok[i] = false;
                 } else {
                     su.push_back(t1 - t0);
@@ -501,7 +736,7 @@ int main(int argc, char** argv) {
         double native_us = iqr_mean(n_rounds[i]);
 
         if (!verify_case(b, last[i].value, nv_last[i])) {
-            appendf(ERR, b.name, "-", "MISMATCH");
+            appendf(ERR, b.name.c_str(), "-", "MISMATCH", "-");
             continue;
         }
 
@@ -516,12 +751,10 @@ int main(int argc, char** argv) {
         else
             snprintf(n_buf, sizeof(n_buf), "%.1f us", native_us);
 
-        appendf(ROW, b.name, s_buf, n_buf, ratio);
-        csv.push_back({b.name, script_us, native_us});
+        appendf(ROW, b.name.c_str(), s_buf, n_buf, ratio);
+        csv.push_back({b.name.c_str(), script_us, native_us});
         passed++;
         wr_all.push_back({b.weight, ratio});
-
-        wr_script.push_back({b.weight_s, ratio});
     }
 
     appendf("%s", S.c_str());
@@ -536,13 +769,11 @@ int main(int argc, char** argv) {
             return wsum > 0 ? std::exp(log_sum / wsum) : 0.0;
         };
         double ga = weighted(wr_all);
-        double gb = wr_script.empty() ? 0.0 : weighted(wr_script);
         char g_buf[32];
-        snprintf(g_buf, sizeof(g_buf), "%.0f/%.0f", ga, gb);
-        appendf(ERR, "GEOMEAN(a/b)", "-", "-", g_buf);
+        snprintf(g_buf, sizeof(g_buf), "%.0f", ga);
+        appendf(ERR, "GEOMEAN", "-", "-", g_buf);
         has_geomean = true;
         ga_all = ga;
-        gb_script = gb;
     }
     appendf("%s", F.c_str());
 
@@ -552,16 +783,22 @@ int main(int argc, char** argv) {
     time_t now = time(nullptr);
     strftime(dbuf, sizeof(dbuf), "%Y-%m-%d", localtime(&now));
     printf("\nCSV:%s,%s", dbuf, GIT_COMMIT);
-    if (has_geomean) printf(",%.0f/%.0f", ga_all, gb_script);
+    if (has_geomean) printf(",%.0f", ga_all);
     for (auto& c : csv)
         printf(",%.0f/%.0f", std::get<1>(c), std::get<2>(c));
     printf("\n");
 
-    printf("%d/%d benchmarks passed (3 bridge + 9 interp). %d rounds x %d "
-           "samples, IQR over round values, 3s sleep between rounds, compile "
-           "and reset excluded from timing, verify on.\n",
-           passed, total, rounds, N_PER);
+    if (filter.empty())
+        printf("%d/%d benchmarks passed (3 bridge + 9 interp + 5 table). %d rounds x %d "
+               "samples, IQR over round values, 3s sleep between rounds, compile "
+               "and reset excluded from timing, verify on.\n",
+               passed, total, rounds, N_PER);
+    else
+        printf("%d/%d benchmarks passed (filtered run). %d rounds x %d samples, IQR over round "
+               "values, 3s sleep between rounds, compile and reset excluded from timing, verify on.\n",
+               passed, total, rounds, N_PER);
 
+    ext_clear();
     delete eng;
-    return 0;
+    return passed == total ? 0 : 1;
 }

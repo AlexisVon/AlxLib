@@ -79,9 +79,9 @@ namespace alx {
                                       const char*, const char*, error_type, DoInit&&);
 
             // keyed by res_make_key of the resolved path: one fly per resolved file, deleted when its refs hit zero
-            std::unordered_map<uint_64, fly_import*> m_imports;
-            std::unordered_map<uint_64, fly_link*> m_links;
-            std::unordered_map<uint_64, type_entry> m_types;
+            map_read<uint_64, fly_import*> m_imports;
+            map_read<uint_64, fly_link*> m_links;
+            map_read<uint_64, type_entry> m_types;
             // resolved paths of the init chain in flight: a repeat means self- or circular import
             std::vector<std::string> m_loading_stack;
             // runs the module body in a sub-walker and keeps the store it leaves as the fly's template

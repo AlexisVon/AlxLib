@@ -11,6 +11,7 @@
 #define _ALEXIS_SCRIPT_BASE_H_
 
 #include "abase.h"
+#include "amap.h"
 #include "arefcount.h"
 #include "ascript.h"
 #include "ascript_enum.h"
@@ -18,11 +19,8 @@
 #include <atomic>
 #include <deque>
 #include <list>
-#include <map>
 #include <mutex>
 #include <string>
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace alx {
@@ -74,7 +72,7 @@ namespace alx {
         struct link_area {
             anyptr m_object;
             // each value is an anyptr holding a call_able, keyed by native method name
-            std::unordered_map<std::string, variant> m_natives;
+            map_read<std::string, variant> m_natives;
 
             link_area() = default;
             // An area belongs to its instance — like a callable it is not a value, and any copy is refused
@@ -108,7 +106,7 @@ namespace alx {
 
         struct data_store {
             std::vector<variant> m_data;
-            std::unordered_map<std::string, size_t> m_map;
+            map_read<std::string, size_t> m_map;
             std::vector<size_t> m_free;
 
             void clear() {
@@ -118,14 +116,13 @@ namespace alx {
             }
 
             variant* find(const std::string& _name) {
-                auto it = m_map.find(_name);
-                if (it == m_map.end()) return nullptr;
-                return (it->second < m_data.size()) ? &m_data[it->second] : nullptr;
+                const size_t* idx = m_map.peek(_name);
+                if (!idx) return nullptr;
+                return (*idx < m_data.size()) ? &m_data[*idx] : nullptr;
             }
 
             variant* store(const std::string& _name, const variant& _val) {
-                auto it = m_map.find(_name);
-                if (it != m_map.end())
+                if (m_map.peek(_name))
                     throw script_exception{error_type::NameError,
                                            std::string("duplicate variable: ") + _name};
                 size_t idx;
@@ -142,8 +139,7 @@ namespace alx {
             }
 
             variant* store(const std::string& _name, variant&& _val) {
-                auto it = m_map.find(_name);
-                if (it != m_map.end())
+                if (m_map.peek(_name))
                     throw script_exception{error_type::NameError,
                                            std::string("duplicate variable: ") + _name};
                 size_t idx;
@@ -160,7 +156,7 @@ namespace alx {
             }
 
             bool contain(const std::string& _name) const {
-                return m_map.find(_name) != m_map.end();
+                return m_map.peek(_name) != nullptr;
             }
 
             // freed slots are recycled by a later store(), so a variant* held across both calls can alias another variable
@@ -293,7 +289,7 @@ namespace alx {
         template <uint_64 SLOT_SIZE>
         class slot_map {
         public:
-            using hash_type = std::unordered_map<std::string, uint_64>;
+            using hash_type = map_read<std::string, uint_64>;
 
             static_assert(SLOT_SIZE > 0 && SLOT_SIZE <= 8, "SLOT_SIZE invalid!");
 
@@ -357,8 +353,8 @@ namespace alx {
 
             uint_64 get(const std::string& _name) const {
                 if (hash) {
-                    auto it = hash->find(_name);
-                    return it == hash->end() ? uint_64_npos : it->second;
+                    const uint_64* v = hash->peek(_name);
+                    return v ? *v : uint_64_npos;
                 }
                 for (uint_64 i = 0; i < SLOT_SIZE; i++)
                     if (slot.val[i] != uint_64_npos && slot.key[i] == _name) return slot.val[i];

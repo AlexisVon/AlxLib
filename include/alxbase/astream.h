@@ -36,7 +36,7 @@ namespace alx {
          * \brief Write _size raw bytes
          *
          * The only write path of the interface. False when the sink refuses the bytes; a zero-size
-         * append is never a failure.
+         * append writes nothing (the pointer is not dereferenced) and is never a failure.
          *
          * \param _ptr Bytes to write
          * \param _size Byte count

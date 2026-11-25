@@ -139,12 +139,34 @@ TEST(gt_avarmap, insert) {
     ASSERT_EQ(vmap["1"].to<int>(), 0);
     ASSERT_EQ(vmap["2"].to<std::string>(), "test");
     auto t = vmap.insert("2", 3.3);
-    ASSERT_EQ(t.first.key(), "2");
-    ASSERT_NE(t.first.value().to<double>(), 3.3);
-    ASSERT_EQ(t.first.value().to<std::string>(), "test");
-    ASSERT_FALSE(t.second);
-    vmap["2"] = 3.3;
+    ASSERT_EQ(t.key(), "2");
+    ASSERT_EQ(t.value().to<double>(), 3.3);
     ASSERT_EQ(vmap["2"].to<double>(), 3.3);
+
+    auto kept = vmap.try_emplace("2", 4.5);
+    ASSERT_FALSE(kept.second);
+    ASSERT_EQ(kept.first.value().to<double>(), 3.3);
+    alx::variant unused(std::string("unused"));
+    auto kept2 = vmap.try_emplace("2", std::move(unused));
+    ASSERT_FALSE(kept2.second);
+    ASSERT_EQ(unused.to<std::string>(), "unused");
+    auto fresh = vmap.try_emplace("3", 5.5);
+    ASSERT_TRUE(fresh.second);
+    ASSERT_EQ(vmap["3"].to<double>(), 5.5);
+    ASSERT_EQ(vmap.size(), 4u);
+}
+
+TEST(gt_avarmap, take) {
+    alx::varmap vmap;
+    vmap.insert("a", 1);
+    vmap.insert("b", "two");
+    alx::variant got = vmap.take("a");
+    ASSERT_FALSE(got.null());
+    ASSERT_EQ(got.to<int>(), 1);
+    ASSERT_FALSE(vmap.contain("a"));
+    ASSERT_EQ(vmap.size(), 1u);
+    ASSERT_TRUE(vmap.take("zzz").null());
+    ASSERT_EQ(vmap.value("b").to<std::string>(), "two");
 }
 
 TEST(gt_avarmap, mixed_operations) {

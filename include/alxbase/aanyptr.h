@@ -10,6 +10,7 @@
 #ifndef _ALEXIS_anyptr_H_
 #define _ALEXIS_anyptr_H_
 
+#include "ahash.h"
 #include "arefcount.h"
 #include "autility.h"
 #include <atomic>
@@ -189,7 +190,7 @@ namespace alx {
     template <typename T, bool COPY_ALBE>
     struct anyptr_register_impl {
         /// Type identity for anyptr_ex<T>::as(): the same T hashes alike across translation units
-        static constexpr uint_64 rid = fnv1a_64(type_sig<T>());
+        static constexpr uint_64 rid = hash::fnv_64::hash(type_sig<T>());
         /// The record the constructor fills in; a handle keeps its address, not a copy
         anyptr_reg reg_;
         /// Fill the record in; the type id is already a compile-time constant
@@ -214,7 +215,7 @@ namespace alx {
     template <typename T>
     struct anyptr_register_impl<T, false> {
         /// Type identity for anyptr_ex<T>::as(): the same T hashes alike across translation units
-        static constexpr uint_64 rid = fnv1a_64(type_sig<T>());
+        static constexpr uint_64 rid = hash::fnv_64::hash(type_sig<T>());
         /// The record the constructor fills in; a handle keeps its address
         anyptr_reg reg_;
         /// Fill the record in; the type id is already a compile-time constant

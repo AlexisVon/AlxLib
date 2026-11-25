@@ -265,10 +265,12 @@ The difference between `as<T>()` and `to<T>()`: `to` only reads and hands back a
 ### 3.4 Container types
 
 ```cpp
-alx::varmap m;                       // std::map<std::string, variant>, in key order
-m.insert("port", 8080);              // a key already there is not overwritten; {it, false} comes back
+alx::varmap m;                       // ordered string -> variant map, in key order
+m.insert("port", 8080);              // a key already there is replaced; the entry comes back
+m.try_emplace("port", 9090);         // a key already there keeps its value; {it, false} comes back
 m["name"] = "alx";                   // a key that is absent is created with a default, then assigned
 m.contain("port");  m.value("port", 0);  m.erase("port");  m.clear();
+alx::variant removed = m.take("port"); // removed and handed over by move; a null variant when absent
 for (auto it = m.begin(); it != m.end(); ++it) it.key(), it.value();
 
 alx::varvec vec;   vec.push_back(1);  vec.push_back("x");   // std::vector<variant>
@@ -324,7 +326,7 @@ Every `to_*` has a const and a non-const version; the non-const one returns a wr
 
 ```cpp
 alx::json_object obj;
-obj.insert("name", alx::json_value("alx"));   // a key already there is not overwritten
+obj.insert("name", alx::json_value("alx"));   // a key already there is replaced (a duplicate key in the text keeps the last)
 obj["port"] = 8080;                           // created when it is absent
 obj.contain("name");  obj.erase("name");  obj.clear();
 
@@ -360,7 +362,7 @@ std::string one_value2 = alx::json_doc::to_string(std::move(val), true); // the 
 // string escaping: the first _ofst bytes of _dst are left alone, the escaped text is written from _ofst on,
 // and _dst is resized to _ofst + the result length
 std::string s = "\"a\"\n";
-alx::json_doc::escape(s);                    // the whole string in place = escape(s, s, 0); the old signature stays
+alx::json_doc::escape(s);                    // the whole string in place = escape(s, s, 0)
 std::string out = "prefix";
 alx::json_doc::escape(s, out, out.size());   // appending: one pass, flat runs copied in bulk
 alx::json_doc::descape(s);                   // unescape in place; the three-argument form follows escape's contract
@@ -558,7 +560,7 @@ A path segment of `get_value`: a key at a `varmap`, a decimal index at a `varvec
 
 ### 8.2 `aserial` -- the generic serialization framework
 
-`alx::ser` provides the three layers `serable` / `serer` / `deserer`: `serable` defines the element types and the data types, `serer` encodes and `deserer` decodes. Before use, the type handlers that will be needed have to be registered in `deserer::CORE_BASE` / `CORE__VEC` / `CORE_LIST` (inside the library an initialization entry does it).
+`alx::ser` provides the three layers `serable` / `serer` / `deserer`: `serable` defines the element types and the data types, `serer` encodes and `deserer` decodes. Before use, the type handlers that will be needed have to be registered in `deserer::CORE_BASE` / `CORE__VEC` / `CORE_LIST` -- `map_read<BIT16, COREFUNC>` tables, one handler per type id (inside the library an initialization entry fills them once, through `conver`; an outside registrant uses `install_parse` (or `insert`) on the same tables).
 
 ```cpp
 // take one element by path (without parsing the whole blob)
@@ -722,7 +724,7 @@ mac->clear();                                             // ready for the next 
 delete mac;
 ```
 
-- The two exits are verify's, unchanged: `hexdigest()` is the standard big-endian octet string (the RFC 4231 vectors pin it), `bytedigest()` is the word dump in machine order.
+- The two exits follow verify's: `hexdigest()` is the standard big-endian octet string (the RFC 4231 vectors pin it), `bytedigest()` is the word dump in machine order.
 - Keys longer than the hash's 64-byte block are hashed down to 32 bytes first, as RFC 2104 prescribes; an empty key is a key like any other.
 - The model is `hmac_sha_256`; `hmac::list()` gives the registered names.
 - The RFC 4231 vectors are pinned in `gtest/alxbase/src/gt_averify.cpp`.
@@ -740,5 +742,183 @@ alx::datetime timer;  timer.start();  timer.elapsed_ms();   // timing
 ```
 
 `datetime` is based on `system_clock` (the wall clock, the same source as `to_time_t` / file times), `start()` takes the reference point again, and `elapsed_ms()` returns the milliseconds since it -- the typical use is timing between two points. Note that the wall clock can **jump** under NTP or a manual adjustment; for a strictly monotonic duration use `std::chrono::steady_clock` instead.
+
+---
+
+## 14. Hashing (`ahash.h`)
+
+`alx::hash` has two layers:
+
+- **hash sources** — a family of static classes `xx_yy` (`yy` = output width) that answer the primitive convention: `hash(const void*, size_t)`, `hash(uint_64)`, `is_hard()`, `is_constexpr()`. A source declares no result type and extends its input only with the `constexpr hash(const char*)` entry that the constexpr-capable classes carry (14.3).
+- **`hash::func<Hash, Ret>`** — the constraint/adapter layer. It fixes the result type (both primitives must answer the caller-declared `Ret`) and makes the accepted input uniform (`const char*`, arithmetic types, `data()/size()` types). Everything a source is not asked to decide is settled here, and an unsupported input fails to compile here rather than inside a container.
+
+A different source swaps in with one line at the call site: `using hash = alx::hash::fnv_64;`.
+
+### 14.1 The constraint/adapter layer `hash::func<Hash, Ret>`
+
+```cpp
+using hash = alx::hash::auto_64;
+const alx::uint_64 h = alx::hash::func<hash, alx::uint_64>::eval(key);
+```
+
+- `eval` accepts `const char*` (hashed up to the NUL), any arithmetic type up to 64 bits (by bit pattern, zero-extended: a narrow negative integer hashes by its bits, not its value), and any type with `data()`/`size()` (`std::string`, `bytes`, ...). Structures and plain pointers do not compile — the error fires in `func`, not in the map.
+- `Ret` is the caller's declaration of the answer; `static_assert`s check both primitives return it, so a source whose primitives disagree (or are missing) fails at the wrapper, not at a call.
+- The literal `0` resolves to the integer adapter (exact match), not to a null `const char*`: hash an empty string as `""`.
+- Floating point hashes by raw bits: `0.0` and `-0.0` differ, and so do NaN payloads.
+
+### 14.2 `ah_64` — the AES-accelerated 64-bit hash
+
+```cpp
+alx::uint_64 a = alx::hash::ah_64::hash(data, size);         // byte primitive
+alx::uint_64 b = alx::hash::ah_64::hash((alx::uint_64) id);  // integer primitive
+bool hw = alx::hash::ah_64::is_hard();                       // the effective path
+```
+
+- An AES-NI path (`AESENC` as a mixer) runs when the code was compiled with it **and** the CPU has AES; otherwise a scalar path answers. `is_hard()` reports which one is in use; `is_constexpr()` is false.
+- `ALXLIB_AHASH_NO_HW=ON` compiles the scalar path only (the way to exercise it on a machine that has AES).
+- The two primitive forms are independent: `ah_64::hash(x)` and `ah_64::hash(&x, 8)` answer different values. FNV's integer overload instead hashes the little-endian byte sequence (14.3).
+- Measured (`tools/ahash_bench.cpp`, this machine): 1.9-2.6 ns for 0-4 B, 2.25-2.5 ns for 8-17 B, 3.3 ns (19.4 GB/s) at 64 B, 5.5 ns (46.2 GB/s) at 256 B, 17.5 ns (58.5 GB/s) at 1024 B.
+- Collision checks: every base64 key of length 1-3 (266,304) and every hex key of length 1-5 (1,114,480) hashed collision-free; 1,000,000 deduplicated random keys per length 8/16/32/64/128 also collision-free.
+
+### 14.3 FNV-1a (`fnv_32` / `fnv_64`)
+
+- Standard FNV-1a with the fixed offset basis; `hash(const char*)` is `constexpr` and answers the same value as the runtime byte path for the same bytes, including bytes ≥ 0x80.
+- The integer overload hashes the value's little-endian bytes, i.e. it equals the byte path over the same 8 bytes.
+- `is_hard()` is false and `is_constexpr()` is true.
+- Much slower than `ah_64` on long input (10-50x) and no stronger: use it as a reference or when a 32-bit width is wanted.
+
+### 14.4 `wy_64` — the inline wyhash
+
+```cpp
+alx::uint_64 a = alx::hash::wy_64::hash(data, size);         // byte primitive
+alx::uint_64 b = alx::hash::wy_64::hash((alx::uint_64) id);  // integer primitive
+```
+
+- Wang Yi's wyhash (final v4.3, seed 0, default secret), reimplemented and answer-identical to the reference on random inputs of every length class; the integer primitive is `wyhash64(x, 0)`. Public domain, no attribution duty; the credit stays in the header.
+- **Entirely inline**: no CPU dispatch, no `.so` call. The 64x64→128 product uses `__uint128_t` where the compiler has it and the same-valued 32-bit decomposition elsewhere, so the answers do not depend on the target. The integer and byte forms are independent, like `ah_64`'s.
+- Cost against `ah_64` (`tools/ahash_bench.cpp`): faster on short keys (0.7-0.9x at 0-16 B, parity through 64 B) and 1.2-1.65x slower from 127 B up, where `ah_64`'s AES path wins. This is the source to name when a hash container's keys are short and inline hashing matters; `auto_64` (the default) dispatches keys up to 64 B here.
+- `is_hard()` and `is_constexpr()` are false. Collision evidence: the same exhaustive and 1M-key sweeps as `ah_64` (base64 and hex), collision-free.
+
+### 14.5 `auto_64` — the default dispatch
+
+```cpp
+alx::uint_64 a = alx::hash::auto_64::hash(data, size);         // <= 64 B: wy_64, above: ah_64
+alx::uint_64 b = alx::hash::auto_64::hash((alx::uint_64) id);  // wy_64's integer mix
+```
+
+- The split follows the measured crossover (`tools/ahash_bench.cpp`): `wy_64` wins or ties through 64 B; `ah_64`'s AES path wins from 65 B up (1.2-1.65x from 127 B). One compare per call, and the branch is perfectly predicted for the length distribution of a given map.
+- **Answer scope**: keys of 64 B or less answer CPU-independently (pure software); a longer key answers whatever `ah_64`'s effective path answers, so a value can differ between an AES machine and a scalar one — correctness is unaffected, since a hash is only ever compared inside one process. `is_hard()` reports the long-key branch; `is_constexpr()` is false.
+- **Default of `map_hash`** (`Hash = hash::auto_64`): wide-slot string keys are overwhelmingly short, so nearly every lookup takes the inline branch; the long branch keeps the AES throughput where keys are large.
+- The dispatch itself is not quality-tested as a hash — each branch answers its source's already-gated values; `gt_ahash` pins the switch at 64/65 B and the integer route instead.
+
+The 24 cases of `gtest/alxbase/src/gt_ahash.cpp` pin the vectors, the constexpr/runtime equality, the adapter semantics (bit patterns, zero literal, `data()/size()` types), the quality gates of both 64-bit sources and the dispatch seams.
+
+---
+
+## 15. Map containers (`amap.h` / `amap_std.h`)
+
+`alx::map_btree<Key, Value, IsOwnPtr = false>` is an ordered associative container: a subset of `std::map`'s interface, not a drop-in replacement. The storage is a high-fanout B-tree of fixed-size nodes (~512 B, fanout computed at compile time from `sizeof(value_type)`), so a lookup touches about one node per level and iteration walks entries in place. **`peek(key)`** answers a pointer to the stored value (`nullptr` when absent) instead of an iterator — `const Value*` on a const map, `Value*` otherwise — which is the form to use on a hot read path; the pointer follows the reference's lifetime (any insert or erase invalidates it).
+
+`alx::map_hash<Key, Value, IsOwnPtr = false, Hash = hash::auto_64>` is the unordered sibling (§15.2): the same interface and semantics, plus `reserve`, with iteration in no contractual order.
+
+`alx::map_read<Key, Value, IsOwnPtr = false, Hash = hash::auto_64>` is the read-optimized sparse sibling (§15.3): flat open addressing over a dense one-byte tag array, four to eight times a dense map's memory, recommended for a finite element set built once and then read; iteration is in no contractual order.
+
+### 15.1 Basic use
+
+```cpp
+#include "amap.h"
+
+alx::map_btree<std::string, int> m;
+m.insert("a", 1);                       // insert or overwrite -- never fails on a known key
+m["b"] = 2;                             // default-constructs the value when absent
+m.insert(std::make_pair(std::string("c"), 3));
+for (const auto& e : m) { /* key order */ }
+alx::map_btree<std::string, int>::iterator it = m.find("b");
+m.erase("a");
+```
+
+Interface subset: `size` / `empty` / `clear` / `swap`, `find` / `contains` / `count` / `value` (the stored value, or the given default when the key is absent — a shared static when the argument is omitted, so a kept reference stays valid; nothing is inserted), `insert` (five overloads), `emplace`, `try_emplace` (insert only when the key is absent; the arguments are untouched on a known key), `operator[]`, `erase(key)` (answers 0/1), `erase(iterator)` (answers the successor) and `take(key)` (removes the entry and hands its value over undeleted), `begin` / `end` / `cbegin` / `cend`, copy and move. Copy is O(n) (the sorted source is appended in one pass); move construction is O(1), while move assignment first releases the target's old entries. No `reserve`, no `at`, no internal synchronization.
+
+Semantics that differ from `std::map`:
+
+- **insert_or_assign**: a known key is overwritten; `insert` answers the iterator, not a `{iterator, bool}` pair. An `emplace` on a known key overwrites the stored value too — the construction is paid either way.
+- **`value_type` is `std::pair<Key, Value>`** — the key is not const. Writing through `it->first` compiles and breaks the ordering invariant; a key must not be modified once inserted.
+- **Invalidation is wider**: inserting a new entry or erasing shifts entries inside a node and moves them between nodes when a split or merge fires, so both invalidate iterators and references/pointers into entries. Overwriting a known key leaves the entries in place: a plain map keeps the pointed-to object, while an owning map deletes the replaced pointee — and with it every reference to the old value (`varmap::value()` included).
+- `erase(iterator)` answers a valid successor, but finds it again by key after the rebalance: one key copy plus one lookup. Use `erase(key)` when the successor is not needed.
+- Key and mapped type must be default constructible, copyable and movable; `Key` is ordered by `operator<`. Iteration is in key order.
+
+An optional third template argument turns pointer ownership on (the default is off):
+
+```cpp
+alx::map_btree<std::string, Widget*, true> owned;   // the map owns its Widgets
+```
+
+With `IsOwnPtr = true` the mapped type must be a pointer: erase, clear and destruction delete the pointee; a copy deep-copies it (`new Widget(*p)` on the static type, so the pointee must be copy-constructible, and a null pointer stays null); insert/emplace delete the pointer an overwritten key held; `try_emplace` leaves a known key — and its argument — entirely alone. `take(key)` removes the entry and hands its value over -- the pointer to the caller undeleted on the container, the moved-out value itself on `varmap` / `json_object` (an absent key answers a default value). Whether insert clones or adopts follows the value argument's category: an lvalue `Value` or entry is copied — an owning map clones the pointee and the caller keeps its own pointer — while an rvalue one is adopted and its source pointer is left null. `emplace`, though, adopts whatever pointer it is constructed with, so handing it a pointer another owner still holds is a double free. The `Value&` that `operator[]` returns is not intercepted: assigning a pointer through it does not delete the old pointee, so use `insert` to replace one. `varmap` / `json_object` are built on this mode.
+
+### 15.2 Unordered map (`map_hash`)
+
+`alx::map_hash<Key, Value, IsOwnPtr = false, Hash = hash::auto_64>` is the unordered sibling, with the same interface and semantics as `map_btree` (insert overwrites, `try_emplace` keeps the first value, `erase(iterator)` answers the successor, `take`, `value(key, default)`), plus `reserve` and `cannot_contain`.
+
+```cpp
+#include "amap.h"
+
+alx::map_hash<std::string, int> h;
+h.reserve(1024);                        // room for 1024 entries without a rehash
+h.insert("a", 1);                       // insert or overwrite -- never fails on a known key
+h["b"] = 2;
+for (const auto& e : h) { /* position order: an implementation detail, never promised */ }
+```
+
+How it differs:
+
+- **`peek(key)` is the fast read**: `const Value*` / `Value*`, `nullptr` when absent, no 40-byte iterator and no `end()` comparison. The probe behind it is the same one `find` uses, forced inline so a call site inside the `.so` does not pay an out-of-line call; the pointer follows the reference's lifetime.
+- **The storage climbs a ladder**: a map starts as four slots scanned in order with no hash, the fifth entry promotes it to a bucket table (a hash picks a bucket of four slots, a full bucket doubles the table), and past 16 buckets it becomes two zone arrays with 4-entry chains. The linear block, a bucket and a chain each bound a scan to four key comparisons; the linear block pays no hash, every other shape pays one. `clear()` returns a map to the linear shape and keeps its four-slot block for reuse; a shape never moves back down on its own.
+- **Invalidation is wider**: any insert or erase may move entries between the shapes and rebuild the table, so both invalidate every iterator and reference. No `reserve` in the middle of an iteration.
+- **The `Hash` argument must keep its low and high 32-bit halves independent** — the low half homes an entry and the high half places it after a demotion, and the bucket index mixes both halves, so a hash with one constant half still spreads (a hash equal for every key remains a contract violation and degenerates). `hash::auto_64` (the default) and its two sources carry the requirement; `fnv_64` shares the interface but not the quality gate behind the second segment.
+- **A pointer `Key` is stored, compared and hashed by address**, so a `const char*` key compares pointers and is almost never what is meant; use `std::string`. A floating-point NaN key never equals itself and cannot be found — contract, not defended.
+- **`cannot_contain(key)` is a one-sided probe**: in the linear block it compares the keys (an exact answer after at most four), in the bucket and two-zone shapes it is structural (slot flags and a six-bit hash fragment, no key comparison). `true` means the key is certainly absent; `false` means only "not proven absent" — never read it as presence, ask `contains` when the answer matters. The same fragment lets `find` and the insert probe skip the key comparison when it differs (about 63 of 64 mod conflicts).
+- **Storage is built lazily**: a constructed map allocates nothing; the first insert allocates the four-slot block, and only the fifth entry builds a table. `reserve(n)` with n ≤ 4 just ensures that block; with n > 4 it builds the two-zone table directly (a bucket table cannot promise a growth-free fill), which is what to call before a known-size bulk fill — the rebuild-on-growth is the one phase where this container loses to `std::unordered_map`.
+- The same `IsOwnPtr` ownership contract as `map_btree` applies (third template argument), and the same `value_type` caveat: the key is not const, but must not be modified once inserted.
+
+### 15.3 Read-optimized sparse hash map (`map_read`)
+
+`alx::map_read<Key, Value, IsOwnPtr = false, Hash = hash::auto_64>` is the full map interface -- insert/erase/emplace/`try_emplace`/`operator[]`/`take`/`find`/`contains`/`count`/`value`/`peek`/`size`/iteration/copy/move/swap/`reserve` -- deliberately lopsided towards lookup.
+
+```cpp
+#include "amap.h"
+
+alx::map_read<std::string, int> r;
+r.insert("a", 1);                    // the same semantics as map_hash (insert overwrites)
+if (const int* v = r.peek("a")) { /* the hot read */ }
+```
+
+How it differs:
+
+- **A read is one hash, one tag byte, and a key compare only on a fingerprint match**: the table is flat open addressing, its slots carry a 1-byte tag (0 = empty, otherwise a seven-bit fingerprint of the hash) packed in a separate array, so 64 tags share a cache line and a miss usually stops at the first one. `peek` is force-inlined; there is no iterator and no `end()` comparison on the read path.
+- **Sparse by design**: the capacity is a power of two, and live entries plus tombstones stay within [1/8, 1/4] of it -- an insert that would take the sum past 1/4 doubles the table, and a key-erase that leaves the tombstones outnumbering the live entries rehashes them away (to a power of two of four times the live count, so live entries land in the same band). That costs several times the memory of a dense map and is the measured knee (4x sparsity is where the miss curve flattens); the type is recommended for a finite element set that is built once and then read.
+- **Writes are plain open addressing with tombstones**: an erased slot keeps a tag the probe skips at the same cost as a fingerprint mismatch, and a later insert reuses it, so `erase` costs one probe and `erase(iterator)` answers the next occupied slot -- a conditional delete during iteration never meets an entry twice. Growth counts live entries plus tombstones against the quarter capacity, and a key erase whose tombstones outnumber the live entries rehashes, which clears them; an iterator erase never resizes, so a map drained that way keeps its slots for reuse until `clear()`. Any insert or erase invalidates iterators and references, and a pointer `Value`'s pointee is stable (the `IsOwnPtr` contract is `map_btree`'s).
+- **Conversion is `conver<To>(src)`** (§15.4): `conver<map_read<std::string, int>>(u)` copies a std container (or any container with `begin`/`end`/`size`) into a fresh map, and `conver<To>(std::move(src))` moves the entries and empties the source.
+- **Iteration order is an implementation detail**, as for `map_hash`. The `Hash` requirement is the same shape (`hash::func<Hash, uint_64>`; home from the low bits, fingerprint from the top seven), a pointer `Key` is stored/compared/hashed by address, and no internal synchronization.
+
+### 15.4 Converting between containers (`amap_std.h`)
+
+`alx::conver<To>(src)` builds a fresh `To` from another container's entries. Either side may be a std container or one of the map containers, and the source only needs `begin`, `end`, `size` (and `clear` on the move form) — `std::vector<std::pair<Key, Value>>` works too. The target is a template argument, so nothing has to be guessed from a return type.
+
+```cpp
+#include "amap_std.h"
+
+alx::map_btree<std::string, int> m = alx::conver<alx::map_btree<std::string, int>>(s);   // std::map -> btree
+alx::map_hash<std::string, int>  h = alx::conver<alx::map_hash<std::string, int>>(u);    // unordered -> hash
+alx::map_read<std::string, int>  r = alx::conver<alx::map_read<std::string, int>>(u);    // unordered -> read
+std::unordered_map<std::string, int> u2 = alx::conver<std::unordered_map<std::string, int>>(r);  // read -> unordered
+alx::map_read<std::string, int>  r2 = alx::conver<alx::map_read<std::string, int>>(std::move(r)); // move, r is emptied
+```
+
+- The copy form takes `const From&`; the move form takes a non-const rvalue, moves every key and value and clears the source. A std container's key is `const Key`, so it is copied even on the move path.
+- Both sides must be plain (non-owning) containers: the conversion hands a raw pointer over as a pointer value, so an owning map on either side would leave its pointees owned twice and is a compile-time error — detach or consume it first.
+- Targets with a `reserve` (`map_hash`, `map_read`, `std::unordered_map`) are reserved to the source size first; the ordered ones have none. The header is separate so `amap.h` pulls no std container.
+- A hash target defaults its `Hash`; name it in the type argument when another is wanted (`alx::conver<alx::map_hash<std::string, int, false, MyHash>>(u)`). The ordered target needs `Key` ordered by `operator<`.
+
+The benchmarks are in `doc/base/design.md` §13: `map_btree` against `std::map` (iteration 2-20x faster; the narrow slot wins throughout; erase-heavy churn is the weak spot), `map_hash` against `std::unordered_map`, and `map_read` against the direct-array ceiling, the bare hash, `map_hash` and `std::unordered_map` (`map_bench --read`).
 
 ---

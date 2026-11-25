@@ -14,6 +14,7 @@
 #include "aanyptr.h"
 #include "abase.h"
 #include "abytes.h"
+#include "amap.h"
 #include "atypelist.h"
 #include "autility.h"
 
@@ -220,7 +221,6 @@ namespace alx {
         __variant_impl& operator=(const char* _value) { return this->operator=(std::string(_value)); }
 
     public:
-
         /**
          * \brief Read the stored value when its type is exactly T, otherwise _default
          *
@@ -299,7 +299,6 @@ namespace alx {
         inline bool operator!=(const T& _value) const noexcept { return !this->operator==(_value); }
 
     public:
-
         /// Type index of the stored value, or -1 when null
         inline int type() const noexcept { return m_type; }
         /// True when nothing is stored; a moved-from variant is null
@@ -314,7 +313,6 @@ namespace alx {
         }
 
     public:
-
         /// Compile-time index of T in the type list, or -1 when T is not in it
         template <typename T>
         static constexpr int id() { return typelist::index_of<TYPE, T>; }
@@ -335,7 +333,6 @@ namespace alx {
         }
 
     protected:
-
         /**
          * \brief Convert the stored FROM to TO when the conversion is lossless, otherwise _def
          *
@@ -376,14 +373,15 @@ namespace alx {
      * \brief Ordered string to Type map that owns its values
      *
      * Values are held as pointers but owned: erase, clear and destruction delete them, and a copy
-     * duplicates them, so the map behaves as a value type. An insert never overwrites a key that
-     * is already there. Iteration follows the key order of the underlying std::map.
+     * duplicates them, so the map behaves as a value type. An insert replaces the value of a key
+     * that is already there, while try_emplace keeps the stored one. Iteration follows the key
+     * order of the underlying map.
      */
     template <template <typename, typename> typename MapType, typename Type>
     class __varmap_impl
         : protected MapType<std::string, Type*> {
     public:
-        /// The underlying std::map<std::string, Type*> the storage is taken from
+        /// The underlying ordered map<std::string, Type*> the storage is taken from
         using parent = MapType<std::string, Type*>;
         /// Mutable iterator of the parent map
         using parent_iterator = typename parent::iterator;
@@ -395,23 +393,15 @@ namespace alx {
         using parent::size;
         /// Construct an empty map
         __varmap_impl() : parent() {}
-        /// Deep copy: every value is duplicated into a fresh object
-        __varmap_impl(const __varmap_impl& _value) : parent() {
-            for (const_iterator it = _value.cbegin(); it != _value.cend(); it++) {
-                insert(it.key(), it.value());
-            }
-        }
+        /// Deep copy: the owning map clones every value
+        __varmap_impl(const __varmap_impl& _value) : parent(_value) {}
         /// Take over the contents of _value, which is left empty
         __varmap_impl(__varmap_impl&& _value) noexcept {
             this->parent::swap(_value);
         }
-        /// Deep copy; self-assignment is a no-op, and the previous contents are deleted first
+        /// Deep copy; self-assignment is a no-op
         __varmap_impl& operator=(const __varmap_impl& _value) {
-            if (this == &_value) return *this;
-            this->clear();
-            for (const_iterator it = _value.cbegin(); it != _value.cend(); it++) {
-                insert(it.key(), it.value());
-            }
+            if (this != &_value) parent::operator=(_value);
             return *this;
         }
         /// Take over the contents of _value, which is left empty; self-assignment is a no-op
@@ -420,7 +410,7 @@ namespace alx {
             this->parent::swap(_value);
             return *this;
         }
-        /// Build from {key, value} pairs; a key repeated in the list keeps its first value
+        /// Build from {key, value} pairs; a key repeated in the list keeps its last value
         __varmap_impl(std::initializer_list<std::pair<std::string, Type>> _list) {
             for (auto& it : _list) insert(it.first, it.second);
         }
@@ -433,8 +423,9 @@ namespace alx {
          *
          * Wraps the parent map iterator: key() and value() are the intended accessors, while
          * operator* and operator-> expose the underlying pair, whose second member is the raw
-         * stored pointer. Inserting never invalidates an iterator; erasing an entry invalidates
-         * the iterators pointing at that entry, and clear() invalidates all of them.
+         * stored pointer. Inserting a new key or erasing any entry may move entries between
+         * nodes, invalidating every iterator; replacing a key keeps the entries in place but
+         * deletes its old value, and clear() invalidates all of them.
          */
         class iterator {
         private:
@@ -454,22 +445,23 @@ namespace alx {
             inline bool operator!=(const iterator& _it) const { return m_it != _it.m_it; }
             /// Compare two positions
             inline bool operator==(const iterator& _it) const { return m_it == _it.m_it; }
-            /// The current key, valid while its entry lives
+            /// The current key; a reference into the entry, so the next new-key insert or erase ends it
             inline const std::string& key() const { return m_it->first; }
-            /// Mutable reference to the current value, valid while its entry lives
+            /// Mutable reference to the current value, valid until the entry is erased or its value replaced
             inline Type& value() { return r_interpret<Type>(m_it->second); }
             /// The underlying pair, whose second member is the raw stored pointer
             inline const typename parent_iterator::value_type& operator*() const { return *m_it; }
-            /// The wrapped parent iterator, for access to the underlying map
-            inline const parent_iterator& operator->() const { return m_it; }
+            /// Pointer to the underlying pair, whose second member is the raw stored pointer
+            inline const typename parent_iterator::value_type* operator->() const { return &*m_it; }
         };
         /**
          * \brief Const iterator over the key/value pairs, in key order
          *
          * Wraps the parent map's const iterator; value() yields the value for reading only, and
-         * the raw stored pointer is reachable through operator* and operator->. Inserting never
-         * invalidates an iterator; erasing an entry invalidates the iterators pointing at that
-         * entry, and clear() invalidates all of them.
+         * the raw stored pointer is reachable through operator* and operator->. Inserting a new
+         * key or erasing any entry may move entries between nodes, invalidating every iterator;
+         * replacing a key keeps the entries in place but deletes its old value, and clear()
+         * invalidates all of them.
          */
         class const_iterator {
         private:
@@ -489,41 +481,51 @@ namespace alx {
             inline bool operator!=(const const_iterator& _it) const { return m_it != _it.m_it; }
             /// Compare two positions
             inline bool operator==(const const_iterator& _it) const { return m_it == _it.m_it; }
-            /// The current key, valid while its entry lives
+            /// The current key; a reference into the entry, so the next new-key insert or erase ends it
             inline const std::string& key() const { return m_it->first; }
-            /// The current value for reading, valid while its entry lives
+            /// The current value for reading, valid until the entry is erased or its value replaced
             inline const Type& value() const { return r_interpret<const Type>(m_it->second); }
             /// The underlying pair, whose second member is the raw stored pointer
             inline const typename parent_const_iterator::value_type& operator*() const { return *m_it; }
-            /// The wrapped parent const iterator, for access to the underlying map
-            inline const parent_const_iterator& operator->() const { return m_it; }
+            /// Pointer to the underlying pair, whose second member is the raw stored pointer
+            inline const typename parent_const_iterator::value_type* operator->() const { return &*m_it; }
         };
 
     public:
-
         /**
-         * \brief Insert a new entry, handing the stored value over by move
+         * \brief Insert an entry, replacing the value stored under a known key
          *
-         * \param _value Moved from when the key is new, left untouched when it is already there
-         * \return {iterator, true} when the key was new; {iterator, false} when it was already
-         *         present, and then the stored value is left as it was
+         * \param _value Moved from whether the key is new or already present
+         * \return the entry
          */
-        inline std::pair<iterator, bool> insert(const std::string& _key, Type&& _value) {
-            parent_iterator it = parent::find(_key);
-            if (it != parent::end()) return {it, false};
-            else return parent::insert({_key, new Type(std::move(_value))});
+        inline iterator insert(const std::string& _key, Type&& _value) {
+            return parent::insert({_key, new Type(std::move(_value))});
         }
-        /// Insert a new entry by copying the value; same {iterator, false} result on a known key
-        inline std::pair<iterator, bool> insert(const std::string& _key, const Type& _value) {
-            parent_iterator it = parent::find(_key);
-            if (it != parent::end()) return {it, false};
-            else return parent::insert({_key, new Type(_value)});
+        /// Insert a copy of the value, replacing the value of a known key
+        inline iterator insert(const std::string& _key, const Type& _value) {
+            return parent::insert({_key, new Type(_value)});
         }
-        /// As insert(), moving the key too; a known key wins and the key is then not moved
-        inline std::pair<iterator, bool> emplace(std::string&& _key, Type&& _value) {
+        /// As insert(), moving the key; a known key keeps the stored key string
+        inline iterator emplace(std::string&& _key, Type&& _value) {
+            return parent::emplace(std::move(_key), new Type(std::move(_value)));
+        }
+        /**
+         * \brief Insert only when _key is absent, leaving a known key untouched
+         *
+         * \param _value Moved from only when the key is new
+         * \return {iterator, true} when the key was new; {iterator, false} when it was already
+         *         present, and then both the stored value and _value are left as they were
+         */
+        inline std::pair<iterator, bool> try_emplace(const std::string& _key, Type&& _value) {
             parent_iterator it = parent::find(_key);
             if (it != parent::end()) return {it, false};
-            else return parent::emplace(std::move(_key), new Type(std::move(_value)));
+            return {parent::insert({_key, new Type(std::move(_value))}), true};
+        }
+        /// As try_emplace(), moving the key on the insert path only
+        inline std::pair<iterator, bool> try_emplace(std::string&& _key, Type&& _value) {
+            parent_iterator it = parent::find(_key);
+            if (it != parent::end()) return {it, false};
+            return {parent::emplace(std::move(_key), new Type(std::move(_value))), true};
         }
 
     public:
@@ -556,7 +558,6 @@ namespace alx {
         inline const_iterator cend() const { return parent::cend(); }
 
     public:
-
         /// A shared static default-constructed Type, the fallback of value()
         inline static const Type& def_val() {
             static const Type s_val;
@@ -576,7 +577,7 @@ namespace alx {
          *
          * \param _default Returned when the key is absent; defaults to the shared static def_val()
          * \return a reference to the stored value or to _default, valid until that entry is
-         *         erased, the map is cleared, or the map is destroyed
+         *         erased, its value replaced, the map is cleared, or the map is destroyed
          */
         inline const Type& value(const std::string& _key, const Type& _default = def_val()) const {
             parent_const_iterator it = parent::find(_key);
@@ -588,8 +589,8 @@ namespace alx {
          *
          * For a varmap that new value is a null variant, not a zero.
          *
-         * \return a reference to the stored value, valid until that entry is erased, the map is
-         *         cleared, or the map is destroyed
+         * \return a reference to the stored value, valid until that entry is erased, its value
+         *         replaced, the map is cleared, or the map is destroyed
          */
         inline Type& operator[](const std::string& _key) {
             parent_iterator it = parent::find(_key);
@@ -599,25 +600,19 @@ namespace alx {
             return *value;
         }
         /// True when _key is present
-        inline bool contain(const std::string& _key) const {
-            parent_const_iterator it = parent::find(_key);
-            return it != parent::cend();
-        }
+        inline bool contain(const std::string& _key) const { return parent::contains(_key); }
         /// Delete the value stored under _key and drop the entry; a no-op when it is absent
-        inline void erase(const std::string& _key) {
-            parent_iterator it = parent::find(_key);
-            if (it != parent::end()) {
-                delete it->second;
-                parent::erase(it);
-            }
+        inline void erase(const std::string& _key) { parent::erase(_key); }
+        /// Remove the entry of _key and hand its value over by move; an absent key answers a default Type
+        inline Type take(const std::string& _key) {
+            Type* raw = parent::take(_key);
+            if (nullptr == raw) return Type();
+            Type out(std::move(*raw));
+            delete raw;
+            return out;
         }
         /// Delete every stored value and empty the map
-        inline void clear() {
-            for (const_iterator it = cbegin(); it != cend(); it++) {
-                delete it->second;
-            }
-            parent::clear();
-        }
+        inline void clear() { parent::clear(); }
     };
 
     /// Forward declaration of the ordered string-to-variant map defined below
@@ -701,7 +696,6 @@ namespace alx {
         inline const std::string& to_string(const std::string& _def = def_val<std::string>()) const { return to<std::string>(_def); }
 
     public:
-
         /// True when a signed integer (char, short, int or long long) is stored
         inline bool is_integer() const noexcept {
             return is<char>() || is<short>() || is<int>() || is<long long>();
@@ -783,7 +777,6 @@ namespace alx {
         inline varlst& to_lst(varlst& _def);
 
     public:
-
         /**
          * \brief Walk a path of keys through nested containers
          *
@@ -800,16 +793,16 @@ namespace alx {
         inline const variant& select(const std::list<std::string>& _keys, const variant& _def = def_val()) const;
     };
 
-    /// The std::map the varmap container is built on
+    /// The ordered map the varmap container is built on; it owns the stored pointers
     template <typename Key, typename Value>
-    using varmap_base_map = std::map<Key, Value>;
+    using varmap_base_map = map_btree<Key, Value, true>;
 
     /**
      * \brief Ordered string to variant map that owns its values
      *
-     * Keys are unique and iteration is in key order. insert() never overwrites a key that is
-     * already there -- use operator[] to access or create one instead -- while erase, clear and
-     * destruction delete the values.
+     * Keys are unique and iteration is in key order. insert() replaces the value of a key that is
+     * already there, while try_emplace keeps the stored one; erase, clear and destruction delete
+     * the values.
      */
     class varmap : public __varmap_impl<varmap_base_map, variant> {
     public:

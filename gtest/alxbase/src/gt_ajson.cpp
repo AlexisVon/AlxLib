@@ -413,6 +413,14 @@ TEST(gt_ajson_doc, to_json_pretty_escapes_keys) {
     EXPECT_EQ(alx::json_doc::to_json(obj, false), "{\n\t\"a\\\"b\": 1\n}");
 }
 
+TEST(gt_ajson_doc, duplicate_key_keeps_last) {
+    bool ok = false;
+    alx::json_object doc = alx::json_doc::from_json("{\"a\": 1, \"a\": 2}", &ok);
+    ASSERT_TRUE(ok);
+    ASSERT_EQ(doc.size(), 1u);
+    EXPECT_EQ(doc.value("a").to_intg(), 2LL);
+}
+
 TEST(gt_ajson_doc, escaped_key_roundtrip) {
     bool ok = false;
     alx::json_object doc = alx::json_doc::from_json("{\"a\\\"b\": 1}", &ok);
@@ -582,7 +590,6 @@ TEST(gt_ajson_doc, refusing_sink_leaves_a_destructible_tree) {
 
     bounded_ostream tiny(4);
     EXPECT_FALSE(alx::json_doc::to_json(std::move(obj), tiny, true));
-
 }
 
 TEST(gt_ajson_doc, from_json_empty) {

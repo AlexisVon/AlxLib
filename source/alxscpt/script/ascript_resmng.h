@@ -92,8 +92,8 @@ namespace alx {
 
         private:
             thread_safe_readwrite<void> m_lock;
-            std::unordered_map<uint_64, ast_resource*> m_asts;
-            std::unordered_map<uint_64, link_resource*> m_links;
+            map_read<uint_64, ast_resource*> m_asts;
+            map_read<uint_64, link_resource*> m_links;
             bool load_module_ast(const std::string& _path, walker* _w,
                                  ast_resource* _res) const;
             bool load_module_link(const std::string& _path, link_resource* _res,

@@ -203,6 +203,20 @@ TEST(gt_astream_ex, ostream_file_reset_restarts_output) {
     std::remove(path.c_str());
 }
 
+TEST(gt_astream_ex, ostream_file_zero_size_append_writes_nothing) {
+    const std::string path = "tmp-alxcore-gtest/alx_gt_ostream_zero.bin";
+    std::remove(path.c_str());
+    {
+        ostream_file ostm(file_info(path), false);
+        ASSERT_TRUE(ostm.append(nullptr, 0));
+        ASSERT_TRUE(ostm.append(std::string("tail")));
+        EXPECT_EQ(ostm.total(), 4u);
+    }
+    EXPECT_EQ(file::read_all(file_info(path)).to_string(), "tail");
+
+    std::remove(path.c_str());
+}
+
 TEST(gt_astream_ex, ostream_file_reset_append_mode_keeps_file) {
     const std::string path = "tmp-alxcore-gtest/alx_gt_ostream_reset_ap.bin";
     std::remove(path.c_str());

@@ -14,7 +14,9 @@
     <ClCompile Include="..\..\gtest\alxscpt\src\main.cpp" />
     <ClCompile Include="..\..\gtest\alxscpt\src\gt_ascript.cpp" />
     <ClCompile Include="..\..\gtest\alxscpt\src\gt_ascript_debug.cpp" />
+    <ClCompile Include="..\..\gtest\alxscpt\src\gt_ascript_fwrap.cpp" />
     <ClCompile Include="..\..\gtest\alxscpt\src\gt_ascript_pipe.cpp" />
+    <ClCompile Include="..\..\gtest\alxscpt\src\gt_ascript_types.cpp" />
     <ClCompile Include="..\..\gtest\alxscpt\src\gt_ascript_yield.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
